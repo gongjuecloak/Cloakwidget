@@ -423,6 +423,34 @@ func parseDateCell(s string) string {
 	return s
 }
 
+// parseDateValue 与 parseDateCell 同样的识别口径，但返回 time.Time，
+// 供「写成真正的日期单元格」使用。第二个返回值表示是否解析成功。
+func parseDateValue(s string) (time.Time, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}, false
+	}
+	if f, err := strconv.ParseFloat(strings.ReplaceAll(s, ",", ""), 64); err == nil {
+		if f > 20000 && f < 80000 && f == math.Trunc(f) {
+			return excelEpoch.AddDate(0, 0, int(f)), true
+		}
+	}
+	for _, l := range dateLayouts {
+		if t, err := time.Parse(l, s); err == nil {
+			return t, true
+		}
+	}
+	if i := strings.IndexAny(s, " T"); i > 8 {
+		head := strings.TrimSpace(s[:i])
+		for _, l := range dateLayouts {
+			if t, err := time.Parse(l, head); err == nil {
+				return t, true
+			}
+		}
+	}
+	return time.Time{}, false
+}
+
 // ---------- 文件类型识别 ----------
 
 var orderKeywords = []string{"訂單", "订单", "訂單單號", "客戶單號", "客户单号", "訂單數量", "订单数量", "單價", "单价", "客戶代號", "客户代号", "交貨日期", "交货日期", "付款条件", "業務員"}
@@ -600,7 +628,7 @@ func sortedKeysInt(m map[string]int) []string {
 }
 
 // writeSheet 建表并写入表头 + 数据行。返回最终写入的行数。
-func (c *orderCtx) writeSheet(owb *excelize.File, firstSheet string, created *bool, name string, headers []string, rows [][]interface{}) error {
+func (c *orderCtx) writeSheet(owb *excelize.File, firstSheet string, created *bool, name string, headers []string, rows [][]interface{}, dates map[string]bool) error {
 	if !*created {
 		if err := owb.SetSheetName(firstSheet, name); err != nil {
 			return err
@@ -624,8 +652,42 @@ func (c *orderCtx) writeSheet(owb *excelize.File, firstSheet string, created *bo
 			return err
 		}
 	}
+	c.applyDateStyle(owb, name, headers, rows, dates)
 	c.rep.Sheets = append(c.rep.Sheets, name)
 	return nil
+}
+
+// applyDateStyle 给日期列套上 YYYY-MM-DD 数字格式。
+// 单元格本身已经在 toCell 里写成 time.Time，这里只补格式，
+// 保证在 Excel / MES 里显示与解析都当日期看（与 Python 原版一致）。
+func (c *orderCtx) applyDateStyle(owb *excelize.File, sheet string, headers []string, rows [][]interface{}, dates map[string]bool) {
+	if len(dates) == 0 || len(rows) == 0 {
+		return
+	}
+	var cols []int
+	for i, h := range headers {
+		key := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(h), "*"))
+		if dates[key] {
+			cols = append(cols, i+1)
+		}
+	}
+	if len(cols) == 0 {
+		return
+	}
+	dateFmt := "YYYY-MM-DD"
+	style, err := owb.NewStyle(&excelize.Style{NumFmt: 22, CustomNumFmt: &dateFmt})
+	if err != nil {
+		return
+	}
+	for i := range rows {
+		for _, col := range cols {
+			axis, err := excelize.CoordinatesToCellName(col, i+2)
+			if err != nil {
+				continue
+			}
+			_ = owb.SetCellStyle(sheet, axis, axis, style)
+		}
+	}
 }
 
 // alignRow 按 colOrder 把 map 形式的一行整理成有序的值数组
@@ -695,9 +757,24 @@ var numericTargets = map[string]bool{
 	"计划数量": true, "销售订单行号": true, "税率": true,
 }
 
-func toCell(col, v string) interface{} {
+func toCell(col, v string, isDate bool) interface{} {
+	if isDate {
+		if t, ok := parseDateValue(v); ok {
+			return t // 写真正的日期值，Excel/MES 都按日期识别
+		}
+		return v // 解析不出来就保持文本，不硬转
+	}
 	if numericTargets[col] {
 		return num(strings.ReplaceAll(v, ",", ""))
 	}
 	return v
+}
+
+// dateSet 把某个 category 的日期列名转成集合（逐行取单元格时只查一次 map）
+func (c *orderCtx) dateSet(cat string) map[string]bool {
+	m := map[string]bool{}
+	for _, col := range c.cfg.DateColumns[cat] {
+		m[col] = true
+	}
+	return m
 }

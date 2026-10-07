@@ -15,7 +15,7 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
 HERE = r"C:\Users\Cloak_Zeng\WorkBuddy\2026-10-06-14-57-26"
 MES = os.path.join(HERE, "mes_conv")
-EXE = os.path.join(MES, "物料档案转换工具_new.exe")
+EXE = os.path.join(MES, "物料档案转换工具.exe")
 PORT = 8749
 BASE = "http://127.0.0.1:%d" % PORT
 
@@ -34,7 +34,7 @@ if not chrome:
 
 
 def kill_all():
-    for n in ("物料档案转换工具_new.exe", "物料档案转换工具.exe"):
+    for n in ("物料档案转换工具.exe", "物料档案转换工具.exe"):
         subprocess.run(["taskkill", "/F", "/IM", n], capture_output=True)
 
 

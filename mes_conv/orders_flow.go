@@ -59,6 +59,8 @@ func (c *orderCtx) importOrder(owb *excelize.File, firstSheet string, created *b
 	detailBinds := bindMapping(g, resolveMapping(g, c.cfg.FieldMapping["order_detail"], aliases))
 	masterDefaults := c.cfg.DefaultValues["order_master"]
 	detailDefaults := c.cfg.DefaultValues["order_detail"]
+	masterDates := c.dateSet("order_master")
+	detailDates := c.dateSet("order_detail")
 
 	// ---- 主表：按订单号分组，每组取第一行 ----
 	masterOrder := c.cfg.ColumnOrder["order_master"]
@@ -78,10 +80,10 @@ func (c *orderCtx) importOrder(owb *excelize.File, firstSheet string, created *b
 				values[col] = parseDateCell(values[col])
 			}
 		}
-		masterRows = append(masterRows, rowToCells(masterOrder, values))
+		masterRows = append(masterRows, rowToCells(masterOrder, values, masterDates))
 	}
 	if err := c.writeSheet(owb, firstSheet, created, "销售订单主表",
-		c.templateHeader(masterOrder), masterRows); err != nil {
+		c.templateHeader(masterOrder), masterRows, masterDates); err != nil {
 		return err
 	}
 	c.rep.OrderMaster = len(masterRows)
@@ -115,10 +117,10 @@ func (c *orderCtx) importOrder(owb *excelize.File, firstSheet string, created *b
 			values["交货日期"] = parseDateCell(values["交货日期"])
 		}
 		c.checkDetailRequired(values)
-		detailRows = append(detailRows, rowToCells(detailOrder, values))
+		detailRows = append(detailRows, rowToCells(detailOrder, values, detailDates))
 	}
 	if err := c.writeSheet(owb, firstSheet, created, "销售订单明细",
-		c.templateHeader(detailOrder), detailRows); err != nil {
+		c.templateHeader(detailOrder), detailRows, detailDates); err != nil {
 		return err
 	}
 	c.rep.OrderDetail = len(detailRows)
@@ -175,6 +177,7 @@ func (c *orderCtx) importWorkOrder(owb *excelize.File, firstSheet string, create
 	tags := c.tagValues()
 
 	colOrder := c.cfg.ColumnOrder["work_order"]
+	workDates := c.dateSet("work_order")
 	rows := make([][]interface{}, 0, len(clean))
 	tagOn := 0
 	progressSet(0, len(clean))
@@ -229,10 +232,10 @@ func (c *orderCtx) importWorkOrder(owb *excelize.File, firstSheet string, create
 		}
 		applyDerived(values, c.cfg.DerivedColumns["work_order"])
 		c.checkWorkRequired(values)
-		rows = append(rows, rowToCells(colOrder, values))
+		rows = append(rows, rowToCells(colOrder, values, workDates))
 	}
 	if err := c.writeSheet(owb, firstSheet, created, "工单",
-		c.templateHeader(colOrder), rows); err != nil {
+		c.templateHeader(colOrder), rows, workDates); err != nil {
 		return err
 	}
 	c.rep.WorkOrders = len(rows)
@@ -252,10 +255,11 @@ func detailKey(orderNo, product string) string {
 	return strings.TrimSpace(orderNo) + "\x00" + strings.TrimSpace(product)
 }
 
-func rowToCells(colOrder []string, values map[string]string) []interface{} {
+// rowToCells 按列顺序把一行整理成单元格数组；dates 里的列写成真正的日期值
+func rowToCells(colOrder []string, values map[string]string, dates map[string]bool) []interface{} {
 	out := make([]interface{}, len(colOrder))
 	for i, col := range colOrder {
-		out[i] = toCell(col, values[col])
+		out[i] = toCell(col, values[col], dates[col])
 	}
 	return out
 }

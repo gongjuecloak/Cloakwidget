@@ -17,7 +17,7 @@ import urllib.request
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-EXE = os.path.join(HERE, "mes_conv", "物料档案转换工具_new.exe")
+EXE = os.path.join(HERE, "mes_conv", "物料档案转换工具.exe")
 ORDER = r"D:/User/Cloak_Zeng/Code/python/project-001/code-file/015/文件/訂單資料.xlsx"
 WORK = r"D:/User/Cloak_Zeng/Code/python/project-001/code-file/015/文件/工單資料.xlsx"
 GOLD = os.path.join(HERE, "_golden", "go_订单工单.xlsx")

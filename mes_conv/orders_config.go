@@ -45,6 +45,9 @@ type OrdersConfig struct {
 	ColumnAliases map[string][]string `json:"column_aliases"`
 	// category -> 输出列顺序
 	ColumnOrder map[string][]string `json:"column_order"`
+	// category -> 目标列里哪些是日期列。这些列会写成真正的日期单元格（格式 YYYY-MM-DD），
+	// 而不是文本 —— 与 Python 原版写出的单元格类型保持一致，避免 MES 按日期字段解析时出岔子。
+	DateColumns map[string][]string `json:"date_columns"`
 	// 输出表头（模板）：干净列名 -> 带 "* " 前缀的表头
 	TemplateHeaders map[string]string `json:"template_headers"`
 	TagMaterials    TagMaterials      `json:"tag_materials"`
@@ -106,6 +109,14 @@ func (c *OrdersConfig) fillDefaults() {
 	}
 	if c.ColumnOrder == nil {
 		c.ColumnOrder = map[string][]string{}
+	}
+	if c.DateColumns == nil {
+		c.DateColumns = map[string][]string{}
+	}
+	for cat, cols := range defaultDateColumns() {
+		if len(c.DateColumns[cat]) == 0 {
+			c.DateColumns[cat] = cols
+		}
 	}
 	if c.TemplateHeaders == nil {
 		c.TemplateHeaders = map[string]string{}
@@ -182,6 +193,7 @@ func defaultOrdersConfig() *OrdersConfig {
 			"work_order":   {"工单号", "计划数量", "计划开始", "计划完成"},
 		},
 		ColumnAliases: defaultColumnAliases(),
+		DateColumns:   defaultDateColumns(),
 		ColumnOrder: map[string][]string{
 			"order_master": {
 				"订单编号", "订单类型", "客户名称", "客户订单号", "订单日期", "交货日期",
@@ -227,6 +239,15 @@ func defaultOrdersConfig() *OrdersConfig {
 		},
 	}
 	return c
+}
+
+// defaultDateColumns 三类表里哪些列是日期列（写成真正的日期单元格，格式 YYYY-MM-DD）
+func defaultDateColumns() map[string][]string {
+	return map[string][]string{
+		"order_master": {"订单日期", "交货日期"},
+		"order_detail": {"交货日期"},
+		"work_order":   {"计划开始", "计划完成"},
+	}
 }
 
 // defaultColumnAliases 源档表头的同义词表。
