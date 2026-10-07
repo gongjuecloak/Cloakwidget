@@ -20,6 +20,9 @@ func (c *orderCtx) importOrder(owb *excelize.File, firstSheet string, created *b
 	}
 	aliases := c.cfg.ColumnAliases
 	c.log(fmt.Sprintf(c.L["o_read"], g.SheetName, len(g.Rows), g.HeaderRow+1))
+	if g.SrcDesc != "" {
+		c.info(c.L["note_src_fmt"], g.SrcDesc)
+	}
 
 	// 必需列（源档侧）：没有订单号和品号，整件事无从谈起
 	if missing := ensureColumns(g, []string{"訂單單號", "品號"}, aliases); len(missing) > 0 {
@@ -55,12 +58,24 @@ func (c *orderCtx) importOrder(owb *excelize.File, firstSheet string, created *b
 	}
 	c.orderClean = &sheetGrid{Path: g.Path, SheetName: g.SheetName, Headers: g.Headers, Rows: clean}
 
-	masterBinds := bindMapping(g, resolveMapping(g, c.cfg.FieldMapping["order_master"], aliases))
-	detailBinds := bindMapping(g, resolveMapping(g, c.cfg.FieldMapping["order_detail"], aliases))
+	masterResolved := resolveMapping(g, c.cfg.FieldMapping["order_master"], aliases)
+	detailResolved := resolveMapping(g, c.cfg.FieldMapping["order_detail"], aliases)
+	masterBinds := bindMapping(g, masterResolved)
+	detailBinds := bindMapping(g, detailResolved)
 	masterDefaults := c.cfg.DefaultValues["order_master"]
 	detailDefaults := c.cfg.DefaultValues["order_detail"]
 	masterDates := c.dateSet("order_master")
 	detailDates := c.dateSet("order_detail")
+
+	// 老 .xls 里日期存的是序列号：单元格自带日期格式的已在读取层还原，
+	// 自定义格式的漏网之鱼按「这一列是否映射到配置声明的日期目标列」兜底。
+	if g.SrcKind == srcBiff {
+		cols := dateSourceCols(masterResolved, masterDates)
+		cols = append(cols, dateSourceCols(detailResolved, detailDates)...)
+		if n := fixSerialDates(g, cols); n > 0 {
+			c.info(c.L["note_date_fixed"], n)
+		}
+	}
 
 	// ---- 主表：按订单号分组，每组取第一行 ----
 	masterOrder := c.cfg.ColumnOrder["order_master"]
@@ -112,6 +127,16 @@ func (c *orderCtx) importOrder(owb *excelize.File, firstSheet string, created *b
 		if key := detailKey(no, product); c.detailLine[key] == 0 {
 			c.detailLine[key] = line
 		}
+		// 重复检查：明细行按（订单编号 + 产品编码）组合键判断，
+		// 同一组合出现两次多半是同一个源档被导了两遍，或 ERP 里同品号确实开了两行
+		if d := c.dupTrackerFor("order_detail"); d != nil {
+			outRow := len(detailRows) + 1
+			get := func(col string) string { return strings.TrimSpace(values[col]) }
+			if dup, key, first := d.add(outRow, get); dup {
+				lab := keyLabel(d.cols)
+				c.addIssue(outRow, lab, fmt.Sprintf(c.L["warn_dup"], lab, key, first, outRow), "warn")
+			}
+		}
 
 		if !isBlankStr(values["交货日期"]) {
 			values["交货日期"] = parseDateCell(values["交货日期"])
@@ -136,6 +161,9 @@ func (c *orderCtx) importWorkOrder(owb *excelize.File, firstSheet string, create
 	}
 	aliases := c.cfg.ColumnAliases
 	c.log(fmt.Sprintf(c.L["o_read"], g.SheetName, len(g.Rows), g.HeaderRow+1))
+	if g.SrcDesc != "" {
+		c.info(c.L["note_src_fmt"], g.SrcDesc)
+	}
 
 	if missing := ensureColumns(g, []string{"製令編號", "產品品號"}, aliases); len(missing) > 0 {
 		return fmt.Errorf(c.L["o_missing_cols"], c.L["label_work"], strings.Join(missing, "、"))
@@ -167,7 +195,8 @@ func (c *orderCtx) importWorkOrder(owb *excelize.File, firstSheet string, create
 		c.log(fmt.Sprintf(c.L["o_filtered"], c.L["label_work"], dropped))
 	}
 
-	binds := bindMapping(g, resolveMapping(g, c.cfg.FieldMapping["work_order"], aliases))
+	workResolved := resolveMapping(g, c.cfg.FieldMapping["work_order"], aliases)
+	binds := bindMapping(g, workResolved)
 	workDefaults := c.cfg.DefaultValues["work_order"]
 	defaultLine := workDefaults["产线"]
 	defaultOrderLine := workDefaults["销售订单行号"]
@@ -178,6 +207,13 @@ func (c *orderCtx) importWorkOrder(owb *excelize.File, firstSheet string, create
 
 	colOrder := c.cfg.ColumnOrder["work_order"]
 	workDates := c.dateSet("work_order")
+
+	// 老 .xls 的日期序列号兜底（同订单：单元格自带格式的已在读取层还原）
+	if g.SrcKind == srcBiff {
+		if n := fixSerialDates(g, dateSourceCols(workResolved, workDates)); n > 0 {
+			c.info(c.L["note_date_fixed"], n)
+		}
+	}
 	rows := make([][]interface{}, 0, len(clean))
 	tagOn := 0
 	progressSet(0, len(clean))
@@ -225,6 +261,16 @@ func (c *orderCtx) importWorkOrder(owb *excelize.File, firstSheet string, create
 		}
 		values["来源单号"] = "ERP-" + values["工单号"]
 
+		// 重复检查：工单号在 MES 里应当唯一，重复即告警
+		if d := c.dupTrackerFor("work_order"); d != nil {
+			outRow := len(rows) + 1
+			get := func(col string) string { return strings.TrimSpace(values[col]) }
+			if dup, key, first := d.add(outRow, get); dup {
+				lab := keyLabel(d.cols)
+				c.addIssue(outRow, lab, fmt.Sprintf(c.L["warn_dup"], lab, key, first, outRow), "warn")
+			}
+		}
+
 		for _, col := range []string{"计划开始", "计划完成"} {
 			if !isBlankStr(values[col]) {
 				values[col] = parseDateCell(values[col])
@@ -264,11 +310,9 @@ func rowToCells(colOrder []string, values map[string]string, dates map[string]bo
 	return out
 }
 
-// openGrid 打开源档并定位表头；把底层错误换成能看懂的话
+// openGrid 打开源档并定位表头；把底层错误换成能看懂的话。
+// 不再按扩展名拦截 .xls —— 真身由读取层按文件头判断（ERP 的「.xls」常是 xlsx 或 XML 改名）。
 func (c *orderCtx) openGrid(path string) (*sheetGrid, error) {
-	if strings.HasSuffix(strings.ToLower(path), ".xls") {
-		return nil, fmt.Errorf("%s", c.L["o_xls_unsupported"])
-	}
 	g, err := readGridAuto(path)
 	if err != nil {
 		switch err.Error() {
@@ -277,12 +321,18 @@ func (c *orderCtx) openGrid(path string) (*sheetGrid, error) {
 		case "empty-sheet":
 			return nil, fmt.Errorf("%s", c.L["o_empty"])
 		default:
+			// 老 .xls 读不出来（BIFF5 / 加密 / 文件损坏）时给一句能照做的话
+			if strings.Contains(err.Error(), "biff-panic") {
+				return nil, fmt.Errorf("%s", c.L["err_xls_read"])
+			}
 			return nil, fmt.Errorf(c.L["o_open_failed"], err.Error())
 		}
 	}
 	if len(g.Rows) == 0 {
 		return nil, fmt.Errorf("%s", c.L["o_empty"])
 	}
+	// 源档里的 Excel 错误值（#NAME? 等）在这里一次性扫掉：每次开档只扫一遍
+	c.scanExcelErrors(g)
 	return g, nil
 }
 

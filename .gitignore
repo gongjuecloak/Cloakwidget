@@ -6,8 +6,10 @@ mes_conv/logs/
 mes_conv/backup/
 mes_conv/configs/
 
-# 运行期生成的配置（首次运行由程序自动写出，仓库里只保留内置默认值）
+# 运行期生成的配置 / 状态（首次运行由程序自动写出，仓库里只保留内置默认值）
 mes_conv/orders.json
+mes_conv/tpl_baseline.json
+mes_conv/sys_settings.json
 
 # ============ 分享版里的副本 ============
 # 这三个文件由 build.sh 从 mes_conv/ 同步过去，是产物不是源码，不单独维护
@@ -23,43 +25,63 @@ MES物料档案转换工具_分享版/configs/
 # ============ 临时文件 ============
 _golden/
 _chrome_prof/
+_chrome_prof_*/
+__pycache__/
 share_dist/
 _dom.html
 _check.js
+_shot_*.js
+_shot_*.png
+_probe_*.js
+_wjs_check.js
+_extract_js.js
+_syntax.js
+_vi.txt
+_wt_backup*.html
+_backup_webui_*.html
 *.xlsx
 *.log
 *.bak
 *.bak_*
 
+# ============ 测试夹具：真实业务数据，一律不入库 ============
+# 本仓库公开，_fmttest/ 下的源档/产物含真实物料与订单数据（客户简称、品号、金额等）。
+# 只入库测试脚本（*.py），夹具请自行从 MES 导出目录放置后再跑。
+_fmttest/*.xls
+_fmttest/*.csv
+_fmttest/out_*.xlsx
+
 # ============ 工作区本地笔记 ============
 .workbuddy/
 
 # ============ 一次性排查脚本（历史遗留，不入库） ============
-probe3.py
-probe4.py
-probe5.py
-probe6.py
-probe_class.py
-probe_num.py
-probe_sheets.py
-probe_unit.py
-cmp.py
-cmpfull.py
-debug2.py
-dictdump.py
-distinct.py
-fullhdr.py
-refmap.py
-refmap2.py
-tpl_probe.py
-dump_unit2.py
-recon_unit.py
-sync_unit_cfg.py
-verify_exe.py
-verify_v12.py
-verify_v12b.py
-verify_v13cmp.py
-verify_render.py
+# 注意：都带前导 / —— 只忽略仓库根目录下这些同名脚本，
+# 别把 _fmttest/cmp.py 这类同名但有用的回归脚本一起误伤
+/probe3.py
+/probe4.py
+/probe5.py
+/probe6.py
+/probe_class.py
+/probe_num.py
+/probe_sheets.py
+/probe_unit.py
+/cmp.py
+/cmpfull.py
+/debug2.py
+/dictdump.py
+/distinct.py
+/fullhdr.py
+/refmap.py
+/refmap2.py
+/tpl_probe.py
+/dump_unit2.py
+/recon_unit.py
+/sync_unit_cfg.py
+/verify_exe.py
+/verify_v12.py
+/verify_v12b.py
+/verify_v13cmp.py
+/verify_render.py
 
-xlsx_inspect.py
+/xlsx_inspect.py
 mes_conv/appicon_preview.png

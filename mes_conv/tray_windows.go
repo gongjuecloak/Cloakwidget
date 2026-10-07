@@ -2,7 +2,8 @@
 
 package main
 
-// 系统托盘：程序在后台运行时常驻右下角，右键菜单可「打开界面 / 打开输出文件夹 / 退出」，
+// 系统托盘：程序在后台运行时常驻右下角，右键菜单可
+// 「最近转换摘要 / 打开界面 / 打开输出文件夹 / 重启程序 / 检查更新 / 退出」，
 // 双击图标直接打开界面。
 //
 // 实现方式：纯 Go 调用 Win32 API（不引入 CGO、不加第三方依赖），
@@ -12,7 +13,9 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"runtime"
+	"strings"
 	"syscall"
 	"unsafe"
 )
@@ -34,6 +37,7 @@ const (
 	nifTip     = 0x04
 
 	mfString    = 0x0000
+	mfGrayed    = 0x0001 // 灰掉的项：看得见、点不动
 	mfSeparator = 0x0800
 
 	tpmRightButton = 0x0002
@@ -41,9 +45,11 @@ const (
 
 	idiApplication = 32512 // IDI_APPLICATION
 
-	trayCmdOpen   = 1
-	trayCmdFolder = 2
-	trayCmdQuit   = 3
+	trayCmdOpen    = 1
+	trayCmdFolder  = 2
+	trayCmdQuit    = 3
+	trayCmdRestart = 4
+	trayCmdUpdate  = 5
 )
 
 // 托盘回调消息（WM_APP+1），图标上的鼠标事件都会以这个消息送到窗口
@@ -121,6 +127,9 @@ var (
 	procGetCursorPos        = user32Proc.NewProc("GetCursorPos")
 	procSetForegroundWindow = user32Proc.NewProc("SetForegroundWindow")
 	procLoadIconW           = user32Proc.NewProc("LoadIconW")
+	procGetMenuItemCount    = user32Proc.NewProc("GetMenuItemCount")
+	procGetMenuStringW      = user32Proc.NewProc("GetMenuStringW")
+	procGetMenuState        = user32Proc.NewProc("GetMenuState")
 	procShellNotifyIconW    = shell32Proc.NewProc("Shell_NotifyIconW")
 	procGetModuleHandleW    = kernel32Proc.NewProc("GetModuleHandleW")
 )
@@ -135,18 +144,96 @@ var (
 	trayAlive bool
 )
 
-// trayTexts 托盘文案（跟随界面语言）
-func trayTexts(lang string) (tip, open, folder, quit string) {
+// trayStrings 托盘文案（跟随界面语言）
+type trayStrings struct {
+	Tip      string
+	Open     string
+	Folder   string
+	Recent   string // 带一个 %s：最近一次转换摘要
+	NoRecent string
+	Restart  string
+	Update   string
+	Quit     string
+	// 摘要里的量词
+	Rows     string
+	Problems string
+	Warnings string
+}
+
+func trayTexts(lang string) trayStrings {
 	switch lang {
 	case "zht":
-		return "MES 物料檔案轉換工具（執行中，右鍵可結束）", "開啟介面", "開啟輸出資料夾", "結束"
+		return trayStrings{
+			Tip:      "MES 物料檔案轉換工具（執行中，右鍵可結束）",
+			Open:     "開啟介面",
+			Folder:   "開啟輸出資料夾",
+			Recent:   "最近轉換：%s",
+			NoRecent: "最近轉換：（暫無記錄）",
+			Restart:  "重新啟動程式",
+			Update:   "檢查更新…",
+			Quit:     "結束",
+			Rows:     "列", Problems: "問題", Warnings: "告警",
+		}
 	case "vi":
-		return "Cong cu chuyen doi ho so vat lieu MES (dang chay, chuot phai de thoat)", "Mo giao dien", "Mo thu muc ket qua", "Thoat"
+		return trayStrings{
+			Tip:      "Cong cu chuyen doi ho so vat lieu MES (dang chay, chuot phai de thoat)",
+			Open:     "Mo giao dien",
+			Folder:   "Mo thu muc ket qua",
+			Recent:   "Chuyen gan nhat: %s",
+			NoRecent: "Chuyen gan nhat: (chua co)",
+			Restart:  "Khoi dong lai chuong trinh",
+			Update:   "Kiem tra cap nhat…",
+			Quit:     "Thoat",
+			Rows:     "dong", Problems: "loi", Warnings: "canh bao",
+		}
 	case "en":
-		return "MES Material Converter (running, right-click to quit)", "Open interface", "Open output folder", "Quit"
+		return trayStrings{
+			Tip:      "MES Material Converter (running, right-click to quit)",
+			Open:     "Open interface",
+			Folder:   "Open output folder",
+			Recent:   "Last conversion: %s",
+			NoRecent: "Last conversion: (none yet)",
+			Restart:  "Restart program",
+			Update:   "Check for updates…",
+			Quit:     "Quit",
+			Rows:     "rows", Problems: "issues", Warnings: "warnings",
+		}
 	default:
-		return "MES 物料档案转换工具（运行中，右键可退出）", "打开界面", "打开输出文件夹", "退出"
+		return trayStrings{
+			Tip:      "MES 物料档案转换工具（运行中，右键可退出）",
+			Open:     "打开界面",
+			Folder:   "打开输出文件夹",
+			Recent:   "最近转换：%s",
+			NoRecent: "最近转换：（暂无记录）",
+			Restart:  "重启程序",
+			Update:   "检查更新…",
+			Quit:     "退出",
+			Rows:     "行", Problems: "问题", Warnings: "告警",
+		}
 	}
+}
+
+// recentSummary 托盘菜单顶部那行「最近转换」摘要。没有记录时给一句「暂无记录」。
+// 只放数字 + 量词，不塞路径 —— 菜单宽度有限，路径会把整行撑爆。
+func recentSummary(lang string) string {
+	T := trayTexts(lang)
+	h := loadHistory()
+	if len(h) == 0 {
+		return T.NoRecent
+	}
+	it := h[0]
+	when := it.Time
+	if len(when) >= 16 { // "2026-10-07 14:32:05" -> "10-07 14:32"
+		when = when[5:16]
+	}
+	parts := []string{fmt.Sprintf("%d %s", it.Rows, T.Rows)}
+	if it.Issues > 0 {
+		parts = append(parts, fmt.Sprintf("%d %s", it.Issues, T.Problems))
+	}
+	if it.Warnings > 0 {
+		parts = append(parts, fmt.Sprintf("%d %s", it.Warnings, T.Warnings))
+	}
+	return fmt.Sprintf(T.Recent, strings.Join(append([]string{when}, parts...), " · "))
 }
 
 func utf16z(s string) []uint16 {
@@ -174,7 +261,7 @@ func runTray(port int, lang string) {
 	runtime.LockOSThread()
 	trayLang = lang
 	trayURL = fmt.Sprintf("http://127.0.0.1:%d/", port)
-	tip, _, _, _ := trayTexts(lang)
+	tip := trayTexts(lang).Tip
 
 	hInst, _, _ := procGetModuleHandleW.Call(0)
 	className := utf16z("MesMaterialConvTrayWnd")
@@ -221,7 +308,7 @@ func runTray(port int, lang string) {
 		select {}
 	}
 	trayAlive = true
-	appLog("已在右下角显示托盘图标：右键可「打开界面 / 打开输出文件夹 / 退出」，双击可打开界面。")
+	appLog("已在右下角显示托盘图标：右键可「打开界面 / 打开输出文件夹 / 重启 / 检查更新 / 退出」，双击可打开界面。")
 
 	var m msgW
 	for {
@@ -264,18 +351,36 @@ func trayWndProc(hwnd, msg, wParam, lParam uintptr) uintptr {
 	return r
 }
 
-func showTrayMenu(hwnd uintptr) {
-	_, mOpen, mFolder, mQuit := trayTexts(trayLang)
+// buildTrayMenu 把托盘右键菜单的项全部挂上，返回菜单句柄。
+// 单独抽出来是为了能被测试直接读回菜单文本做断言（不必真的弹出菜单）。
+// 结构：摘要（灰显） · 打开界面 / 打开输出文件夹 · 重启程序 / 检查更新 · 退出
+func buildTrayMenu(lang string) uintptr {
+	T := trayTexts(lang)
 	hMenu, _, _ := procCreatePopupMenu.Call()
+	if hMenu == 0 {
+		return 0
+	}
+
+	// 顶部一条「最近转换」摘要：只读信息，灰掉不可点
+	appendMenuText(hMenu, mfString|mfGrayed, 0, recentSummary(lang))
+	appendMenuText(hMenu, mfSeparator, 0, "")
+
+	appendMenuText(hMenu, mfString, trayCmdOpen, T.Open)
+	appendMenuText(hMenu, mfString, trayCmdFolder, T.Folder)
+	appendMenuText(hMenu, mfSeparator, 0, "")
+	appendMenuText(hMenu, mfString, trayCmdRestart, T.Restart)
+	appendMenuText(hMenu, mfString, trayCmdUpdate, T.Update)
+	appendMenuText(hMenu, mfSeparator, 0, "")
+	appendMenuText(hMenu, mfString, trayCmdQuit, T.Quit)
+	return hMenu
+}
+
+func showTrayMenu(hwnd uintptr) {
+	hMenu := buildTrayMenu(trayLang)
 	if hMenu == 0 {
 		return
 	}
 	defer func() { _, _, _ = procDestroyMenu.Call(hMenu) }()
-
-	appendMenuText(hMenu, mfString, trayCmdOpen, mOpen)
-	appendMenuText(hMenu, mfString, trayCmdFolder, mFolder)
-	appendMenuText(hMenu, mfSeparator, 0, "")
-	appendMenuText(hMenu, mfString, trayCmdQuit, mQuit)
 
 	var pt point
 	_, _, _ = procGetCursorPos.Call(uintptr(unsafe.Pointer(&pt)))
@@ -291,7 +396,29 @@ func showTrayMenu(hwnd uintptr) {
 		go openBrowser(trayURL)
 	case trayCmdFolder:
 		openOutFolder()
+	case trayCmdRestart:
+		restartSelf()
+		_, _, _ = procDestroyWindow.Call(hwnd) // 触发 WM_DESTROY → 清理并退出
+	case trayCmdUpdate:
+		go openBrowser("https://github.com/" + releaseRepo + "/releases")
 	case trayCmdQuit:
 		_, _, _ = procDestroyWindow.Call(hwnd) // 触发 WM_DESTROY → 清理并退出
 	}
+}
+
+// restartSelf 重启程序：交给 cmd 延迟 2 秒再拉起新进程，
+// 留出时间让本进程退出、把监听端口让出来（否则新进程会以为「已有实例在跑」而只开浏览器）。
+func restartSelf() {
+	exe, err := os.Executable()
+	if err != nil || strings.TrimSpace(exe) == "" {
+		return
+	}
+	line := `"` + exe + `"`
+	for _, a := range os.Args[1:] {
+		line += ` "` + a + `"`
+	}
+	c := exec.Command("cmd", "/c", "timeout /t 2 /nobreak >nul & start \"\" "+line)
+	c.Dir = exeDir()
+	_ = c.Start()
+	appLog("正在重启程序…")
 }

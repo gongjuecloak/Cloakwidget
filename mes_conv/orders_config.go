@@ -52,6 +52,9 @@ type OrdersConfig struct {
 	TemplateHeaders map[string]string `json:"template_headers"`
 	TagMaterials    TagMaterials      `json:"tag_materials"`
 	Settings        OrdersSettings    `json:"settings"`
+	// category -> 组合键列（输出列名）。这些列拼起来应当唯一，重复即告警。
+	// 留空则该表用内置默认（明细＝订单编号+产品编码，工单＝工单号）；显式给空数组表示关闭该表检查。
+	DuplicateKeys map[string][]string `json:"duplicate_keys,omitempty"`
 }
 
 func ordersConfigPath() string {
@@ -135,23 +138,23 @@ func defaultOrdersConfig() *OrdersConfig {
 	c := &OrdersConfig{
 		FieldMapping: map[string]map[string]string{
 			"order_master": {
-				"訂單單號":   "订单编号",
-				"客戶簡稱":   "客户名称",
-				"客戶單號":   "客户订单号",
-				"訂單日期":   "订单日期",
-				"預交日":    "交货日期",
-				"業務員":    "",
+				"訂單單號":    "订单编号",
+				"客戶簡稱":    "客户名称",
+				"客戶單號":    "客户订单号",
+				"訂單日期":    "订单日期",
+				"預交日":     "交货日期",
+				"業務員":     "",
 				"送貨地址(一)": "送货地址",
-				"付款條件名稱": "付款条件",
-				"備註":     "备注",
+				"付款條件名稱":  "付款条件",
+				"備註":      "备注",
 			},
 			"order_detail": {
-				"訂單單號":   "订单编号",
-				"品號":     "产品编码",
-				"客戶品號":   "客户件号",
-				"訂單數量":   "订单数量",
-				"單價":     "单价",
-				"預交日":    "交货日期",
+				"訂單單號":    "订单编号",
+				"品號":      "产品编码",
+				"客戶品號":    "客户件号",
+				"訂單數量":    "订单数量",
+				"單價":      "单价",
+				"預交日":     "交货日期",
 				"備註.1|備註": "备注",
 			},
 			"work_order": {

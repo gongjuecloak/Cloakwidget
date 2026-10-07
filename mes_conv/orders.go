@@ -78,6 +78,8 @@ type sheetGrid struct {
 	HeaderRow int // 0-based，指向真实表头那一行
 	Headers   []string
 	Rows      [][]string
+	SrcDesc   string         // 「读到了什么格式/编码/分隔符」，写进转换日志
+	SrcKind   srcKind        // 源档真身（.xls 伪装成 xlsx 之类都在这层被识破）
 	normIdx   map[string]int // 归一化列名 -> 列下标
 	stdIdx    map[string]int // 标准列名 -> 列下标（-1 表示源档里没有），带缓存避免逐行重解析
 }
@@ -131,20 +133,11 @@ func (g *sheetGrid) colIdx(std string, aliases map[string][]string) int {
 // isBlankStr 空串或纯空白视为空
 func isBlankStr(s string) bool { return strings.TrimSpace(s) == "" }
 
-// readGridAuto 打开 xlsx，自动定位真实表头行（跳过公司名/报表名等标题前缀），
-// 返回表头与数据行。.xls 老格式 excelize 不支持，交由调用方给出可读提示。
+// readGridAuto 打开源档，自动定位真实表头行（跳过公司名/报表名等标题前缀），
+// 返回表头与数据行。xlsx / 老 .xls(BIFF) / Excel 2003 XML / CSV 都能读 ——
+// 真身按文件头魔数判断，不看扩展名（ERP 导出的「.xls」常是 xlsx 或 XML 改名）。
 func readGridAuto(path string) (*sheetGrid, error) {
-	f, err := excelize.OpenFile(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	sheets := f.GetSheetList()
-	if len(sheets) == 0 {
-		return nil, fmt.Errorf("no-sheet")
-	}
-	name := sheets[0]
-	rows, err := f.GetRows(name)
+	rows, name, desc, kind, err := readSourceGrid(path, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +145,10 @@ func readGridAuto(path string) (*sheetGrid, error) {
 		return nil, fmt.Errorf("empty-sheet")
 	}
 	hr := detectHeaderRow(rows, 20)
-	g := &sheetGrid{Path: path, SheetName: name, HeaderRow: hr, Headers: rows[hr]}
+	if hr < 0 || hr >= len(rows) {
+		hr = 0
+	}
+	g := &sheetGrid{Path: path, SheetName: name, HeaderRow: hr, Headers: rows[hr], SrcDesc: desc, SrcKind: kind}
 	for _, r := range rows[hr+1:] {
 		if len(r) == 0 {
 			continue
@@ -515,9 +511,9 @@ func detectOrderKind(g *sheetGrid, filename string) string {
 
 // LineMatchStat 工单「销售订单行号」的回填统计
 type LineMatchStat struct {
-	Matched   int `json:"matched"`    // 在订单明细里找到了行号
-	Unmatched int `json:"unmatched"`  // 有销售订单但没匹配上，用默认值
-	NoOrder   int `json:"no_order"`   // 没有销售订单，留空
+	Matched   int `json:"matched"`   // 在订单明细里找到了行号
+	Unmatched int `json:"unmatched"` // 有销售订单但没匹配上，用默认值
+	NoOrder   int `json:"no_order"`  // 没有销售订单，留空
 }
 
 // OrdersReport 一次订单/工单转换的结果
@@ -532,6 +528,7 @@ type OrdersReport struct {
 	IssueTotal  int            `json:"issue_total"`
 	Errors      []string       `json:"errors"`
 	Warnings    []string       `json:"warnings"`
+	Notes       []string       `json:"notes"` // 中性说明：源档格式、批量文件、日期还原、模板变化
 }
 
 // orderCtx 一次转换过程中的中间状态
@@ -548,6 +545,8 @@ type orderCtx struct {
 	detailLine map[string]int
 	// 通过校验、过滤后的订单明细行，供工单转换复用
 	orderClean *sheetGrid
+	// 输出表名 -> 重复跟踪器（组合键）；由 quality.go 的 dupTrackerFor 懒创建
+	dups map[string]*dupTracker
 }
 
 func (c *orderCtx) addIssue(row int, col, msg, level string) {
@@ -558,6 +557,17 @@ func (c *orderCtx) addIssue(row int, col, msg, level string) {
 }
 
 func (c *orderCtx) note(key string) { c.problem[key]++ }
+
+// info 记一条中性说明（不是问题）：源档格式、批量文件数、日期还原、模板变化等。
+// 它会同时写进转换日志与结果里的 notes，界面上以中性样式单独列出，不与告警混在一起。
+func (c *orderCtx) info(format string, args ...interface{}) {
+	s := format
+	if len(args) > 0 {
+		s = fmt.Sprintf(format, args...)
+	}
+	c.rep.Notes = append(c.rep.Notes, s)
+	c.log(s)
+}
 
 func (c *orderCtx) log(s string) {
 	if c.logf != nil {
@@ -607,6 +617,9 @@ func ConvertOrders(cfg *OrdersConfig, orderPath, workPath, outPath, lang string,
 	}
 
 	ctx.rep.Issues = ctx.issues
+	// 重复检查汇总（有则进 errors，无则只留一条中性说明）
+	ctx.reportDups("order_detail")
+	ctx.reportDups("work_order")
 	for _, k := range sortedKeysInt(ctx.problem) {
 		ctx.rep.Warnings = append(ctx.rep.Warnings, fmt.Sprintf("%s × %d", k, ctx.problem[k]))
 	}

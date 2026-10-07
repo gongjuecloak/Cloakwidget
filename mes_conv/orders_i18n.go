@@ -10,11 +10,14 @@ package main
 
 type ordersMsg = map[string]string
 
+// ordersMsgs 取订单模块文案；语言未知时回退中文。
+// 结果 = 本模块文案 + 共用文案（commonI18n，与物料档案模块共享同一份）。
 func ordersMsgs(lang string) map[string]string {
-	if m, ok := ordersI18n[lang]; ok {
-		return m
+	mod, ok := ordersI18n[lang]
+	if !ok {
+		lang, mod = "zh", ordersI18n["zh"]
 	}
-	return ordersI18n["zh"]
+	return mergeMsgs("ord:"+lang, mod, commonMsgs(lang))
 }
 
 var ordersI18n = map[string]ordersMsg{

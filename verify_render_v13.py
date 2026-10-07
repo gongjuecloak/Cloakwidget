@@ -38,10 +38,19 @@ def kill_all():
         subprocess.run(["taskkill", "/F", "/IM", n], capture_output=True)
 
 
-kill_all()
-time.sleep(0.6)
-p = subprocess.Popen([EXE, "-nobrowser", "-port", str(PORT)], cwd=MES,
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+# 复用模式：程序是全局单实例（互斥量），若用户自己开着一份，就别杀也别另起，
+# 直接对它做渲染验证（它磁盘优先加载 webui.html，测到的就是当前磁盘上的界面）。
+REUSE = os.environ.get("MES_REUSE") == "1"
+if REUSE:
+    BASE = "http://127.0.0.1:%d" % int(os.environ.get("MES_PORT", PORT))
+    print("复用模式：不杀进程、不另起服务，直接验证", BASE)
+else:
+    kill_all()
+    time.sleep(0.6)
+p = None
+if not REUSE:
+    p = subprocess.Popen([EXE, "-nobrowser", "-port", str(PORT)], cwd=MES,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 up = False
 for _ in range(40):
     try:
@@ -133,12 +142,13 @@ for ql, probe in (("zh", "开始转换"), ("zht", "開始轉換"), ("vi", "Bắt
           not leaks(h, ["step_source", "block_fields", "hdr_loaded"]),
           leaks(h, ["step_source", "block_fields", "hdr_loaded"]))
 
-p.terminate()
-try:
-    p.wait(timeout=4)
-except Exception:
-    p.kill()
-kill_all()
+if not REUSE:
+    p.terminate()
+    try:
+        p.wait(timeout=4)
+    except Exception:
+        p.kill()
+    kill_all()
 
 bad = [n for n, o in results if not o]
 print()

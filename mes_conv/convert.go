@@ -31,6 +31,7 @@ type Report struct {
 	IssueTotal int            `json:"issue_total"` // 明细总数（可能大于 len(Issues)）
 	Errors     []string       `json:"errors"`      // 汇总：必填为空 / 编码重复
 	Warnings   []string       `json:"warnings"`    // 汇总：字典未匹配 / 单位未识别 / 值不在白名单
+	Notes      []string       `json:"notes"`       // 中性说明：源档格式、批量文件数、模板变化、日期还原
 }
 
 // cleanHeader 去掉模板表头的 "* " 必填前缀，得到干净列名
@@ -102,16 +103,16 @@ func Convert(cfg *Config, srcPath, tplPath, outPath, lang string) (*Report, erro
 	twb.Close()
 
 	// ---- 源数据 ----
-	swb, err := excelize.OpenFile(srcPath)
+	// 统一读取层：xlsx / 老 .xls(BIFF) / Excel 2003 XML / CSV 都走这里，真身按魔数判断。
+	// 物料档案沿用「第 0 行就是表头」的口径（与既有产出对齐，不改动已验证的转换规则）。
+	srows, sSheet, srcDesc, _, err := readSourceGrid(srcPath, cfg.SourceSheet)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", L["err_open_src"], err)
 	}
-	sSheet := swb.GetSheetName(cfg.SourceSheet)
-	srows, err := swb.GetRows(sSheet)
-	if err != nil || len(srows) < 2 {
-		swb.Close()
+	if len(srows) < 2 {
 		return nil, fmt.Errorf("%s", L["err_no_data"])
 	}
+	_ = sSheet
 	sheader := srows[0]
 	mbIdx := make(map[string]int, len(sheader))
 	for i, h := range sheader {
@@ -119,7 +120,6 @@ func Convert(cfg *Config, srcPath, tplPath, outPath, lang string) (*Report, erro
 			mbIdx[strings.TrimSpace(h)] = i
 		}
 	}
-	swb.Close()
 
 	get := func(row []string, mb string) string {
 		j, ok := mbIdx[mb]
@@ -163,6 +163,13 @@ func Convert(cfg *Config, srcPath, tplPath, outPath, lang string) (*Report, erro
 	}
 
 	rep := &Report{Types: map[string]int{}, Sources: map[string]int{}}
+	rep.Notes = append(rep.Notes, fmt.Sprintf(L["note_src_fmt"], srcDesc))
+	// 模板列变化检测：与上次记录的基准比对，MES 那边悄悄换了模板也能立刻看见
+	{
+		tNotes, tWarns := checkTemplate(tSheet, theaders, cfg, L)
+		rep.Notes = append(rep.Notes, tNotes...)
+		rep.Warnings = append(rep.Warnings, tWarns...)
+	}
 	var issues []Issue
 	issueTotal := 0
 	addIssue := func(row int, col, msg, level string) {
@@ -171,22 +178,33 @@ func Convert(cfg *Config, srcPath, tplPath, outPath, lang string) (*Report, erro
 			issues = append(issues, Issue{Row: row, Col: col, Msg: msg, Level: level})
 		}
 	}
-	unknownDict := map[string]int{} // "字典名 = 原值" -> 行数
-	unknownUnit := map[string]int{} // 未识别单位 -> 行数
-	notInList := map[string]int{}   // "目标列 = 值" -> 行数（值不在白名单，如 MES 单位档案）
-	codeSeen := map[string]int{}    // 物料编码 -> 首次出现行号
-	codeDup := map[string]int{}     // 重复编码 -> 次数
+	unknownDict := map[string]int{}  // "字典名 = 原值" -> 行数
+	unknownUnit := map[string]int{}  // 未识别单位 -> 行数
+	notInList := map[string]int{}    // "目标列 = 值" -> 行数（值不在白名单，如 MES 单位档案）
+	errCellByCol := map[string]int{} // 源列 -> Excel 错误值（#NAME? 等）格数
+
+	// 重复检查：关键列来自配置（留空默认「物料编码」），每一列各自成组
+	dupCols := cfg.DuplicateKeys
+	if len(dupCols) == 0 {
+		dupCols = []string{colCode}
+	}
+	dups := map[string]*dupTracker{}
+	var dupActive []string
+	for _, c := range dupCols {
+		if _, ok := idx[c]; !ok {
+			continue
+		}
+		dups[c] = newDupTracker([]string{c})
+		dupActive = append(dupActive, c)
+	}
 
 	wrote := 0
-	typeIdx, srcIdx, codeIdx := -1, -1, -1
+	typeIdx, srcIdx := -1, -1
 	if i, ok := idx["物料类型"]; ok {
 		typeIdx = i
 	}
 	if i, ok := idx["物料来源"]; ok {
 		srcIdx = i
-	}
-	if i, ok := idx["物料编码"]; ok {
-		codeIdx = i
 	}
 
 	totalRows := len(srows) - 1
@@ -339,16 +357,31 @@ func Convert(cfg *Config, srcPath, tplPath, outPath, lang string) (*Report, erro
 				notInList[target+" = "+s]++
 			}
 		}
-		// 3) 物料编码重复
-		if codeIdx >= 0 && codeIdx < len(out) {
-			if cv, ok := out[codeIdx].(string); ok && strings.TrimSpace(cv) != "" {
-				if first, dup := codeSeen[cv]; dup {
-					codeDup[cv]++
-					addIssue(rowNo, colCode, fmt.Sprintf(L["chk_code_dup"], first, cv), "error")
-				} else {
-					codeSeen[cv] = rowNo
-				}
+		// 3) 关键列重复（配置驱动，可多列；每列各自成组）
+		for _, c := range dupActive {
+			ci, ok := idx[c]
+			if !ok || ci >= len(out) {
+				continue
 			}
+			cv, _ := out[ci].(string)
+			if dup, key, first := dups[c].addValues(rowNo, cv); dup {
+				addIssue(rowNo, c, fmt.Sprintf(L["warn_dup"], c, key, first, rowNo), "error")
+			}
+		}
+		// 4) Excel 错误值：源档这一格是坏公式（#NAME? / #REF! …），会原样搬进 MES
+		for si, cellv := range row {
+			if !excelErrValue(cellv) {
+				continue
+			}
+			scol := ""
+			if si < len(sheader) {
+				scol = cleanHeader(sheader[si])
+			}
+			if scol == "" {
+				scol = fmt.Sprintf("#%d", si+1)
+			}
+			errCellByCol[scol]++
+			addIssue(rowNo, scol, fmt.Sprintf(L["warn_excel_err"], strings.TrimSpace(cellv)), "warning")
 		}
 
 		if typeIdx >= 0 {
@@ -373,8 +406,21 @@ func Convert(cfg *Config, srcPath, tplPath, outPath, lang string) (*Report, erro
 	rep.Rows = wrote
 	rep.Issues = issues
 	rep.IssueTotal = issueTotal
-	for _, k := range sortedCountKeys(codeDup) {
-		rep.Errors = append(rep.Errors, fmt.Sprintf(L["sum_code_dup"], k, codeDup[k]))
+	// 重复检查汇总：每列各报一条「有/无」说明，重复组进 Errors（不阻断，仍需业务判断）
+	for _, c := range dupActive {
+		d := dups[c]
+		lab := keyLabel(d.cols)
+		if d.dupGroupCount() == 0 {
+			rep.Notes = append(rep.Notes, fmt.Sprintf(L["note_dup_none"], lab))
+			continue
+		}
+		rep.Notes = append(rep.Notes, fmt.Sprintf(L["note_dup_total"], lab, d.dupGroupCount(), d.dupRowCount()))
+		for _, it := range d.dupItems() {
+			rep.Errors = append(rep.Errors, fmt.Sprintf(L["sum_dup"], lab, it.Key, it.N))
+		}
+	}
+	for _, k := range sortedCountKeys(errCellByCol) {
+		rep.Warnings = append(rep.Warnings, fmt.Sprintf(L["sum_excel_err"], k, errCellByCol[k]))
 	}
 	for _, k := range sortedCountKeys(unknownDict) {
 		rep.Warnings = append(rep.Warnings, fmt.Sprintf(L["sum_dict_unknown"], k, unknownDict[k]))

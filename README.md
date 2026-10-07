@@ -22,16 +22,25 @@ mes_conv/                         Go 源码（工具本体）
   server.go                       HTTP 接口、启动、单实例、日志
   convert.go                      物料档案转换引擎
   config.go                       物料档案配置结构 + 内置默认配置
+  srcgrid.go                      源档读取：按文件头魔数判格式（OLE2/ZIP/XML/CSV）+ 多文件合并
+  quality.go                      质检：重复行/重复编码、Excel 错误值、订单组合键查重
+  tplcheck.go / tpl_server.go     模板列变化检测（基准记录 / 差异比对 / 接口）
+  system.go                       系统设置：口令锁（加盐哈希 + 令牌）、局域网开关
+  autostart_windows.go / autostart_other.go   开机自启（纯 syscall 写 HKCU\...\Run）
+  diag.go                         一键排障包（zip：日志 + 配置 + 环境，口令脱敏）
+  update.go                       检查更新（GitHub releases/latest，失败退回 tags）
+  stats.go                        转换历史统计（按天聚合，跨两个模块）
   orders.go                       订单/工单引擎（核心）
   orders_flow.go                  订单/工单转换流程
   orders_config.go                订单模块配置结构 + 内置默认配置
   orders_server.go                订单模块 HTTP 接口
   orders_i18n.go                  订单模块四语文案
+  i18n_common.go                  两个模块共用的四语文案（汇总/模板/系统）
   webui.html                      界面（内嵌进 exe，同目录放文件可覆盖）
   mapping.json                    物料档案配置（运行期可改）
   mbfields.go                     MB 字段中文名对照
   report.go / progress.go         报告落盘、进度上报
-  tray_windows.go / single_windows.go   托盘图标、单实例互斥
+  tray_windows.go / single_windows.go   托盘图标与菜单、单实例互斥
   versioninfo.json / appicon.ico  版本资源与图标
   *_test.go / test_*.js           回归测试与 i18n 校验
 
@@ -42,7 +51,9 @@ verify_unit.py                    物料档案输出与参考文件逐格比对
 verify_norm.py                    单位归一回归
 verify_orders_http.py             订单模块 HTTP 端到端验证
 verify_render_v13.py              无头浏览器渲染验证（三视图 + 四语）
-MES物料档案转换工具_分享版/        发给别人的成品（exe + 说明）
+verify_v16.js                     v1.6.0 前端行为验证（批量多选 / diff / 字段表工具 / 图表 / 系统页签）
+_fmttest/                         格式与系统设置回归（dup / tpl / sys / batch / 伪装格式比对）
+MES物料档案转换工具_分享版/        发给别人的成品（exe + 使用说明）
 build.py                          **历史文件**：Go 版之前的 Python 原型，仅作参考
 ```
 
@@ -113,6 +124,17 @@ python verify_unit.py
 # 4. 接口端到端 + 界面渲染
 python verify_orders_http.py
 python verify_render_v13.py
+
+# 5. v1.6.0 新增能力的回归（先跑一次 go build -o _newbuild.exe . 供脚本使用）
+python _fmttest/dup_test.py     # 重复行/重复编码 + Excel 错误值（25 项）
+python _fmttest/tpl_test.py     # MES 模板列变化检测（22 项）
+python _fmttest/sys_test.py     # 自启 / 口令 / 局域网 / 排障包 / 更新 / 统计（52 项）
+python _fmttest/batch_test.py   # 多文件批量合并（14 项）
+python _fmttest/cmp.py          # .xls 伪装 / UTF-8 CSV / GBK CSV 与 .xlsx 逐格比对
+
+# 6. v1.6.0 前端行为验证（会自己起 exe + 无头 Chrome，跑完自动收工）
+node verify_v16.js              # 批量多选 / diff 弹窗 / 字段表工具 / 图表 / 系统页签（73 项）
+python mes_conv/verify_tray.py  # 托盘窗口 + 退出路径
 ```
 
 ---

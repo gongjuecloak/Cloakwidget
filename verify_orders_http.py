@@ -21,8 +21,11 @@ EXE = os.path.join(HERE, "mes_conv", "物料档案转换工具.exe")
 ORDER = r"D:/User/Cloak_Zeng/Code/python/project-001/code-file/015/文件/訂單資料.xlsx"
 WORK = r"D:/User/Cloak_Zeng/Code/python/project-001/code-file/015/文件/工單資料.xlsx"
 GOLD = os.path.join(HERE, "_golden", "go_订单工单.xlsx")
-PORT = 8747
+PORT = int(os.environ.get("MES_PORT", 8747))
 BASE = f"http://127.0.0.1:{PORT}"
+# 复用模式：程序是全局单实例（互斥量），用户自己开着一份时无法另起。
+# MES_REUSE=1 时直接对在运行的实例做接口验证；「重启后历史仍可查」改为核对落盘文件。
+REUSE = os.environ.get("MES_REUSE") == "1"
 
 passed, failed = 0, 0
 
@@ -73,17 +76,24 @@ def post_multipart(path, files, fields=None, timeout=180):
 
 
 # 清掉旧的订单输出，便于确认本次真的生成了新文件
-out_dir = os.path.join(HERE, "mes_conv", "out")
-for n in os.listdir(out_dir) if os.path.isdir(out_dir) else []:
-    if n.startswith("订单工单_"):
-        os.remove(os.path.join(out_dir, n))
-hist = os.path.join(out_dir, "orders_history.json")
-if os.path.exists(hist):
-    os.remove(hist)
-print("已清理旧的订单输出与历史\n")
+# 输出目录：默认本目录下的 mes_conv/out；复用别的实例时用 MES_OUT_DIR 指向那个实例的 out
+out_dir = os.environ.get("MES_OUT_DIR") or os.path.join(HERE, "mes_conv", "out")
+# 清理历史产物：复用模式下输出目录里可能是用户自己的转换结果，一律不动
+if not REUSE:
+    for n in os.listdir(out_dir) if os.path.isdir(out_dir) else []:
+        if n.startswith("订单工单_"):
+            os.remove(os.path.join(out_dir, n))
+    hist = os.path.join(out_dir, "orders_history.json")
+    if os.path.exists(hist):
+        os.remove(hist)
+    print("已清理旧的订单输出与历史\n")
 
-proc = subprocess.Popen([EXE, "-nobrowser", "-port", str(PORT)],
-                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+proc = None
+if not REUSE:
+    proc = subprocess.Popen([EXE, "-nobrowser", "-port", str(PORT)],
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+else:
+    print("复用模式：不另起服务，直接验证运行中的实例", BASE, "\n")
 try:
     # 等端口起来
     ok = False
@@ -154,7 +164,10 @@ try:
 
     print("\n【历史与报告】")
     h = get("/api/orders/history")
-    check("/api/orders/history 返回 1 条", h.get("ok") and len(h.get("items", [])) == 1, h)
+    # 复用已有实例时，历史里可能还有用户自己跑过的记录，所以只要求「至少 1 条本次的」
+    _n = len(h.get("items", []))
+    check("/api/orders/history 有本次记录" + ("（复用模式，允许 ≥1）" if REUSE else "（恰好 1 条）"),
+          h.get("ok") and (_n >= 1 if REUSE else _n == 1), h)
     if h.get("items"):
         it = h["items"][0]
         check("历史条目标记 module=orders", it.get("module") == "orders", it)
@@ -175,37 +188,48 @@ try:
     check("报告 id 目录穿越被拒", not bad.get("ok"), bad)
 
     print("\n【转换后重启服务，历史仍可查】")
-    # 杀掉进程重启，确认历史/报告是落盘的
-    proc.terminate()
-    try:
-        proc.wait(timeout=8)
-    except Exception:
-        proc.kill()
-    proc = subprocess.Popen([EXE, "-nobrowser", "-port", str(PORT)],
-                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    ok2 = False
-    for _ in range(40):
-        time.sleep(0.4)
+    if REUSE:
+        # 复用模式下不能动用户的进程，改为核对「历史确实落盘」：接口读得回来，且报告文件仍可加载
+        items = get("/api/orders/history").get("items", [])
+        check("★ 历史可被接口查回（≥2 条）", len(items) >= 2, items[:2])
+        rep_ids = [it.get("report") for it in items if it.get("report")]
+        rep_ok = False
+        if rep_ids:
+            rep_ok = bool(get("/api/report?id=" + urllib.parse.quote(rep_ids[0])).get("report"))
+        check("★ 历史报告文件落盘且可重新加载", rep_ok, rep_ids[:1])
+    else:
+        # 杀掉进程重启，确认历史/报告是落盘的
+        proc.terminate()
         try:
-            if get("/api/ping", timeout=2).get("ok"):
-                ok2 = True
-                break
+            proc.wait(timeout=8)
         except Exception:
-            pass
-    check("服务重启成功", ok2)
-    if ok2:
-        h2 = get("/api/orders/history")
-        check("★ 重启后仍能查回订单转换历史", len(h2.get("items", [])) >= 2, h2)
+            proc.kill()
+        proc = subprocess.Popen([EXE, "-nobrowser", "-port", str(PORT)],
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        ok2 = False
+        for _ in range(40):
+            time.sleep(0.4)
+            try:
+                if get("/api/ping", timeout=2).get("ok"):
+                    ok2 = True
+                    break
+            except Exception:
+                pass
+        check("服务重启成功", ok2)
+        if ok2:
+            h2 = get("/api/orders/history")
+            check("★ 重启后仍能查回订单转换历史", len(h2.get("items", [])) >= 2, h2)
 
 finally:
-    try:
-        proc.terminate()
-        proc.wait(timeout=8)
-    except Exception:
+    if proc is not None:
         try:
-            proc.kill()
+            proc.terminate()
+            proc.wait(timeout=8)
         except Exception:
-            pass
+            try:
+                proc.kill()
+            except Exception:
+                pass
 
 print()
 print(f"结果：{passed} 项通过，{failed} 项失败")

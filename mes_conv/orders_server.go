@@ -71,31 +71,7 @@ func handlerOrdersConvert(w http.ResponseWriter, r *http.Request) {
 	}
 	defer os.RemoveAll(dir)
 
-	orderPath, orderName := "", ""
-	if f, h, err := r.FormFile("order"); err == nil {
-		defer f.Close()
-		orderPath = filepath.Join(dir, "order.xlsx")
-		if err := saveUpload(f, orderPath); err != nil {
-			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
-			return
-		}
-		orderName = h.Filename
-	}
-	workPath, workName := "", ""
-	if f, h, err := r.FormFile("work"); err == nil {
-		defer f.Close()
-		workPath = filepath.Join(dir, "work.xlsx")
-		if err := saveUpload(f, workPath); err != nil {
-			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
-			return
-		}
-		workName = h.Filename
-	}
-	if orderPath == "" && workPath == "" {
-		writeJSON(w, map[string]interface{}{"ok": false, "error": L["e_no_file"]})
-		return
-	}
-
+	// 配置要先读：源档合并时的工作表索引取自它
 	var cfg *OrdersConfig
 	if cs := r.FormValue("config"); cs != "" {
 		var c OrdersConfig
@@ -106,6 +82,23 @@ func handlerOrdersConvert(w http.ResponseWriter, r *http.Request) {
 	}
 	if cfg == nil {
 		cfg = ensureOrdersConfig()
+	}
+
+	// 订单 / 工单两个字段都支持多选：多份时按列名合并成一份再转
+	// （「一次转一周的订单」就是靠这个：把几天的导出一起丢进来）
+	orderPath, orderName, orderNotes, err := collectSources(r, dir, "order", cfg.Settings.TemplateSheetIndex, L)
+	if err != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+		return
+	}
+	workPath, workName, workNotes, err := collectSources(r, dir, "work", cfg.Settings.TemplateSheetIndex, L)
+	if err != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+		return
+	}
+	if orderPath == "" && workPath == "" {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": L["e_no_file"]})
+		return
 	}
 
 	// 输出：out/订单工单_<时间戳>.xlsx，同秒冲突则加序号
@@ -126,6 +119,11 @@ func handlerOrdersConvert(w http.ResponseWriter, r *http.Request) {
 	logs := []string{}
 	add := func(s string) { logs = append(logs, time.Now().Format("2006-01-02 15:04:05")+"  "+s) }
 	start := time.Now()
+
+	// 批量说明（几个文件、各多少行）放在最前面，方便对照
+	for _, n := range append(append([]string{}, orderNotes...), workNotes...) {
+		add(n)
+	}
 
 	// 引擎自己的日志回调：既进界面日志，也进进度条的文件名提示
 	logName := orderName
@@ -200,6 +198,11 @@ func handlerOrdersConvert(w http.ResponseWriter, r *http.Request) {
 	if warns == nil {
 		warns = []string{}
 	}
+	notes := append(append([]string{}, orderNotes...), workNotes...)
+	notes = append(notes, rep.Notes...)
+	if notes == nil {
+		notes = []string{}
+	}
 	writeJSON(w, map[string]interface{}{
 		"ok":          true,
 		"rows":        rep.OrderMaster + rep.OrderDetail + rep.WorkOrders,
@@ -213,6 +216,7 @@ func handlerOrdersConvert(w http.ResponseWriter, r *http.Request) {
 		"issue_total": rep.IssueTotal,
 		"errors":      errs,
 		"warnings":    warns,
+		"notes":       notes,
 		"elapsed":     elapsed,
 		"outDir":      "out",
 	})

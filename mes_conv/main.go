@@ -18,6 +18,8 @@ func main() {
 	nobrowser := flag.Bool("nobrowser", false, "启动时不自动打开浏览器（适合开机自启/托盘常驻）")
 	orderSrc := flag.String("order", "", "订单源文件（给了就走订单/工单模块）")
 	workSrc := flag.String("work", "", "工单源文件（给了就走订单/工单模块）")
+	nosingle := flag.Bool("nosingle", false,
+		"调试用：跳过单实例检查（可在别的端口再起一个，便于自动化验证）")
 	flag.Parse()
 	noBrowser = *nobrowser
 
@@ -82,7 +84,8 @@ func main() {
 	ensureOrdersConfig()
 
 	// 单实例：已有实例在运行就直接打开它的界面并退出，避免两个托盘图标 / 两个服务。
-	if !acquireSingleInstance() {
+	// -nosingle 时跳过（调试/验证用：可以在另一个端口独立跑一份，不去打扰用户正在用的那个）。
+	if !*nosingle && !acquireSingleInstance() {
 		if p := findRunningInstance(*port); p > 0 {
 			appLog("检测到本程序已在运行（端口 %d），直接打开该界面。", p)
 			if !noBrowser {

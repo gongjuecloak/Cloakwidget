@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net"
 	"net/http"
 	"os"
@@ -142,11 +143,13 @@ var logI18n = map[string]map[string]string{
 }
 
 // msgs 取指定语言的文案表；语言未知时回退中文，保证任何情况都有文案可用。
+// 结果 = 本模块文案 + 共用文案（commonI18n，两个模块都有份的那些提示）。
 func msgs(lang string) map[string]string {
-	if m, ok := logI18n[lang]; ok {
-		return m
+	mod, ok := logI18n[lang]
+	if !ok {
+		lang, mod = "zh", logI18n["zh"]
 	}
-	return logI18n["zh"]
+	return mergeMsgs("mat:"+lang, mod, commonMsgs(lang))
 }
 
 // formatDist 把分布 map 格式化为 "k: v, k: v"
@@ -689,10 +692,10 @@ func handlerSourceHeaders(w http.ResponseWriter, r *http.Request) {
 		headers = append(headers, Hdr{Code: c, Name: n, Label: label})
 	}
 	writeJSON(w, map[string]interface{}{
-		"ok":     true,
-		"sheet":  sheet,
-		"sheets": sheets,
-		"count":  len(headers),
+		"ok":      true,
+		"sheet":   sheet,
+		"sheets":  sheets,
+		"count":   len(headers),
 		"headers": headers,
 	})
 }
@@ -708,12 +711,13 @@ func handlerConvert(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]interface{}{"ok": false, "error": "解析上传失败: " + err.Error()})
 		return
 	}
-	srcF, srcH, err := r.FormFile("source")
-	if err != nil {
+	// 源文件支持多选：一次拖一批进来。多份时按列名合并成一份再转换（见 mergeSourceGrids）
+	srcHeads := r.MultipartForm.File["source"]
+	if len(srcHeads) == 0 {
 		writeJSON(w, map[string]interface{}{"ok": false, "error": "缺少源文件"})
 		return
 	}
-	defer srcF.Close()
+	srcH := srcHeads[0]
 	tplF, tplH, err := r.FormFile("template")
 	if err != nil {
 		writeJSON(w, map[string]interface{}{"ok": false, "error": "缺少模板文件"})
@@ -725,7 +729,8 @@ func handlerConvert(w http.ResponseWriter, r *http.Request) {
 	if _, ok := logI18n[lang]; !ok {
 		lang = "zh"
 	}
-	L := logI18n[lang]
+	// 注意：必须走 msgs()（模块文案 + 共用文案），直接用 logI18n 会取不到 note_* 这类共用词条
+	L := msgs(lang)
 
 	var cfg *Config
 	if cs := r.FormValue("config"); cs != "" {
@@ -746,13 +751,58 @@ func handlerConvert(w http.ResponseWriter, r *http.Request) {
 	defer os.RemoveAll(dir)
 	srcPath := filepath.Join(dir, "src.xlsx")
 	tplPath := filepath.Join(dir, "tpl.xlsx")
-	if err := saveUpload(srcF, srcPath); err != nil {
-		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
-		return
-	}
 	if err := saveUpload(tplF, tplPath); err != nil {
 		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
 		return
+	}
+
+	// ---- 源文件落盘：单个直接用；多个先合并成一份临时 xlsx ----
+	var mergeNotes []string
+	var batchNote string
+	if len(srcHeads) == 1 {
+		f, e := srcHeads[0].Open()
+		if e != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": e.Error()})
+			return
+		}
+		defer f.Close()
+		if e := saveUpload(f, srcPath); e != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": e.Error()})
+			return
+		}
+	} else {
+		var paths, names []string
+		for i, fh := range srcHeads {
+			p := filepath.Join(dir, fmt.Sprintf("src_%d.xlsx", i))
+			f, e := fh.Open()
+			if e != nil {
+				writeJSON(w, map[string]interface{}{"ok": false, "error": e.Error()})
+				return
+			}
+			e2 := saveUpload(f, p)
+			f.Close()
+			if e2 != nil {
+				writeJSON(w, map[string]interface{}{"ok": false, "error": e2.Error()})
+				return
+			}
+			paths = append(paths, p)
+			names = append(names, fh.Filename)
+		}
+		mg, e := mergeSourceGrids(paths, names, cfg.SourceSheet, false)
+		if e != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": e.Error()})
+			return
+		}
+		if e := writeGridXlsx(mg.Rows, srcPath); e != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": e.Error()})
+			return
+		}
+		mergeNotes = append([]string{
+			fmt.Sprintf(L["note_batch"], mg.Files, len(mg.Rows)-1),
+			L["note_merge"],
+		}, mg.Notes...)
+		batchNote = mergeNotes[0]
+		srcH = &multipart.FileHeader{Filename: fmt.Sprintf(L["note_batch_name"], mg.Files)}
 	}
 
 	// 输出目录：exe 同级的 out/，文件名带时间戳且保证唯一
@@ -777,6 +827,12 @@ func handlerConvert(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	add(L["start"])
 	add(fmt.Sprintf(L["src"], srcH.Filename))
+	if batchNote != "" {
+		add(batchNote)
+		for _, n := range mergeNotes {
+			add("  " + n)
+		}
+	}
 	add(fmt.Sprintf(L["tpl"], tplH.Filename))
 	add(L["conv"])
 
@@ -847,6 +903,11 @@ func handlerConvert(w http.ResponseWriter, r *http.Request) {
 	if warns == nil {
 		warns = []string{}
 	}
+	notes := append([]string{}, mergeNotes...)
+	notes = append(notes, rep.Notes...)
+	if notes == nil {
+		notes = []string{}
+	}
 	writeJSON(w, map[string]interface{}{
 		"ok":          true,
 		"rows":        rep.Rows,
@@ -859,6 +920,7 @@ func handlerConvert(w http.ResponseWriter, r *http.Request) {
 		"issue_total": rep.IssueTotal,
 		"errors":      errs,
 		"warnings":    warns,
+		"notes":       notes,
 		"elapsed":     elapsed,
 		"outDir":      "out",
 	})
@@ -877,6 +939,61 @@ func saveUpload(f io.ReadCloser, path string) error {
 // ---------- 转换历史 ----------
 
 // HistoryItem 一次成功转换的记录
+// collectSources 收集同名表单字段下的 0..N 个上传文件：
+//   - 0 个：返回空路径（由调用方判断「至少给一个」）
+//   - 1 个：直接落盘，零额外开销
+//   - 多个：按列名合并成一份临时 xlsx（表头自动探测，各文件列顺序不同也能对齐）
+//
+// 返回：落盘路径、显示用名称、写进日志的说明行、错误。
+func collectSources(r *http.Request, dir, field string, sheetIdx int, L map[string]string) (string, string, []string, error) {
+	heads := r.MultipartForm.File[field]
+	if len(heads) == 0 {
+		return "", "", nil, nil
+	}
+	if len(heads) == 1 {
+		path := filepath.Join(dir, field+".xlsx")
+		f, err := heads[0].Open()
+		if err != nil {
+			return "", "", nil, err
+		}
+		defer f.Close()
+		if err := saveUpload(f, path); err != nil {
+			return "", "", nil, err
+		}
+		return path, heads[0].Filename, nil, nil
+	}
+
+	var paths, names []string
+	for i, h := range heads {
+		p := filepath.Join(dir, fmt.Sprintf("%s_%d.xlsx", field, i))
+		f, err := h.Open()
+		if err != nil {
+			return "", "", nil, err
+		}
+		err = saveUpload(f, p)
+		f.Close()
+		if err != nil {
+			return "", "", nil, err
+		}
+		paths = append(paths, p)
+		names = append(names, h.Filename)
+	}
+	mg, err := mergeSourceGrids(paths, names, sheetIdx, true)
+	if err != nil {
+		return "", "", nil, err
+	}
+	merged := filepath.Join(dir, field+"_merged.xlsx")
+	if err := writeGridXlsx(mg.Rows, merged); err != nil {
+		return "", "", nil, err
+	}
+	notes := []string{
+		fmt.Sprintf(L["note_batch"], mg.Files, len(mg.Rows)-1),
+		L["note_merge"],
+	}
+	notes = append(notes, mg.Notes...)
+	return merged, fmt.Sprintf(L["note_batch_name"], mg.Files), notes, nil
+}
+
 type HistoryItem struct {
 	Time     string `json:"time"`
 	File     string `json:"file"`
@@ -978,7 +1095,7 @@ func openOutFolder() (string, error) {
 
 func handlerDownload(w http.ResponseWriter, r *http.Request) {
 	name := filepath.Base(r.URL.Query().Get("file")) // 防目录穿越
-	ok := strings.HasSuffix(name, ".xlsx") || strings.HasSuffix(name, ".log")
+	ok := strings.HasSuffix(name, ".xlsx") || strings.HasSuffix(name, ".log") || strings.HasSuffix(name, ".zip")
 	if !ok {
 		http.NotFound(w, r)
 		return
@@ -998,9 +1115,12 @@ func handlerDownload(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if strings.HasSuffix(name, ".xlsx") {
+	switch {
+	case strings.HasSuffix(name, ".xlsx"):
 		w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-	} else {
+	case strings.HasSuffix(name, ".zip"):
+		w.Header().Set("Content-Type", "application/zip")
+	default:
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	}
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename*=UTF-8''%s", name))
@@ -1131,10 +1251,22 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("/api/config-backups", handlerConfigBackups)
 	mux.HandleFunc("/api/config-restore", handlerConfigRestore)
 	mux.HandleFunc("/api/source-headers", handlerSourceHeaders)
+	mux.HandleFunc("/api/tpl/status", handlerTplStatus)
+	mux.HandleFunc("/api/tpl/reset", handlerTplReset)
+	// ---- 系统设置（口令锁 / 局域网 / 开机自启）----
+	mux.HandleFunc("/api/system", handlerSystemInfo)
+	mux.HandleFunc("/api/auth", handlerAuth)
+	mux.HandleFunc("/api/auth/state", handlerAuthState)
+	mux.HandleFunc("/api/system/password", handlerSetPassword)
+	mux.HandleFunc("/api/system/autostart", handlerSetAutostart)
+	mux.HandleFunc("/api/system/lan", handlerSetLAN)
+	mux.HandleFunc("/api/system/diag", handlerDiag)
+	mux.HandleFunc("/api/system/update", handlerUpdate)
 	mux.HandleFunc("/api/values-export", handlerValuesExport)
 	mux.HandleFunc("/api/values-import", handlerValuesImport)
 	mux.HandleFunc("/api/profiles", handlerProfiles)
 	mux.HandleFunc("/api/history", handlerHistory)
+	mux.HandleFunc("/api/stats", handlerStats)
 	mux.HandleFunc("/api/report", handlerReport)
 	mux.HandleFunc("/api/open-folder", handlerOpenFolder)
 	mux.HandleFunc("/api/convert", handlerConvert)
@@ -1157,15 +1289,23 @@ func buildMux() *http.ServeMux {
 // 返回 error 表示「这个端口没起来」（调用方据此顺延）。
 // 关键：先 net.Listen 成功、之后再开浏览器——否则端口冲突时会先弹出一个打不开的页面。
 func startServer(port int) error {
-	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	// 局域网模式监听所有网卡；否则只监听本机回环（默认，最安全）
+	host := "127.0.0.1"
+	if sysSettings().LAN {
+		host = "0.0.0.0"
+	}
+	addr := fmt.Sprintf("%s:%d", host, port)
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
 	}
 
 	currentPort = port
-	url := "http://" + addr + "/"
+	url := "http://127.0.0.1:" + fmt.Sprint(port) + "/"
 	appLog("物料档案转换工具 v%s 已启动：%s", appVersion, url)
+	if host == "0.0.0.0" {
+		appLog("局域网访问已开启，同事可访问：%s", strings.Join(lanURLs(), "  "))
+	}
 	appLog("配置文件: %s", configPath())
 	appLog("服务日志: %s", appLogPath())
 	if !noBrowser {
@@ -1173,7 +1313,7 @@ func startServer(port int) error {
 	}
 
 	go func() {
-		_ = http.Serve(ln, logMiddleware(buildMux()))
+		_ = http.Serve(ln, logMiddleware(authMiddleware(buildMux())))
 	}()
 	return nil
 }

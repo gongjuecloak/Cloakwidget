@@ -17,12 +17,12 @@ import (
 
 // ConvertReport 一次转换的完整记录（统计 + 预检明细 + 汇总）
 type ConvertReport struct {
-	ID         string         `json:"id"`      // 报告文件名（不含目录），如 MES物料档案_20261007_112514.json
-	Time       string         `json:"time"`    // 转换时间
-	Module     string         `json:"module"`  // 所属模块：空/materials = 物料档案，orders = 订单工单
-	Source     string         `json:"source"`  // 源文件名
-	Template   string         `json:"template"`// 模板文件名
-	Output     string         `json:"output"`  // 输出文件名
+	ID         string         `json:"id"`       // 报告文件名（不含目录），如 MES物料档案_20261007_112514.json
+	Time       string         `json:"time"`     // 转换时间
+	Module     string         `json:"module"`   // 所属模块：空/materials = 物料档案，orders = 订单工单
+	Source     string         `json:"source"`   // 源文件名
+	Template   string         `json:"template"` // 模板文件名
+	Output     string         `json:"output"`   // 输出文件名
 	Rows       int            `json:"rows"`
 	ElapsedMS  int64          `json:"elapsed_ms"`
 	IssueTotal int            `json:"issue_total"`

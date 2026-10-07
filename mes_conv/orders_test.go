@@ -71,9 +71,9 @@ func TestAliasCrossVariant(t *testing.T) {
 func TestResolveMappingSkipsEmptyTarget(t *testing.T) {
 	g := grid([]string{"訂單單號", "備註", "品號", "備註"}, nil)
 	out := resolveMapping(g, map[string]string{
-		"訂單單號":   "订单编号",
+		"訂單單號":    "订单编号",
 		"備註.1|備註": "备注",
-		"業務員":    "", // 映射到空 = 不导出
+		"業務員":     "", // 映射到空 = 不导出
 	}, defaultColumnAliases())
 
 	if len(out) != 2 {
@@ -103,11 +103,11 @@ func TestDetectHeaderRowSkipsTitle(t *testing.T) {
 // 日期单元格归一：Excel 序列号 / 多种分隔符都要变成 YYYY-MM-DD
 func TestParseDateCell(t *testing.T) {
 	cases := map[string]string{
-		"2026-09-03":          "2026-09-03",
-		"2026/09/03":          "2026-09-03",
-		"20260903":            "2026-09-03",
-		"2026.09.03":          "2026-09-03",
-		"2026年9月3日":          "2026-09-03",
+		"2026-09-03": "2026-09-03",
+		"2026/09/03": "2026-09-03",
+		"20260903":   "2026-09-03",
+		"2026.09.03": "2026-09-03",
+		"2026年9月3日":  "2026-09-03",
 	}
 	for in, want := range cases {
 		if got := parseDateCell(in); got != want {

@@ -8,21 +8,21 @@ import (
 
 // FieldRule 描述一个目标列的取值规则
 type FieldRule struct {
-	Target  string            `json:"target"`             // 目标列（模板干净列名，不带 "* "）
-	Source  string            `json:"source,omitempty"`   // 源 MB 列，如 "MB001"；fixed/rownum 时为空
-	Op      string            `json:"op"`                 // copy | dict | num | fixed | rownum | cond | kwbool | kwmap | unit | case
-	Trim    bool              `json:"trim,omitempty"`     // copy 时是否去首尾空格
-	Raw     bool              `json:"raw,omitempty"`      // copy 时保留原始首尾空格/换行(不 trim)
-	Default string            `json:"default,omitempty"`  // copy 时源为空则填此默认值
-	Dict    string            `json:"dict,omitempty"`     // op=dict 时使用的字典名
-	Value   string            `json:"value,omitempty"`    // op=fixed 时的常量
-	If      string            `json:"if,omitempty"`       // op=cond：源值等于 If（忽略大小写）则 Then，否则 Else
-	Then    string            `json:"then,omitempty"`
-	Else    string            `json:"else,omitempty"`
-	Keywords   []string            `json:"keywords,omitempty"`    // op=kwbool/kwmap：按此顺序匹配关键词
-	KWMap      map[string]string   `json:"kwmap,omitempty"`       // op=kwmap：关键词 -> 写入值
-	Cases      []WhenCase          `json:"cases,omitempty"`       // op=case：多条件，按顺序首命中
-	DefaultOut string              `json:"default_out,omitempty"` // op=case：全不命中时写入
+	Target     string            `json:"target"`            // 目标列（模板干净列名，不带 "* "）
+	Source     string            `json:"source,omitempty"`  // 源 MB 列，如 "MB001"；fixed/rownum 时为空
+	Op         string            `json:"op"`                // copy | dict | num | fixed | rownum | cond | kwbool | kwmap | unit | case
+	Trim       bool              `json:"trim,omitempty"`    // copy 时是否去首尾空格
+	Raw        bool              `json:"raw,omitempty"`     // copy 时保留原始首尾空格/换行(不 trim)
+	Default    string            `json:"default,omitempty"` // copy 时源为空则填此默认值
+	Dict       string            `json:"dict,omitempty"`    // op=dict 时使用的字典名
+	Value      string            `json:"value,omitempty"`   // op=fixed 时的常量
+	If         string            `json:"if,omitempty"`      // op=cond：源值等于 If（忽略大小写）则 Then，否则 Else
+	Then       string            `json:"then,omitempty"`
+	Else       string            `json:"else,omitempty"`
+	Keywords   []string          `json:"keywords,omitempty"`    // op=kwbool/kwmap：按此顺序匹配关键词
+	KWMap      map[string]string `json:"kwmap,omitempty"`       // op=kwmap：关键词 -> 写入值
+	Cases      []WhenCase        `json:"cases,omitempty"`       // op=case：多条件，按顺序首命中
+	DefaultOut string            `json:"default_out,omitempty"` // op=case：全不命中时写入
 }
 
 // WhenCase 描述 op=case 的一个分支条件
@@ -45,6 +45,9 @@ type Config struct {
 	// ValueWhitelist 目标列 -> 允许值清单。写出的值不在清单中时只「告警」(不影响输出)，
 	// 用于提前发现会导致 MES 导入失败的值（例如基本单位不在 MES 单位档案里）。
 	ValueWhitelist map[string][]string `json:"value_whitelist,omitempty"`
+	// DuplicateKeys 需要做重复检查的目标列。每列各自成组（不是组合键），
+	// 与 MES 的「物料编码唯一」这类约束对应。留空则默认检查「物料编码」。
+	DuplicateKeys []string `json:"duplicate_keys,omitempty"`
 }
 
 // exeDir 返回可执行文件所在目录（配置文件放在这里）
@@ -150,7 +153,7 @@ func defaultConfig() *Config {
 			"㎡": "平方米", "m2": "平方米", "m³": "立方米", "m3": "立方米",
 			"pcs":  "PCS", // 源档小写 pcs → 档案中的 PCS
 			"pcsq": "PCS", // 源档拼写错误 PCSQ → 档案中的 PCS
-			"捲":   "卷",  // 源档繁体「捲」→ 档案中的「卷」
+			"捲":    "卷",   // 源档繁体「捲」→ 档案中的「卷」
 		},
 		// 来自 MES「单位档案」(计量单位 (2).xls，55 条 U001~U055) 的全部「单位名称」去重（53 个）。
 		// 基本单位的输出值若不在此清单中，预检会告警提示「导入 MES 可能失败」，但不阻断转换。
