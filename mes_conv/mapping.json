@@ -1,0 +1,316 @@
+{
+  "source_sheet": 0,
+  "template_sheet": 0,
+  "output_sheet": "物料档案",
+  "fields": [
+    {
+      "target": "物料编码",
+      "source": "MB001",
+      "op": "copy",
+      "trim": true
+    },
+    {
+      "target": "物料名称",
+      "source": "MB002",
+      "op": "copy",
+      "raw": true
+    },
+    {
+      "target": "物料规格",
+      "source": "MB003",
+      "op": "copy",
+      "raw": true
+    },
+    {
+      "target": "显示顺序",
+      "op": "rownum"
+    },
+    {
+      "target": "物料分类",
+      "source": "MB142",
+      "op": "copy",
+      "default": "臨時分類"
+    },
+    {
+      "target": "物料类型",
+      "source": "MB005",
+      "op": "dict",
+      "dict": "matType"
+    },
+    {
+      "target": "基本单位",
+      "source": "MB004",
+      "op": "unit"
+    },
+    {
+      "target": "物料来源",
+      "source": "MB025",
+      "op": "dict",
+      "dict": "matSource"
+    },
+    {
+      "target": "序列号规则编码",
+      "op": "fixed",
+      "value": "SN001"
+    },
+    {
+      "target": "默认发料仓库",
+      "op": "fixed",
+      "value": "虚拟仓"
+    },
+    {
+      "target": "默认供应商",
+      "source": "MB032",
+      "op": "copy"
+    },
+    {
+      "target": "批次管理",
+      "source": "MB022",
+      "op": "cond",
+      "if": "N",
+      "then": "否",
+      "else": "是"
+    },
+    {
+      "target": "序列管理",
+      "op": "fixed",
+      "value": "是"
+    },
+    {
+      "target": "保质期天数",
+      "source": "MB023",
+      "op": "num"
+    },
+    {
+      "target": "时效物料",
+      "op": "fixed",
+      "value": "否"
+    },
+    {
+      "target": "危险品标识",
+      "op": "fixed",
+      "value": "否"
+    },
+    {
+      "target": "关键物料",
+      "op": "fixed",
+      "value": "否"
+    },
+    {
+      "target": "物料状态",
+      "op": "fixed",
+      "value": "正常"
+    },
+    {
+      "target": "ABC分类",
+      "source": "MB027",
+      "op": "num"
+    },
+    {
+      "target": "虚拟件标识",
+      "op": "fixed",
+      "value": "否"
+    },
+    {
+      "target": "虚设件标识",
+      "op": "fixed",
+      "value": "否"
+    },
+    {
+      "target": "可采购标识",
+      "op": "fixed",
+      "value": "否"
+    },
+    {
+      "target": "可生产标识",
+      "op": "case",
+      "cases": [
+        {
+          "source": "MB005",
+          "match": "eq",
+          "value": "110",
+          "then": "是"
+        },
+        {
+          "source": "MB002",
+          "match": "contains",
+          "keywords": [
+            "裁切",
+            "預型",
+            "成型",
+            "膠合",
+            "補磨",
+            "塗裝"
+          ],
+          "then": "是"
+        }
+      ],
+      "default_out": "否"
+    },
+    {
+      "target": "可销售标识",
+      "op": "fixed",
+      "value": "是"
+    },
+    {
+      "target": "可委外标识",
+      "op": "fixed",
+      "value": "否"
+    },
+    {
+      "target": "工艺路线名称",
+      "op": "case",
+      "cases": [
+        {
+          "source": "MB005",
+          "match": "eq",
+          "value": "110",
+          "then": "包装(đóng gói)"
+        },
+        {
+          "source": "MB002",
+          "match": "contains",
+          "keywords": [
+            "裁切"
+          ],
+          "then": "裁切(cắt xén)"
+        },
+        {
+          "source": "MB002",
+          "match": "contains",
+          "keywords": [
+            "預型"
+          ],
+          "then": "预型(tiền định hình)"
+        },
+        {
+          "source": "MB002",
+          "match": "contains",
+          "keywords": [
+            "成型"
+          ],
+          "then": "成型(Công đoạn tạo hình)"
+        },
+        {
+          "source": "MB002",
+          "match": "contains",
+          "keywords": [
+            "膠合"
+          ],
+          "then": "胶合(dán keo / ép keo)"
+        },
+        {
+          "source": "MB002",
+          "match": "contains",
+          "keywords": [
+            "補磨"
+          ],
+          "then": "补土(trét bả)"
+        },
+        {
+          "source": "MB002",
+          "match": "contains",
+          "keywords": [
+            "塗裝"
+          ],
+          "then": "涂装(Sơn khung xe)"
+        }
+      ]
+    }
+  ],
+  "dicts": {
+    "matSource": {
+      "M": "自制",
+      "P": "外购",
+      "S": "委外"
+    },
+    "matType": {
+      "110": "成品",
+      "120": "原材料",
+      "130": "耗材",
+      "140": "客供品",
+      "150": "开发试作半成品",
+      "160": "半成品",
+      "170": "费用类(五金/模具/开版)",
+      "171": "收入类(模具/开版请款)",
+      "180": "管销类(事务性用品)",
+      "190": "托工类(耗用内部材料)",
+      "191": "托工类(纯托工)",
+      "210": "房屋建築",
+      "211": "机器设备",
+      "212": "运输设备",
+      "213": "办公设备",
+      "214": "其它固资"
+    }
+  },
+  "unit_map": {
+    "g": "克",
+    "kg": "千克",
+    "m": "米",
+    "m2": "平方米",
+    "m3": "立方米",
+    "mm": "毫米",
+    "m³": "立方米",
+    "pcs": "PCS",
+    "pcsq": "PCS",
+    "㎡": "平方米",
+    "捲": "卷"
+  },
+  "value_whitelist": {
+    "基本单位": [
+      "千克",
+      "克",
+      "毫米",
+      "米",
+      "平方米",
+      "立方米",
+      "件",
+      "套",
+      "卷",
+      "罐",
+      "支",
+      "組",
+      "组",
+      "只",
+      "張",
+      "桶",
+      "條",
+      "臺",
+      "雙",
+      "式",
+      "台",
+      "箱",
+      "丸",
+      "片",
+      "盒",
+      "包",
+      "疊",
+      "瓶",
+      "個",
+      "本",
+      "尺",
+      "平方毫米",
+      "PCS",
+      "SET",
+      "SPC",
+      "PSC",
+      "PC",
+      "PXS",
+      "PCA",
+      "PCD",
+      "P0CS",
+      "PCSB02",
+      "PCSA01",
+      "A010",
+      "Bao",
+      "bale",
+      "gal",
+      "barrel",
+      "L",
+      "Lít",
+      "Bottle",
+      "Coil",
+      "XẤP"
+    ]
+  }
+}

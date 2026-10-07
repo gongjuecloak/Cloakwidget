@@ -1,0 +1,65 @@
+# ============ 构建产物 ============
+*.exe
+mes_conv/*.syso
+mes_conv/out/
+mes_conv/logs/
+mes_conv/backup/
+mes_conv/configs/
+
+# 运行期生成的配置（首次运行由程序自动写出，仓库里只保留内置默认值）
+mes_conv/orders.json
+
+# ============ 分享版里的副本 ============
+# 这三个文件由 build.sh 从 mes_conv/ 同步过去，是产物不是源码，不单独维护
+MES物料档案转换工具_分享版/*.exe
+MES物料档案转换工具_分享版/webui.html
+MES物料档案转换工具_分享版/mapping.json
+MES物料档案转换工具_分享版/orders.json
+MES物料档案转换工具_分享版/out/
+MES物料档案转换工具_分享版/logs/
+MES物料档案转换工具_分享版/backup/
+MES物料档案转换工具_分享版/configs/
+
+# ============ 临时文件 ============
+_golden/
+_chrome_prof/
+share_dist/
+_dom.html
+_check.js
+*.xlsx
+*.log
+*.bak
+*.bak_*
+
+# ============ 工作区本地笔记 ============
+.workbuddy/
+
+# ============ 一次性排查脚本（历史遗留，不入库） ============
+probe3.py
+probe4.py
+probe5.py
+probe6.py
+probe_class.py
+probe_num.py
+probe_sheets.py
+probe_unit.py
+cmp.py
+cmpfull.py
+debug2.py
+dictdump.py
+distinct.py
+fullhdr.py
+refmap.py
+refmap2.py
+tpl_probe.py
+dump_unit2.py
+recon_unit.py
+sync_unit_cfg.py
+verify_exe.py
+verify_v12.py
+verify_v12b.py
+verify_v13cmp.py
+verify_render.py
+
+xlsx_inspect.py
+mes_conv/appicon_preview.png
