@@ -1,0 +1,18 @@
+# MES 转换工具 · 更新镜像服务
+# 用法（在服务器上）：
+#   docker compose up -d --build
+# 容器监听 18080（宿主）→ 8080（容器），nginx 反代到 127.0.0.1:18080。
+services:
+  mes-mirror:
+    build: .
+    image: mes-mirror:latest
+    container_name: mes-mirror
+    restart: always
+    ports:
+      - "18080:8080"
+    volumes:
+      - ./data:/data/cache
+    environment:
+      - MIRROR_REPO=gongjuecloak/Cloakwidget
+      - MIRROR_PORT=8080
+      - MIRROR_CACHE=/data/cache

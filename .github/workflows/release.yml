@@ -131,11 +131,35 @@ jobs:
         with:
           name: exe
           path: ./dist
+
+      - name: 生成 version.json 清单（含 SHA256，供客户端校验）
+        run: |
+          EXE="dist/MES-Converter-${{ github.ref_name }}.exe"
+          VER="${{ github.ref_name }}"
+          VER="${VER#v}"
+          SHA=$(sha256sum "$EXE" | awk '{print $1}')
+          SIZE=$(stat -c%s "$EXE")
+          cat > dist/version.json <<JSON
+          {
+            "version": "$VER",
+            "exe": {
+              "name": "MES-Converter-${{ github.ref_name }}.exe",
+              "url": "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/MES-Converter-${{ github.ref_name }}.exe",
+              "sha256": "$SHA",
+              "size": $SIZE
+            }
+          }
+          JSON
+          echo "version.json 内容："; cat dist/version.json
+
       - name: 创建 Release
         uses: softprops/action-gh-release@v2
         with:
           # 用 ASCII 文件名（GitHub 对非 ASCII 的 asset 名会静默改写，曾踩过坑）
-          files: dist/MES-Converter-${{ github.ref_name }}.exe
+          # version.json 为更新清单：客户端据此校验 SHA256 后再替换。
+          files: |
+            dist/MES-Converter-${{ github.ref_name }}.exe
+            dist/version.json
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

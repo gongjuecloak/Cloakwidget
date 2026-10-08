@@ -1,14 +1,22 @@
 package main
 
 // ============================================================================
-// 检查更新（GitHub Releases）
+// 检查更新 + 自动更新
 //
-// 仓库是公开库，匿名调 api.github.com 即可，不需要 token；也没有自动下载 ——
-// 只告诉用户「有新版本了、在哪下载」，装不装、什么时候装由人决定。
-// 网络不通/没发布过 release 都只是「查不到」，不能影响工具本身的使用。
+// 信任模型（v1.9.0 起）：
+//   更新来源 = 「内网镜像」优先，GitHub Releases 兜底。
+//   两个来源都通过同一个 version.json 清单来描述版本：含版本号、exe 文件名、
+//   SHA256 与大小。客户端拉到清单后，先比对版本，再下载 exe，下载完必须校验
+//   SHA256 与清单一致才允许替换 —— 不一致一律中止，绝不拿来历不明的文件覆盖自己。
+//   这样即使镜像 / GitHub 任一环节被投毒，只要清单里的哈希没被篡改（源来自 CI 构建时
+//   对产物的真实哈希），就不会被静默装进恶意 exe。
+//
+// 网络/限流/无外网：任一环节失败都只是「查不到更新」，绝不能影响工具本身使用。
 // ============================================================================
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +32,17 @@ import (
 
 // releaseRepo 发布页所在仓库
 const releaseRepo = "gongjuecloak/Cloakwidget"
+
+// updateMirrorBase 更新镜像基址（工厂工位机优先从这里拉）。
+// 可用环境变量 MES_UPDATE_MIRROR 覆盖（例如内网 HTTP 或共享盘映射）。
+// 默认指向自有服务器上的镜像服务；若该地址不可达，自动回退 GitHub。
+var updateMirrorBase = "https://update.lzplus.top"
+
+func init() {
+	if v := strings.TrimSpace(os.Getenv("MES_UPDATE_MIRROR")); v != "" {
+		updateMirrorBase = strings.TrimRight(v, "/")
+	}
+}
 
 // parseVer 把 "v1.5.0" / "1.5" / "1.6.0-beta" 解析成三段数字
 func parseVer(s string) [3]int {
@@ -119,75 +138,111 @@ func fetchLatestRelease() (*ghRelease, error) {
 	}, nil
 }
 
-// handlerUpdate 检查更新
+// ============================================================================
+// 版本清单（version.json）
+// ============================================================================
+
+// updateManifest 描述一次发布的更新包；由 CI 在构建时生成并随 release 一起上传。
+type updateManifest struct {
+	Version string `json:"version"`
+	Exe     struct {
+		Name   string `json:"name"`   // 如 MES-Converter-v1.9.0.exe
+		URL    string `json:"url"`    // GitHub 上的下载地址（兜底用）
+		SHA256 string `json:"sha256"` // 构建时算出的真实哈希，校验锚点
+		Size   int64  `json:"size"`
+	} `json:"exe"`
+}
+
+// fetchManifest 拉取并解析 version.json。带较短超时（镜像不可达要快点回退）。
+func fetchManifest(rawURL string) (*updateManifest, error) {
+	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "MESConverter/"+appVersion)
+	cli := &http.Client{Timeout: 6 * time.Second}
+	resp, err := cli.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	var m updateManifest
+	if err := json.NewDecoder(resp.Body).Decode(&m); err != nil {
+		return nil, err
+	}
+	if m.Version == "" || m.Exe.Name == "" || m.Exe.SHA256 == "" {
+		return nil, fmt.Errorf("清单字段不完整")
+	}
+	return &m, nil
+}
+
+// resolveUpdate 决定有没有新版本、从哪下。
+// 返回 (清单, 下载基址)；基址为空表示用清单里的 GitHub URL，非空表示用该基址 + "/" + exe.Name。
+// 镜像优先：镜像可达且更新则直接采用；否则回退 GitHub 的 version.json 资产。
+func resolveUpdate() (*updateManifest, string) {
+	if updateMirrorBase != "" {
+		if m, err := fetchManifest(updateMirrorBase + "/version.json"); err == nil &&
+			versionLess(appVersion, m.Version) {
+			return m, updateMirrorBase
+		}
+	}
+	rel, err := fetchLatestRelease()
+	if err == nil {
+		for _, a := range rel.Assets {
+			if strings.EqualFold(a.Name, "version.json") {
+				if m, e := fetchManifest(a.URL); e == nil &&
+					versionLess(appVersion, m.Version) {
+					return m, "" // 用清单里的 GitHub 下载地址
+				}
+			}
+		}
+	}
+	return nil, ""
+}
+
+// handlerUpdate 检查更新（手动点按钮）
 func handlerUpdate(w http.ResponseWriter, r *http.Request) {
 	lang := reqLang(r)
 	L := msgs(lang)
 
-	rel, err := fetchLatestRelease()
-	if err != nil {
-		writeJSON(w, map[string]interface{}{
-			"ok": false, "current": appVersion,
-			"error": fmt.Sprintf(L["msg_update_fail"], err.Error()),
-		})
-		return
+	m, base := resolveUpdate()
+	latest := appVersion
+	has := false
+	var dl string
+	if m != nil {
+		latest = m.Version
+		has = true
+		if base != "" {
+			dl = base + "/" + m.Exe.Name
+		} else {
+			dl = m.Exe.URL
+		}
 	}
-	latest := rel.TagName
-	has := versionLess(appVersion, latest)
 	msg := fmt.Sprintf(L["msg_update_latest"], appVersion)
 	if has {
 		msg = fmt.Sprintf(L["msg_update_new"], latest, appVersion)
 	}
-	// 优先给 zip（分享版是 zip 分发的），没有再退回 release 页
-	dl := rel.HTMLURL
-	for _, a := range rel.Assets {
-		n := strings.ToLower(a.Name)
-		if strings.HasSuffix(n, ".zip") || strings.HasSuffix(n, ".exe") {
-			dl = a.URL
-			break
+	// 尽量给更新说明（best-effort）
+	notes := ""
+	if rel, e := fetchLatestRelease(); e == nil {
+		notes = rel.Body
+		if len(notes) > 4000 {
+			notes = notes[:4000]
 		}
-	}
-	body := rel.Body
-	if len(body) > 4000 {
-		body = body[:4000]
 	}
 	writeJSON(w, map[string]interface{}{
 		"ok": true, "current": appVersion, "latest": latest, "has_update": has,
-		"url": rel.HTMLURL, "download": dl, "notes": body, "message": msg,
+		"url":      "https://github.com/" + releaseRepo + "/releases",
+		"download": dl, "notes": notes, "message": msg,
 	})
 }
 
 // ============================================================================
-// 自动更新（直连 GitHub Releases）
-//
-// 思路：启动后静默检查 GitHub 上的最新 release；若有新版本，后台下载 exe 并就地
-// 替换当前 exe（Windows 允许重命名正在运行的 exe），下次启动生效。点「检查并更新」
-// 则会下载替换并立即重启生效。
-//
-// 信任边界：未签名的 exe 无论是手动还是自动下载，首次运行都会被 SmartScreen 拦一次，
-// 这一层不在本功能范围内（需要 EV/OV 证书或内网组策略豁免）。这里只解决「拉取+替换」，
-// 让用户免去手动下载解压。
+// 下载 + 校验 + 就地替换
 // ============================================================================
-
-// pickExeAsset 从 release 里挑 .exe 更新包
-func pickExeAsset(rel *ghRelease) string {
-	for _, a := range rel.Assets {
-		if strings.HasSuffix(strings.ToLower(a.Name), ".exe") {
-			return a.URL
-		}
-	}
-	return ""
-}
-
-// assetSize 取某个下载地址对应的资源大小（用于下载后校验）
-func assetSize(rel *ghRelease, url string) int64 {
-	for _, a := range rel.Assets {
-		if a.URL == url {
-			return a.Size
-		}
-	}
-	return 0
-}
 
 // downloadFile 下载 url 到 dest，可选校验内容长度
 func downloadFile(url, dest string, expectSize int64) error {
@@ -220,12 +275,29 @@ func downloadFile(url, dest string, expectSize int64) error {
 	return nil
 }
 
-// applyUpdate 下载新 exe 并就地替换当前 exe。
+// sha256File 计算文件 SHA256（十六进制小写）
+func sha256File(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// applyUpdateFromManifest 下载 exe 并就地替换当前 exe。
 // 用「改名旧 exe → 移动新 exe 落位」的方式，绕开「不能覆盖正在运行的 exe」的限制。
-func applyUpdate(rel *ghRelease) error {
-	url := pickExeAsset(rel)
-	if url == "" {
-		return errors.New("找不到 exe 更新包")
+// 关键：下载完先校验 SHA256 与清单一致，不一致立即放弃，绝不替换。
+func applyUpdateFromManifest(m *updateManifest, base string) error {
+	var dlURL string
+	if base != "" {
+		dlURL = base + "/" + m.Exe.Name
+	} else {
+		dlURL = m.Exe.URL
 	}
 	exe, err := os.Executable()
 	if err != nil {
@@ -234,9 +306,19 @@ func applyUpdate(rel *ghRelease) error {
 	exe = filepath.Clean(exe)
 	tmp := exe + ".new"
 	_ = os.Remove(tmp)
-	if err := downloadFile(url, tmp, assetSize(rel, url)); err != nil {
+	if err := downloadFile(dlURL, tmp, m.Exe.Size); err != nil {
 		_ = os.Remove(tmp)
 		return err
+	}
+	// 校验 SHA256 —— 不通过则中止，绝不替换（防投毒）
+	sum, err := sha256File(tmp)
+	if err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if !strings.EqualFold(sum, m.Exe.SHA256) {
+		_ = os.Remove(tmp)
+		return errors.New("更新包校验失败（SHA256 不匹配），已放弃更新以保证安全")
 	}
 	old := exe + ".old"
 	_ = os.Remove(old)
@@ -272,7 +354,7 @@ func relaunchSelf() {
 	os.Exit(0)
 }
 
-// autoUpdateStatePath 记录上次检查时间，避免每次启动都打 GitHub
+// autoUpdateStatePath 记录上次检查时间，避免每次启动都打网络
 func autoUpdateStatePath() string {
 	return filepath.Join(exeDir(), "autoupdate.json")
 }
@@ -305,39 +387,30 @@ func autoUpdate() {
 		return
 	}
 	autoUpdateMarkChecked()
-	rel, err := fetchLatestRelease()
-	if err != nil {
+	m, base := resolveUpdate()
+	if m == nil {
 		return
 	}
-	if !versionLess(appVersion, rel.TagName) {
-		return
-	}
-	if err := applyUpdate(rel); err != nil {
+	if err := applyUpdateFromManifest(m, base); err != nil {
 		appLog("后台自动更新失败：%v", err)
 		return
 	}
-	appLog("已自动更新到 %s，下次启动生效（或重启程序立即生效）。", rel.TagName)
+	appLog("已自动更新到 %s，下次启动生效（或重启程序立即生效）。", m.Version)
 }
 
 // handlerUpdateApply 手动「检查并更新」：下载替换后立刻重启生效
 func handlerUpdateApply(w http.ResponseWriter, r *http.Request) {
 	lang := reqLang(r)
 	L := msgs(lang)
-	rel, err := fetchLatestRelease()
-	if err != nil {
-		writeJSON(w, map[string]interface{}{
-			"ok": false, "error": fmt.Sprintf(L["msg_update_fail"], err.Error()),
-		})
-		return
-	}
-	if !versionLess(appVersion, rel.TagName) {
+	m, base := resolveUpdate()
+	if m == nil {
 		writeJSON(w, map[string]interface{}{
 			"ok": true, "restart": false,
 			"message": fmt.Sprintf(L["msg_update_latest"], appVersion),
 		})
 		return
 	}
-	if err := applyUpdate(rel); err != nil {
+	if err := applyUpdateFromManifest(m, base); err != nil {
 		writeJSON(w, map[string]interface{}{
 			"ok": false, "error": fmt.Sprintf(L["msg_update_apply_fail"], err.Error()),
 		})
@@ -345,7 +418,7 @@ func handlerUpdateApply(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, map[string]interface{}{
 		"ok": true, "restart": true,
-		"message": fmt.Sprintf(L["msg_update_applied"], rel.TagName),
+		"message": fmt.Sprintf(L["msg_update_applied"], m.Version),
 	})
 	// 先让响应发出去，再重启，确保前端能收到「已更新」提示
 	go func() {
