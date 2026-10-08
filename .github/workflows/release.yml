@@ -91,10 +91,18 @@ jobs:
           go build -ldflags "-s -w -H=windowsgui -X main.buildTime=$BT" \
             -o "MES-Converter-${{ github.ref_name }}.exe" .
 
+      - name: 判定是否启用代码签名
+        id: signcheck
+        env:
+          PFX_B64: ${{ secrets.CODESIGN_PFX }}
+        run: |
+          if [ -n "$PFX_B64" ]; then echo "enabled=true" >> "$GITHUB_OUTPUT"; else echo "enabled=false" >> "$GITHUB_OUTPUT"; fi
+
       - name: （可选）代码签名
         # 仅当仓库配置了 CODESIGN_PFX 机密时才执行。
+        # 注意：secrets 上下文不能用于 if 表达式，故用上一步的 outputs.enabled 来门控。
         # 自签名证书对 SmartScreen 无效，这里面向的是 OV/EV 证书（PEM 或 PFX 的 base64）。
-        if: ${{ secrets.CODESIGN_PFX != '' }}
+        if: steps.signcheck.outputs.enabled == 'true'
         shell: pwsh
         env:
           PFX_B64: ${{ secrets.CODESIGN_PFX }}
