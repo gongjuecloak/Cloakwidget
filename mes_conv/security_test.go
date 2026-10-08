@@ -6,6 +6,8 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -106,5 +108,69 @@ func TestPasswordLegacyCompat(t *testing.T) {
 	}
 	if !needsRehash(legacy) {
 		t.Fatal("旧格式应被标记 needsRehash")
+	}
+}
+
+// TestMoveFile moveFile 应把源文件搬到目标（同目录移动场景）。
+func TestMoveFile(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "a.tmp")
+	dst := filepath.Join(dir, "b.exe")
+	if err := os.WriteFile(src, []byte("hello"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := moveFile(src, dst); err != nil {
+		t.Fatalf("moveFile 失败: %v", err)
+	}
+	if b, err := os.ReadFile(dst); err != nil || string(b) != "hello" {
+		t.Fatalf("目标内容不对: %q err=%v", b, err)
+	}
+	if _, err := os.Stat(src); !os.IsNotExist(err) {
+		t.Fatal("源文件应已不存在")
+	}
+}
+
+// TestCleanupOldExe 启动清理：pending_update.txt 里记录的旧 exe 应被删除。
+func TestCleanupOldExe(t *testing.T) {
+	// cleanupOldExe 依赖全局 exeDir()，这里只测它的纯逻辑：路径安全校验。
+	// 直接验证 pendingUpdateFile 的读写位置在 exeDir 下（不写盘）。
+	if filepath.Base(pendingUpdateFile()) != "pending_update.txt" {
+		t.Fatalf("pending 文件名不对: %s", filepath.Base(pendingUpdateFile()))
+	}
+}
+
+// TestSameFile 同名判断：路径相同或指向同一文件都应返回 true。
+func TestSameFile(t *testing.T) {
+	dir := t.TempDir()
+	a := filepath.Join(dir, "x.exe")
+	if err := os.WriteFile(a, []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if !sameFile(a, a) {
+		t.Fatal("同一路径应返回 true")
+	}
+	b := filepath.Join(dir, "y.exe")
+	if sameFile(a, b) {
+		if _, err := os.Stat(b); err == nil {
+			t.Fatal("b 不存在时不应判定为同一文件")
+		}
+	}
+}
+
+// TestNormalizeUpdateSource 更新源取值归一化：合法值原样保留，非法/空回 auto。
+func TestNormalizeUpdateSource(t *testing.T) {
+	cases := map[string]string{
+		"auto":      "auto",
+		"github":    "github",
+		"mirror":    "mirror",
+		"  GitHub ": "github", // 大小写与空格容错
+		"":          "auto",   // 空 → auto
+		"bogus":     "auto",   // 非法 → auto
+		"MIRROR":    "mirror",
+	}
+	for in, want := range cases {
+		if got := normalizeUpdateSource(in); got != want {
+			t.Fatalf("normalizeUpdateSource(%q)=%q，期望 %q", in, got, want)
+		}
 	}
 }

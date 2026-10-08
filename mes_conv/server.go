@@ -1310,6 +1310,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("/api/system/password", handlerSetPassword)
 	mux.HandleFunc("/api/system/autostart", handlerSetAutostart)
 	mux.HandleFunc("/api/system/lan", handlerSetLAN)
+	mux.HandleFunc("/api/system/update-source", handlerSetUpdateSource)
 	mux.HandleFunc("/api/system/welcomed", handlerSetWelcomed)
 	mux.HandleFunc("/api/system/diag", handlerDiag)
 	mux.HandleFunc("/api/system/update", handlerUpdate)

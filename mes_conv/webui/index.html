@@ -401,6 +401,19 @@
           </div>
         </div>
         <div class="sys-card">
+          <div class="sys-card-h"><span id="sys_src_title">更新源</span><span class="pill" id="sysSrcPill">—</span></div>
+          <p class="sys-card-p" id="sys_src_desc">选择从哪里获取新版本。默认自动：优先走镜像，镜像不可达时回退 GitHub。</p>
+          <div class="pc-line">
+            <select id="sysSrcSel">
+              <option value="auto" id="sysSrcOptAuto">自动（镜像优先）</option>
+              <option value="github" id="sysSrcOptGithub">仅 GitHub</option>
+              <option value="mirror" id="sysSrcOptMirror">仅镜像仓库</option>
+            </select>
+            <button class="ghost" id="sysSrcSave">保存</button>
+          </div>
+          <div class="sys-addr" id="sysSrcInfo"></div>
+        </div>
+        <div class="sys-card">
           <div class="sys-card-h"><span id="sys_auto_title">开机自启</span><span class="pill" id="sysAutoPill">—</span></div>
           <p class="sys-card-p" id="sys_auto_desc">登录 Windows 后自动在右下角托盘运行，不弹浏览器。只写当前用户的启动项，不需要管理员权限。</p>
           <div class="pc-line">

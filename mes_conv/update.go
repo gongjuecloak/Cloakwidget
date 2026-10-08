@@ -35,7 +35,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -156,23 +155,6 @@ func randHex(n int) string {
 		return ""
 	}
 	return hex.EncodeToString(b)
-}
-
-// stripVersionInName 去掉文件名里可能带着的旧版本号（如 MES-Converter-v1.8.0.exe -> MES-Converter.exe），
-// 避免「文件名显示 1.8.0、实际跑的是 1.9.0」的误导；无版本号则原样返回。
-var reVerSuffix = regexp.MustCompile(`[-_]?v?\d+\.\d+(\.\d+)?$`)
-
-func stripVersionInName(name string) string {
-	ext := ""
-	if strings.HasSuffix(strings.ToLower(name), ".exe") {
-		ext = ".exe"
-		name = strings.TrimSuffix(name, ".exe")
-	}
-	clean := reVerSuffix.ReplaceAllString(name, "")
-	if clean == "" {
-		return name + ext
-	}
-	return clean + ext
 }
 
 // parseVer 把 "v1.5.0" / "1.5" / "1.6.0-beta" 解析成三段数字
@@ -359,21 +341,37 @@ func fetchManifest(rawURL string) (*updateManifest, error) {
 
 // resolveUpdate 决定有没有新版本、从哪下。
 // 返回 (清单, 下载基址)；基址为空表示用清单里的 GitHub URL，非空表示用该基址 + "/" + exe.Name。
-// 镜像优先：镜像可达且更新则直接采用；否则回退 GitHub 的 version.json 资产。
+//
+// 更新源由 sys_settings.json 的 update_source 决定（界面「系统设置 → 更新源」可改）：
+//   - auto   （默认）镜像优先；镜像不可达/无新版时回退 GitHub
+//   - github 只查 GitHub（适合能直连外网的机器）
+//   - mirror 只查镜像、不回退（适合内网无法访问 GitHub 的机器，避免每次白等超时）
 func resolveUpdate() (*updateManifest, string) {
-	if updateMirrorBase != "" {
+	src := srcAuto
+	if s := sysSettings(); s.UpdateSource != "" {
+		src = normalizeUpdateSource(s.UpdateSource)
+	}
+	mirrorOK := updateMirrorBase != "" && src != srcGithub
+	githubOK := src != srcMirror
+
+	if mirrorOK {
 		if m, err := fetchManifest(updateMirrorBase + "/version.json"); err == nil &&
 			versionLess(appVersion, m.Version) {
 			return m, updateMirrorBase
 		}
+		if src == srcMirror {
+			return nil, "" // 只用镜像：镜像没有新版 / 不可达，就不更新了
+		}
 	}
-	rel, err := fetchLatestRelease()
-	if err == nil {
-		for _, a := range rel.Assets {
-			if strings.EqualFold(a.Name, "version.json") {
-				if m, e := fetchManifest(a.URL); e == nil &&
-					versionLess(appVersion, m.Version) {
-					return m, "" // 用清单里的 GitHub 下载地址
+	if githubOK {
+		rel, err := fetchLatestRelease()
+		if err == nil {
+			for _, a := range rel.Assets {
+				if strings.EqualFold(a.Name, "version.json") {
+					if m, e := fetchManifest(a.URL); e == nil &&
+						versionLess(appVersion, m.Version) {
+						return m, "" // 用清单里的 GitHub 下载地址
+					}
 				}
 			}
 		}
@@ -486,6 +484,53 @@ func sha256File(path string) (string, error) {
 // 关键：下载完先校验 SHA256 与清单一致，不一致立即放弃，绝不替换。
 // 替换成功后，把文件名里可能带着的旧版本号去掉（如 MES-Converter-v1.8.0.exe → MES-Converter.exe），
 // 避免「文件名显示 1.8.0、实际跑的是 1.9.0」的误导。
+// pendingUpdateFile 记录「上次更新时把新 exe 落到了哪个新文件名」。
+// 旧 exe 当时正在运行，Windows 不允许删除它；等下次启动（此时旧进程已退出）
+// 由 cleanupOldExe 清理，避免目录里堆一堆旧版本。
+func pendingUpdateFile() string { return filepath.Join(exeDir(), "pending_update.txt") }
+
+// cleanupOldExe 清理上一轮更新遗留的旧 exe。
+// 只在启动早期调用——此时本进程是刚启动的，别的旧进程早已退出，文件不再被锁。
+// 删不掉就跳过（下次启动还会再试），绝不影响启动。
+func cleanupOldExe() {
+	f, err := os.Open(pendingUpdateFile())
+	if err != nil {
+		return
+	}
+	name := strings.TrimSpace(string(readAllAndClose(f)))
+	if name == "" || filepath.Base(name) != name { // 只接受同目录下的纯文件名，防路径穿越
+		_ = os.Remove(pendingUpdateFile())
+		return
+	}
+	old := filepath.Join(exeDir(), name)
+	if _, err := os.Stat(old); err == nil {
+		if err := os.Remove(old); err != nil {
+			appLog("旧版本文件暂无法清理（可能被占用），下次启动再试：%s", name)
+			return // 保留 pending 文件，等下次
+		}
+		appLog("已清理上一版本的 exe：%s", name)
+	}
+	_ = os.Remove(pendingUpdateFile())
+}
+
+// readAllAndClose 读出全部内容并关闭（os.ReadFile 需要路径，这里给已打开的句柄用）
+func readAllAndClose(f *os.File) []byte {
+	defer f.Close()
+	b := make([]byte, 0, 256)
+	buf := make([]byte, 256)
+	for {
+		n, err := f.Read(buf)
+		b = append(b, buf[:n]...)
+		if err != nil {
+			break
+		}
+		if len(b) > 4096 {
+			break
+		}
+	}
+	return b
+}
+
 func applyUpdateFromManifest(m *updateManifest, base string) (string, error) {
 	var dlURL string
 	if base != "" {
@@ -514,25 +559,49 @@ func applyUpdateFromManifest(m *updateManifest, base string) (string, error) {
 		_ = os.Remove(tmp)
 		return "", errors.New("更新包校验失败（SHA256 不匹配），已放弃更新以保证安全")
 	}
-	old := exe + ".old"
-	_ = os.Remove(old)
-	if err := os.Rename(exe, old); err != nil {
+
+	// ---- 落位策略（不再重命名 / 删除当前 exe）----
+	//
+	// Windows 不允许删除或覆盖正在运行的 exe；重命名虽有时可行，但会被杀软 /
+	// 资源管理器 / 其他持有句柄的程序锁住（报 Access is denied），现场机器上
+	// 极易触发。因此改成最稳的「并存式替换」：
+	//
+	//	新版本落位成MES-Converter-v1.10.0.exe（全新文件名，绝不覆盖运行中的 exe）
+	//	→ 写 pending_update.txt 记下「下次要删的旧文件」
+	//	→ 本次运行继续用旧 exe（功能不受影响）
+	//	→ 下次启动时由 cleanupOldExe() 删除旧文件
+	//
+	// 代价是短期间目录里有两个 exe；对「稳定优先」的工厂场景远比更新失败划算。
+	newName := "MES-Converter-" + m.Version + ".exe"
+	newPath := filepath.Join(exeDir(), newName)
+	if sameFile(newPath, exe) {
+		// 已经是这个版本的文件名，无需处理
+		return exe, nil
+	}
+	_ = os.Remove(newPath) // 上一次更新若留下同名残留
+	if err := moveFile(tmp, newPath); err != nil {
 		_ = os.Remove(tmp)
-		return "", err
+		return "", fmt.Errorf("新版本落位失败：%w", err)
 	}
-	if err := os.Rename(tmp, exe); err != nil {
-		_ = os.Rename(old, exe) // 回滚，尽量不影响正在用的进程
-		return "", err
+	// 记下「下次启动删掉当前这个旧 exe」
+	if curName := filepath.Base(exe); curName != "" && curName != newName {
+		_ = os.WriteFile(pendingUpdateFile(), []byte(curName), 0644)
+		appLog("新版本已就位：%s（下次启动生效，并自动清理旧文件 %s）", newName, curName)
 	}
-	_ = os.Remove(old)
-	// 规范化文件名：去掉可能残留的旧版本号
-	finalName := filepath.Join(filepath.Dir(exe), stripVersionInName(filepath.Base(exe)))
-	if finalName != exe {
-		if err := os.Rename(exe, finalName); err == nil {
-			exe = finalName
-		}
+	return newPath, nil
+}
+
+// sameFile 判断两个路径是否指向同一个文件（不存在时按字符串比较）
+func sameFile(a, b string) bool {
+	if a == b {
+		return true
 	}
-	return exe, nil
+	fa, err1 := os.Stat(a)
+	fb, err2 := os.Stat(b)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	return os.SameFile(fa, fb)
 }
 
 // relaunchSelf 启动新 exe 并退出当前进程。
@@ -601,7 +670,33 @@ func autoUpdate() {
 		appLog("后台自动更新失败：%v", err)
 		return
 	}
-	appLog("已自动更新到 %s，下次启动生效（或重启程序立即生效）。", m.Version)
+	appLog("已自动更新到 %s，下次启动生效（重启程序可立即生效）。", m.Version)
+}
+
+// moveFile 移动文件；跨卷（不同磁盘）时先复制再删除。
+func moveFile(src, dst string) error {
+	if err := os.Rename(src, dst); err == nil {
+		return nil
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0755)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		_ = os.Remove(dst)
+		return err
+	}
+	if err := out.Close(); err != nil {
+		_ = os.Remove(dst)
+		return err
+	}
+	return os.Remove(src)
 }
 
 // handlerUpdateApply 手动「检查并更新」：下载替换后立刻重启生效

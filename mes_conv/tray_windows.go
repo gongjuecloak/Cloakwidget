@@ -11,12 +11,15 @@ package main
 // 退出走「销毁窗口 → WM_DESTROY → 清除托盘图标 → 退出消息循环 → os.Exit」。
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
-	"os/exec"
 	"runtime"
 	"strings"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -132,6 +135,7 @@ var (
 	procGetMenuState        = user32Proc.NewProc("GetMenuState")
 	procShellNotifyIconW    = shell32Proc.NewProc("Shell_NotifyIconW")
 	procGetModuleHandleW    = kernel32Proc.NewProc("GetModuleHandleW")
+	procMessageBoxW         = user32Proc.NewProc("MessageBoxW")
 )
 
 // ---------- 状态 ----------
@@ -158,6 +162,13 @@ type trayStrings struct {
 	Rows     string
 	Problems string
 	Warnings string
+	// 「检查更新」对话框
+	Checking   string
+	UpToDate   string
+	NewFound   string // 带两个 %s：最新版本、当前版本
+	UpdateFail string
+	ApplyNow   string
+	YesNo      string
 }
 
 func trayTexts(lang string) trayStrings {
@@ -173,6 +184,12 @@ func trayTexts(lang string) trayStrings {
 			Update:   "檢查更新…",
 			Quit:     "結束",
 			Rows:     "列", Problems: "問題", Warnings: "告警",
+			Checking:   "正在檢查更新…",
+			UpToDate:   "已是最新版本。\n\n目前版本：%s",
+			NewFound:   "發現新版本：%s\n目前版本：%s\n\n是否立即更新？",
+			UpdateFail: "檢查更新失敗：\n%v",
+			ApplyNow:   "更新",
+			YesNo:      "是|否",
 		}
 	case "vi":
 		return trayStrings{
@@ -185,6 +202,12 @@ func trayTexts(lang string) trayStrings {
 			Update:   "Kiem tra cap nhat…",
 			Quit:     "Thoat",
 			Rows:     "dong", Problems: "loi", Warnings: "canh bao",
+			Checking:   "Dang kiem tra cap nhat…",
+			UpToDate:   "Ban da dung phien ban moi nhat.\n\nPhien ban hien tai: %s",
+			NewFound:   "Co phien ban moi: %s\nPhien ban hien tai: %s\n\nCap nhat ngay bay gio?",
+			UpdateFail: "Kiem tra cap nhat that bai:\n%v",
+			ApplyNow:   "Cap nhat",
+			YesNo:      "Co|Khong",
 		}
 	case "en":
 		return trayStrings{
@@ -197,6 +220,12 @@ func trayTexts(lang string) trayStrings {
 			Update:   "Check for updates…",
 			Quit:     "Quit",
 			Rows:     "rows", Problems: "issues", Warnings: "warnings",
+			Checking:   "Checking for updates…",
+			UpToDate:   "You're up to date.\n\nCurrent version: %s",
+			NewFound:   "New version available: %s\nCurrent version: %s\n\nUpdate now?",
+			UpdateFail: "Update check failed:\n%v",
+			ApplyNow:   "Update",
+			YesNo:      "Yes|No",
 		}
 	default:
 		return trayStrings{
@@ -209,6 +238,12 @@ func trayTexts(lang string) trayStrings {
 			Update:   "检查更新…",
 			Quit:     "退出",
 			Rows:     "行", Problems: "问题", Warnings: "告警",
+			Checking:   "正在检查更新…",
+			UpToDate:   "已经是最新版本。\n\n当前版本：%s",
+			NewFound:   "发现新版本：%s\n当前版本：%s\n\n是否立即更新？",
+			UpdateFail: "检查更新失败：\n%v",
+			ApplyNow:   "更新",
+			YesNo:      "是|否",
 		}
 	}
 }
@@ -397,28 +432,139 @@ func showTrayMenu(hwnd uintptr) {
 	case trayCmdFolder:
 		openOutFolder()
 	case trayCmdRestart:
+		// restartSelf 内部会拉起新进程并 os.Exit(0)，这里不再往下走
 		restartSelf()
-		_, _, _ = procDestroyWindow.Call(hwnd) // 触发 WM_DESTROY → 清理并退出
 	case trayCmdUpdate:
-		go openBrowser("https://github.com/" + releaseRepo + "/releases")
+		go checkUpdateFromTray()
 	case trayCmdQuit:
 		_, _, _ = procDestroyWindow.Call(hwnd) // 触发 WM_DESTROY → 清理并退出
 	}
 }
 
-// restartSelf 重启程序：交给 cmd 延迟 2 秒再拉起新进程，
-// 留出时间让本进程退出、把监听端口让出来（否则新进程会以为「已有实例在跑」而只开浏览器）。
+// restartSelf 重启程序：直接拉起新进程（带 MES_UPDATE_RESTART 让它接管端口），
+// 再退出当前进程。
+// 旧实现是 `cmd /c "timeout /t 2 & start \"\" exe"` —— 这类嵌套引号会被 Go 的参数
+// 转义破坏，Windows 报「找不到 'W' 文件」（W 来自被拆坏的 timeout 参数）。
+// 现在改为与「更新后重启」同一条路径（relaunchSelf），直接 Start 可执行文件，不经 cmd。
 func restartSelf() {
 	exe, err := os.Executable()
 	if err != nil || strings.TrimSpace(exe) == "" {
+		appLog("重启失败：找不到当前程序路径")
 		return
 	}
-	line := `"` + exe + `"`
-	for _, a := range os.Args[1:] {
-		line += ` "` + a + `"`
-	}
-	c := exec.Command("cmd", "/c", "timeout /t 2 /nobreak >nul & start \"\" "+line)
-	c.Dir = exeDir()
-	_ = c.Start()
 	appLog("正在重启程序…")
+	relaunchSelf(exe) // 内部会释放单实例锁、Start 新进程并 os.Exit(0)
+}
+
+// trayMessageBox 在托盘菜单里弹一个模态对话框。text 含 \n 会换行。
+func trayMessageBox(title, text string, flags uintptr) int {
+	t, err := syscall.UTF16PtrFromString(title)
+	if err != nil {
+		return 0
+	}
+	txt, err := syscall.UTF16PtrFromString(text)
+	if err != nil {
+		return 0
+	}
+	h, _, _ := procGetModuleHandleW.Call(0)
+	r, _, _ := procMessageBoxW.Call(h, uintptr(unsafe.Pointer(txt)), uintptr(unsafe.Pointer(t)), flags)
+	return int(r)
+}
+
+const (
+	mbOK            = 0x00000000
+	mbYesNo         = 0x00000004
+	mbIconInfo      = 0x00000040
+	mbIconWarn      = 0x00000030
+	mbIconError     = 0x00000010
+	mbSetForeground = 0x00010000
+)
+
+// checkUpdateFromTray 托盘「检查更新…」：真正去查一次，而不是打开 GitHub 网页。
+// 查法复用本地服务的 /api/system/update（与界面按钮同一套逻辑，含镜像优先 + 验签）。
+func checkUpdateFromTray() {
+	T := trayTexts(trayLang)
+	// 「正在检查」用带超时自动关的提示；这里用窗口标题承载，先查再弹结果
+	resp, err := trayCallUpdateAPI()
+	if err != nil {
+		trayMessageBox(T.Update, fmt.Sprintf(T.UpdateFail, err.Error()),
+			mbOK|mbIconWarn|mbSetForeground)
+		appLog("托盘检查更新失败：%v", err)
+		return
+	}
+	if !resp.HasUpdate {
+		trayMessageBox(T.Update, fmt.Sprintf(T.UpToDate, resp.Current),
+			mbOK|mbIconInfo|mbSetForeground)
+		appLog("托盘检查更新：已是最新（%s）", resp.Current)
+		return
+	}
+	appLog("托盘检查更新：发现新版本 %s（当前 %s）", resp.Latest, resp.Current)
+	r := trayMessageBox(T.Update,
+		fmt.Sprintf(T.NewFound, resp.Latest, resp.Current),
+		mbYesNo|mbIconInfo|mbSetForeground)
+	if r != 6 { // IDYES = 6
+		return
+	}
+	if err := trayApplyUpdateAPI(); err != nil {
+		trayMessageBox(T.Update, fmt.Sprintf(T.UpdateFail, err.Error()),
+			mbOK|mbIconError|mbSetForeground)
+		return
+	}
+	// apply 已触发重启（服务端会延迟重启进程），这里不再重复动作
+}
+
+// trayUpdateResp /api/system/update 的响应（只取需要的字段）
+type trayUpdateResp struct {
+	Current   string
+	Latest    string
+	HasUpdate bool
+}
+
+// trayCallUpdateAPI 调本地服务的检查更新接口
+func trayCallUpdateAPI() (trayUpdateResp, error) {
+	var out trayUpdateResp
+	cli := &http.Client{Timeout: 20 * time.Second}
+	resp, err := cli.Get(fmt.Sprintf("http://127.0.0.1:%d/api/system/update", currentPort))
+	if err != nil {
+		return out, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return out, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	var d struct {
+		Current   string `json:"current"`
+		Latest    string `json:"latest"`
+		HasUpdate bool   `json:"has_update"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&d); err != nil {
+		return out, err
+	}
+	out = trayUpdateResp{Current: d.Current, Latest: d.Latest, HasUpdate: d.HasUpdate}
+	return out, nil
+}
+
+// trayApplyUpdateAPI 调本地服务的应用更新接口（服务端负责下载校验并重启）
+func trayApplyUpdateAPI() error {
+	cli := &http.Client{Timeout: 300 * time.Second}
+	resp, err := cli.Post(fmt.Sprintf("http://127.0.0.1:%d/api/system/update/apply", currentPort),
+		"application/x-www-form-urlencoded", nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	var d struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&d); err != nil {
+		return err
+	}
+	if !d.OK {
+		if d.Error == "" {
+			d.Error = "未知错误"
+		}
+		return errors.New(d.Error)
+	}
+	return nil
 }

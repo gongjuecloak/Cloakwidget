@@ -1168,7 +1168,7 @@ const STR2 = {
     sys_block_tpl_hint:"第一次转换会把 MES 模板的表头记下来；以后模板被换过（加列 / 删列 / 调顺序）转换时会告警。",
     sys_block_diag:"诊断与更新",
     sys_block_diag_hint:"程序会在启动时自动检查 GitHub 上的新版本并后台更新（下次启动生效）；也可点右侧按钮立即更新。排障包用于出问题时把日志 + 配置 + 环境信息（口令已脱敏）发给维护的人。",
-    sys_save:"保存", sys_on:"已开启", sys_off:"已关闭", sys_pwd_set:"已启用", sys_pwd_unset:"未启用",
+    sys_save:"保存", sys_on:"已开启", sys_off:"已关闭", sys_pwd_set:"已启用", sys_pwd_unset:"未启用", sys_src_title:"更新源", sys_src_desc:"选择从哪里获取新版本。默认自动：优先走镜像，镜像不可达时回退 GitHub。", sys_src_auto:"自动（镜像优先）", sys_src_github:"仅 GitHub", sys_src_mirror:"仅镜像仓库", sys_src_current:"当前更新源：",
     sys_pwd_new_ph:"新口令", sys_pwd_old_ph:"原口令",
     sys_pwd_save:"设置口令", sys_pwd_clear:"取消口令",
     sys_tpl_reset:"清除基准", sys_refresh:"刷新",
@@ -1220,7 +1220,7 @@ const STR2 = {
     sys_block_tpl_hint:"第一次轉換會把 MES 樣板的表頭記下來；以後樣板被換過（加欄 / 刪欄 / 調順序）轉換時會告警。",
     sys_block_diag:"診斷與更新",
     sys_block_diag_hint:"程式會在啟動時自動檢查 GitHub 上的新版本並背景更新（下次啟動生效）；也可點右側按鈕立即更新。排障包用於出問題時把日誌 + 設定 + 環境資訊（密碼已去識別化）發給維護的人。",
-    sys_save:"儲存", sys_on:"已開啟", sys_off:"已關閉", sys_pwd_set:"已啟用", sys_pwd_unset:"未啟用",
+    sys_save:"儲存", sys_on:"已開啟", sys_off:"已關閉", sys_pwd_set:"已啟用", sys_pwd_unset:"未啟用", sys_src_title:"更新來源", sys_src_desc:"選擇從哪裡取得新版本。預設自動：優先走鏡像，鏡像不可達時回退 GitHub。", sys_src_auto:"自動（鏡像優先）", sys_src_github:"僅 GitHub", sys_src_mirror:"僅鏡像倉庫", sys_src_current:"目前更新來源：",
     sys_pwd_new_ph:"新密碼", sys_pwd_old_ph:"原密碼",
     sys_pwd_save:"設定密碼", sys_pwd_clear:"取消密碼",
     sys_tpl_reset:"清除基準", sys_refresh:"重新整理",
@@ -1272,7 +1272,7 @@ const STR2 = {
     sys_block_tpl_hint:"Lần chuyển đầu tiên sẽ ghi lại tiêu đề mẫu MES; các thay đổi sau (thêm / bớt / đổi thứ tự cột) sẽ được cảnh báo.",
     sys_block_diag:"Chẩn đoán & cập nhật",
     sys_block_diag_hint:"Chương trình sẽ tự kiểm tra bản mới trên GitHub khi khởi động và cập nhật nền (có hiệu lực lần khởi động sau); cũng có thể bấm nút bên phải để cập nhật ngay. Gói chẩn đoán dùng để gửi log + cấu hình + môi trường (mật khẩu đã ẩn) cho người bảo trì khi có lỗi.",
-    sys_save:"Lưu", sys_on:"Đang bật", sys_off:"Đang tắt", sys_pwd_set:"Đã bật", sys_pwd_unset:"Chưa đặt",
+    sys_save:"Lưu", sys_on:"Đang bật", sys_off:"Đang tắt", sys_pwd_set:"Đã bật", sys_pwd_unset:"Chưa đặt", sys_src_title:"Nguồn cập nhật", sys_src_desc:"Chọn nơi lấy phiên bản mới. Mặc định tự động: ưu tiên mirror, không được thì quay về GitHub.", sys_src_auto:"Tự động (ưu tiên mirror)", sys_src_github:"Chỉ GitHub", sys_src_mirror:"Chỉ mirror", sys_src_current:"Nguồn cập nhật hiện tại:",
     sys_pwd_new_ph:"Mật khẩu mới", sys_pwd_old_ph:"Mật khẩu hiện tại",
     sys_pwd_save:"Đặt mật khẩu", sys_pwd_clear:"Bỏ mật khẩu",
     sys_tpl_reset:"Xóa mốc", sys_refresh:"Làm mới",
@@ -1324,7 +1324,7 @@ const STR2 = {
     sys_block_tpl_hint:"The first conversion records the MES template header; later changes (added / removed / reordered columns) will be flagged.",
     sys_block_diag:"Diagnostics & updates",
     sys_block_diag_hint:"The app auto-checks GitHub for new versions on startup and updates in the background (applied on next launch); or click the button to update now. The diagnostic bundle packages logs + config + environment (password redacted) to send to whoever maintains it.",
-    sys_save:"Save", sys_on:"On", sys_off:"Off", sys_pwd_set:"Enabled", sys_pwd_unset:"Not set",
+    sys_save:"Save", sys_on:"On", sys_off:"Off", sys_pwd_set:"Enabled", sys_pwd_unset:"Not set", sys_src_title:"Update source", sys_src_desc:"Choose where to get new versions. Default: auto — prefer the mirror, fall back to GitHub.", sys_src_auto:"Auto (mirror first)", sys_src_github:"GitHub only", sys_src_mirror:"Mirror only", sys_src_current:"Current update source:",
     sys_pwd_new_ph:"New password", sys_pwd_old_ph:"Current password",
     sys_pwd_save:"Set password", sys_pwd_clear:"Remove password",
     sys_tpl_reset:"Clear baseline", sys_refresh:"Refresh",
@@ -1354,10 +1354,13 @@ Object.assign(TEXT_MAP, {
   sys_desc:"sys_desc", sys_block_access:"sys_block_access", sys_block_access_hint:"sys_block_access_hint",
   sys_lan_title:"sys_lan_title", sys_lan_desc:"sys_lan_desc", sys_lan_sw:"sys_lan_sw",
   sys_pwd_title:"sys_pwd_title", sys_pwd_desc:"sys_pwd_desc",
+  sys_src_title:"sys_src_title", sys_src_desc:"sys_src_desc",
+  sysSrcOptAuto:"sys_src_auto", sysSrcOptGithub:"sys_src_github", sysSrcOptMirror:"sys_src_mirror",
   sys_auto_title:"sys_auto_title", sys_auto_desc:"sys_auto_desc", sys_auto_sw:"sys_auto_sw",
   sys_block_tpl:"sys_block_tpl", sys_block_tpl_hint:"sys_block_tpl_hint",
   sys_block_diag:"sys_block_diag", sys_block_diag_hint:"sys_block_diag_hint",
   sysLanSave:"sys_save", sysPwdSave:"sys_pwd_save", sysPwdClear:"sys_pwd_clear", sysAutoSave:"sys_save",
+  sysSrcSave:"sys_save",
   sysTplReset:"sys_tpl_reset", sysTplRefresh:"sys_refresh",
   sysDiagBtn:"sys_diag", sysDiagLink:"sys_diag_dl", sysUpdateBtn:"sys_update",
   diffTitle:"diff_title", diffHint:"diff_hint", diffOk:"diff_ok", diffClose:"diff_cancel", diffCancel:"diff_cancel",
@@ -1819,6 +1822,13 @@ async function loadSysInfo(){
     if(clearBtn) clearBtn.disabled = !d.has_password;
     const st=document.getElementById("sysUpdateState");
     if(st) st.textContent = t("about_version")+" "+d.update_current;
+    // 更新源
+    const src=d.update_source||"auto";
+    const srcSel=document.getElementById("sysSrcSel");
+    if(srcSel) srcSel.value=src;
+    const srcInfo=document.getElementById("sysSrcInfo");
+    if(srcInfo) srcInfo.textContent = t("sys_src_current")+ (src==="github"?t("sys_src_github"):src==="mirror"?t("sys_src_mirror"):t("sys_src_auto")) + (d.mirror_base?("  ·  "+d.mirror_base):"");
+    sysPill("sysSrcPill", true, t("sys_src_"+(src==="github"?"github":src==="mirror"?"mirror":"auto")), "");
   }catch(e){}
   loadTplStatus();
 }
@@ -1839,6 +1849,15 @@ if(sysLanSave) sysLanSave.addEventListener("click",async()=>{
   try{
     const on=document.getElementById("sysLanChk").checked?"1":"0";
     const d=await sysPost("/api/system/lan",{on:on});
+    sysMsg(d.ok?d.message:(d.error||""), d.ok);
+    loadSysInfo();
+  }catch(e){ sysMsg(fetchErrText(e),false); }
+});
+const sysSrcSave=document.getElementById("sysSrcSave");
+if(sysSrcSave) sysSrcSave.addEventListener("click",async()=>{
+  try{
+    const src=document.getElementById("sysSrcSel").value||"auto";
+    const d=await sysPost("/api/system/update-source",{source:src});
     sysMsg(d.ok?d.message:(d.error||""), d.ok);
     loadSysInfo();
   }catch(e){ sysMsg(fetchErrText(e),false); }

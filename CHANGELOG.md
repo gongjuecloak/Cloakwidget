@@ -2,6 +2,46 @@
 
 版本号在 `mes_conv/version.go`，本文件按版本倒序记录。
 
+## v1.10.1
+
+这一版修四个现场反馈的问题：更新替换失败、托盘「重启程序」报错、托盘「检查更新」只跳 GitHub，以及发版后镜像不同步。
+
+### 新增：可选择更新源（GitHub / 镜像）
+- **配置中心 → 系统 → 更新源** 新增下拉选择，三种取值：
+  - **自动（镜像优先）**（默认）：先查镜像，镜像不可达或没新版时回退 GitHub——保持原有行为
+  - **仅 GitHub**：只查 GitHub，适合能直连外网的机器
+  - **仅镜像仓库**：只查镜像、不回退，适合内网无法访问 GitHub 的机器（避免每次检查都白等外网超时）
+- 落盘在 `sys_settings.json` 的 `update_source`；取值非法或缺失时归一为 `auto`
+- 接口 `POST /api/system/update-source`；`/api/system` 额外返回 `update_source` 与 `mirror_base` 供界面显示
+
+### 修复：更新时 exe 替换被拒（Access is denied）
+- **根因**：就地更新用「重命名当前 exe → 新文件落位 → 删除旧文件」。但 Windows **不允许删除正在运行的 exe**（实测：重命名通常可行，删除必然失败），且现场机器上 exe 常被杀软 / 资源管理器 / 其他程序持有句柄，连重命名也会报 `Access is denied`，导致更新整体失败。
+- **改为「并存式替换」**：新版本落位成**全新文件名** `MES-Converter-<版本>.exe`（绝不碰正在运行的旧 exe）→ 写 `pending_update.txt` 记下待清理的旧文件 → **下次启动时**（旧进程已退出、文件不再被锁）由 `cleanupOldExe()` 删除。
+  - 本次运行继续用旧版本，功能完全不受影响；下次启动自动用新版本并清理旧文件。
+  - 跨磁盘下载场景补了「先复制再删除」的 `moveFile` 回退。
+  - 顺带移除 `stripVersionInName`（配套的死代码）。
+
+### 修复：托盘「重启程序」报「Windows 找不到 'W' 文件」
+- **根因**：旧实现用 `cmd /c "timeout /t 2 /nobreak >nul & start \"\" <exe>"`，这行命令的嵌套引号会被 Go 的参数转义破坏，Windows 拿到被拆坏的命令（`W`来自被拆散的 `timeout` 参数）故报找不到文件。
+- **修复**：改为与「更新后重启」同一条可靠路径（直接 `Start` 可执行文件 + `MES_UPDATE_RESTART`，不经 cmd），彻底避开嵌套引号。
+
+### 修复：托盘「检查更新…」只跳转 GitHub
+- **根因**：托盘菜单该项只是 `openBrowser` 打开 GitHub Releases 网页，根本没做检查。
+- **修复**：改为**真正调用本地 `/api/system/update`** 做检查（与界面按钮同一套逻辑：镜像优先 + GitHub 兜底 + Ed25519 验签），用 MessageBox 呈现结果；发现新版本时可确认，随即调 `/api/system/update/apply` 下载并重启。四语提示文案齐备。
+
+### 发版后自动同步镜像
+- `release.yml` 在创建 Release 之后新增「同步更新镜像服务」步骤：`POST <镜像>/admin/refresh?admin_token=…`，让镜像立刻拉取并预热新版本，客户端下一次检查更新即可拿到新包，不必等缓存自然过期。
+- 读取仓库变量 `MES_MIRROR_URL` 与机密 `MIRROR_ADMIN_TOKEN`；未配置则跳过且不影响发版。
+
+### 验证
+- 实测确认「运行中 exe：可重命名、不可删除」，据此选定并存式替换方案
+- `go build` / `go vet` / `gofmt` 全部通过；全量 `go test` PASS（新增 moveFile / cleanupOldExe / sameFile / normalizeUpdateSource 用例）
+- workflow YAML 解析通过，镜像同步步骤已就位
+- 四语词条校验通过：简中 / 繁中 / 越南语 / 英语各 **359** 条、key 集合完全一致，JS 引用的 129 个词条全部有定义，`TEXT_MAP` 183 项全部有效
+
+### 版本
+- 版本 1.10.0 → 1.10.1（version.go / versioninfo.json / 本文档三处）
+
 ## v1.10.0
 
 这一版做两件事：把**更新镜像服务**从「能转发」补成「能扛生产」，并给整个工具做一轮**安全加固**（口令换 Argon2id、令牌不再走 URL、更新清单 Ed25519 验签、局域网强制设口令、请求体限流）。同时修掉「更新后文件名仍带旧版本号」的尾巴，并把镜像默认基址切到 `x.lzplus.top` 根路径。

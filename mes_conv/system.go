@@ -37,6 +37,29 @@ type SysSettings struct {
 	PasswordHash string `json:"password_hash,omitempty"`
 	// LAN 是否允许局域网访问。改动需重启才生效（监听地址在启动时确定）
 	LAN bool `json:"lan"`
+	// UpdateSource 更新源：auto（镜像优先，镜像不可达回退 GitHub，默认）/
+	// github（只用 GitHub）/ mirror（只用镜像，不可用则不更新）。
+	// 现场网络受限时可切到 mirror 避免外网请求；内网无法访问 GitHub 时也可切 mirror。
+	UpdateSource string `json:"update_source,omitempty"`
+}
+
+// 合法的更新源取值
+const (
+	srcAuto   = "auto"
+	srcGithub = "github"
+	srcMirror = "mirror"
+)
+
+// normalizeUpdateSource 归一化更新源取值，非法/空一律回 auto
+func normalizeUpdateSource(s string) string {
+	switch strings.TrimSpace(strings.ToLower(s)) {
+	case srcGithub:
+		return srcGithub
+	case srcMirror:
+		return srcMirror
+	default:
+		return srcAuto
+	}
 }
 
 func sysSettingsPath() string { return filepath.Join(exeDir(), "sys_settings.json") }
@@ -344,6 +367,8 @@ func handlerSystemInfo(w http.ResponseWriter, r *http.Request) {
 		"lan":            s.LAN,
 		"has_password":   s.PasswordHash != "",
 		"lan_insecure":   s.LAN && s.PasswordHash == "",
+		"update_source":  normalizeUpdateSource(s.UpdateSource),
+		"mirror_base":    updateMirrorBase,
 		"auth":           authToken != "",
 		"port":           currentPort,
 		"addrs":          lanURLs(),
@@ -507,4 +532,19 @@ func handlerSetLAN(w http.ResponseWriter, r *http.Request) {
 		msg = fmt.Sprintf(L["msg_lan_on"], strings.Join(lanURLs(), "  "))
 	}
 	writeJSON(w, map[string]interface{}{"ok": true, "lan": on, "message": msg})
+}
+
+// handlerSetUpdateSource 设置更新源（auto / github / mirror）
+func handlerSetUpdateSource(w http.ResponseWriter, r *http.Request) {
+	lang := reqLang(r)
+	L := msgs(lang)
+	s := sysSettings()
+	s.UpdateSource = normalizeUpdateSource(r.FormValue("source"))
+	if err := saveSysSettings(s); err != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, map[string]interface{}{
+		"ok": true, "update_source": s.UpdateSource, "message": L["msg_update_source_saved"],
+	})
 }

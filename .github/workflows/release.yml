@@ -200,3 +200,25 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 同步更新镜像服务
+        # Release 发布后，立刻通知自建镜像把新版本拉过去并预热缓存，
+        # 这样客户端下一次检查更新就能马上拿到新包，不用等镜像缓存自然过期。
+        # 镜像服务地址与admin token 由仓库变量 / 机密提供；未配置则跳过（不影响发版）。
+        env:
+          MIRROR_URL: ${{ vars.MES_MIRROR_URL }}
+          MIRROR_ADMIN_TOKEN: ${{ secrets.MIRROR_ADMIN_TOKEN }}
+        run: |
+          if [ -z "$MIRROR_URL" ] || [ -z "$MIRROR_ADMIN_TOKEN" ]; then
+            echo "未配置 MES_MIRROR_URL / MIRROR_ADMIN_TOKEN，跳过镜像同步（不影响发版）"
+            exit 0
+          fi
+          echo "通知镜像刷新：$MIRROR_URL"
+          code=$(curl -s -o /tmp/refresh.out -w "%{http_code}" -X POST \
+            "$MIRROR_URL/admin/refresh?admin_token=$MIRROR_ADMIN_TOKEN" || echo "000")
+          cat /tmp/refresh.out || true
+          echo
+          case "$code" in
+            2*) echo "镜像已刷新（HTTP $code）" ;;
+            *)  echo "镜像刷新返回 HTTP $code（镜像侧可能未部署 / token 不匹配，不阻断发版）" ;;
+          esac
