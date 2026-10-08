@@ -8,23 +8,34 @@ package main
 //   两个来源都通过同一个 version.json 清单来描述版本：含版本号、exe 文件名、
 //   SHA256 与大小。客户端拉到清单后，先比对版本，再下载 exe，下载完必须校验
 //   SHA256 与清单一致才允许替换 —— 不一致一律中止，绝不拿来历不明的文件覆盖自己。
-//   这样即使镜像 / GitHub 任一环节被投毒，只要清单里的哈希没被篡改（源来自 CI 构建时
-//   对产物的真实哈希），就不会被静默装进恶意 exe。
+//
+// 供应链签名（v1.10.0 起）：SHA256 只是「内容一致性」，不是「来源可信」——
+// 若攻击者能同时改 exe 与清单里的哈希，仍能骗过校验。故 CI 用 Ed25519 私钥对
+// version.json 签名（version.sig），客户端用内置公钥验签：
+//   验签通过 → 清单可信 → 其中的 SHA256 才是真正的信任锚点 → 下载 exe 后校验哈希。
+//   验签失败/无签名且要求强制 → 拒绝更新（宁可留在旧版，也不装来路不明的包）。
+//   默认「验签通过才更新；无签名时按未签名处理但记警告」，可用环境变量
+//   MES_UPDATE_REQUIRE_SIG=1 强制「必须有签名」，进一步收口。
 //
 // 网络/限流/无外网：任一环节失败都只是「查不到更新」，绝不能影响工具本身使用。
 // ============================================================================
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -34,14 +45,134 @@ import (
 const releaseRepo = "gongjuecloak/Cloakwidget"
 
 // updateMirrorBase 更新镜像基址（工厂工位机优先从这里拉）。
-// 可用环境变量 MES_UPDATE_MIRROR 覆盖（例如内网 HTTP 或共享盘映射）。
-// 默认指向自有服务器上的镜像服务；若该地址不可达，自动回退 GitHub。
-var updateMirrorBase = "https://update.lzplus.top"
+// 可用环境变量 MES_UPDATE_MIRROR 覆盖（例如内网 HTTP 或共享盘映射，或带子路径 /mirror）。
+// 默认指向自有服务器上的镜像服务（经 Cloudflare 反代）；若该地址不可达，自动回退 GitHub。
+// x.lzplus.top 现已不再托管 Mastodon，镜像可直接走根路径反代（x.lzplus.top → 127.0.0.1:18080），无需子路径。
+// 若仍想用子路径或内网地址，可用环境变量 MES_UPDATE_MIRROR 覆盖。
+var updateMirrorBase = "https://x.lzplus.top"
+
+// manifestPubKeyB64 Ed25519 公钥（base64，32 字节 raw）。CI 用对应私钥签 version.json，
+// 客户端据此验签，建立供应链信任根。私钥存于仓库 secret MES_SIGN_PRIVATE_KEY，勿入库。
+const manifestPubKeyB64 = "89ymVon//tfWP9d+KzKZxg3oCBUT+w31nUqZN5LBML0="
+
+// requireSig 是否强制「清单必须有签名」。默认否（无签名清单放行但记警告）；
+// 置 MES_UPDATE_REQUIRE_SIG=1 则无签名直接拒更新，进一步收口。
+func requireSig() bool {
+	return strings.TrimSpace(os.Getenv("MES_UPDATE_REQUIRE_SIG")) == "1"
+}
+
+// verifyManifestSig 用内置公钥校验 version.sig 是否为 version.json 原始字节的合法签名。
+// 返回 (是否验签通过, 是否有签名文件)。
+func verifyManifestSig(manifest, sig []byte) (ok bool, hasSig bool) {
+	if len(sig) == 0 {
+		return false, false
+	}
+	pub, err := base64.StdEncoding.DecodeString(manifestPubKeyB64)
+	if err != nil || len(pub) != ed25519.PublicKeySize {
+		return false, true // 公钥坏了，视作有签名但不可信
+	}
+	if len(sig) != ed25519.SignatureSize {
+		return false, true
+	}
+	return ed25519.Verify(ed25519.PublicKey(pub), manifest, sig), true
+}
 
 func init() {
 	if v := strings.TrimSpace(os.Getenv("MES_UPDATE_MIRROR")); v != "" {
 		updateMirrorBase = strings.TrimRight(v, "/")
 	}
+	loadMirrorToken()
+}
+
+// ---- 镜像访问令牌（一次性旋转） ----
+// 客户端本地保存当前令牌；镜像要求拉取带令牌，成功一次即旋转（响应头 X-Next-Token），
+// 下次用新令牌。无令牌/失效时以 enroll 密钥自注册，重新拿到令牌。工厂机无外网、只能走镜像，
+// 故必须能自注册成功；公网客户端拿不到令牌也会回退 GitHub。
+var mirrorToken string
+
+func mirrorTokenPath() string { return filepath.Join(exeDir(), "mes_mirror_token") }
+
+func loadMirrorToken() {
+	if b, err := os.ReadFile(mirrorTokenPath()); err == nil {
+		if s := strings.TrimSpace(string(b)); s != "" {
+			mirrorToken = s
+		}
+	}
+}
+
+func saveMirrorToken(t string) {
+	mirrorToken = t
+	_ = os.WriteFile(mirrorTokenPath(), []byte(t), 0600)
+}
+
+func mirrorEnrollSecret() string {
+	if v := strings.TrimSpace(os.Getenv("MES_MIRROR_SECRET")); v != "" {
+		return v
+	}
+	return "mes-mirror-internal"
+}
+
+func isMirrorURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	mu, err := url.Parse(updateMirrorBase)
+	if err != nil {
+		return false
+	}
+	return u.Host == mu.Host
+}
+
+// mirrorURLWith 给镜像请求附加令牌 / enroll 参数；非镜像地址原样返回。
+func mirrorURLWith(raw, token string, enroll bool) string {
+	if !isMirrorURL(raw) {
+		return raw
+	}
+	q := url.Values{}
+	if token != "" {
+		q.Set("token", token)
+	}
+	if enroll {
+		q.Set("enroll", "1")
+		q.Set("secret", mirrorEnrollSecret())
+	}
+	sep := "?"
+	if strings.Contains(raw, "?") {
+		sep = "&"
+	}
+	return raw + sep + q.Encode()
+}
+
+func captureNextToken(resp *http.Response) {
+	if nt := resp.Header.Get("X-Next-Token"); nt != "" {
+		saveMirrorToken(nt)
+	}
+}
+
+func randHex(n int) string {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(b)
+}
+
+// stripVersionInName 去掉文件名里可能带着的旧版本号（如 MES-Converter-v1.8.0.exe -> MES-Converter.exe），
+// 避免「文件名显示 1.8.0、实际跑的是 1.9.0」的误导；无版本号则原样返回。
+var reVerSuffix = regexp.MustCompile(`[-_]?v?\d+\.\d+(\.\d+)?$`)
+
+func stripVersionInName(name string) string {
+	ext := ""
+	if strings.HasSuffix(strings.ToLower(name), ".exe") {
+		ext = ".exe"
+		name = strings.TrimSuffix(name, ".exe")
+	}
+	clean := reVerSuffix.ReplaceAllString(name, "")
+	if clean == "" {
+		return name + ext
+	}
+	return clean + ext
 }
 
 // parseVer 把 "v1.5.0" / "1.5" / "1.6.0-beta" 解析成三段数字
@@ -153,24 +284,71 @@ type updateManifest struct {
 	} `json:"exe"`
 }
 
+// manifestSigURL 由清单 URL 推出同目录的 version.sig URL。
+func manifestSigURL(manifestURL string) string {
+	return strings.Replace(manifestURL, "version.json", "version.sig", 1)
+}
+
+// fetchBytes GET 一个 URL 的原始字节（带令牌 / 401 自注册重试逻辑同 fetchManifest）。
+func fetchBytes(rawURL string, timeout time.Duration) ([]byte, int, error) {
+	do := func(token string, enroll bool) ([]byte, int, error) {
+		req, err := http.NewRequest(http.MethodGet, mirrorURLWith(rawURL, token, enroll), nil)
+		if err != nil {
+			return nil, 0, err
+		}
+		req.Header.Set("User-Agent", "MESConverter/"+appVersion)
+		cli := &http.Client{Timeout: timeout}
+		resp, err := cli.Do(req)
+		if err != nil {
+			return nil, 0, err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return nil, resp.StatusCode, fmt.Errorf("HTTP %d", resp.StatusCode)
+		}
+		b, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		captureNextToken(resp)
+		return b, resp.StatusCode, err
+	}
+	b, code, err := do(mirrorToken, false)
+	if err == nil {
+		return b, code, nil
+	}
+	if code == http.StatusUnauthorized && isMirrorURL(rawURL) {
+		newTok := randHex(16)
+		saveMirrorToken(newTok)
+		if b2, _, e2 := do(newTok, true); e2 == nil {
+			return b2, http.StatusOK, nil
+		}
+		return nil, code, fmt.Errorf("镜像鉴权失败（已尝试自注册）：%v", err)
+	}
+	return nil, code, err
+}
+
 // fetchManifest 拉取并解析 version.json。带较短超时（镜像不可达要快点回退）。
+// 先取清单原始字节与同目录的 version.sig，用内置 Ed25519 公钥验签：
+// 验签通过才解析使用；无签名时按未签名处理（除非强制要求签名）。
 func fetchManifest(rawURL string) (*updateManifest, error) {
-	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+	raw, _, err := fetchBytes(rawURL, 6*time.Second)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "MESConverter/"+appVersion)
-	cli := &http.Client{Timeout: 6 * time.Second}
-	resp, err := cli.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	// 取签名（best-effort：404/不可达即视为无签名）
+	sig, _, _ := fetchBytes(manifestSigURL(rawURL), 4*time.Second)
+	verified, hasSig := verifyManifestSig(raw, sig)
+	switch {
+	case verified:
+		// 验签通过，继续
+	case hasSig:
+		return nil, errors.New("更新清单签名校验失败，已拒绝更新（来源可能被篡改）")
+	default:
+		if requireSig() {
+			return nil, errors.New("更新清单无签名，且已启用强制验签，拒绝更新")
+		}
+		appLog("更新清单未签名（仍按 SHA256 校验）；如需强制验签请设 MES_UPDATE_REQUIRE_SIG=1")
 	}
 	var m updateManifest
-	if err := json.NewDecoder(resp.Body).Decode(&m); err != nil {
+	if err := json.Unmarshal(raw, &m); err != nil {
 		return nil, err
 	}
 	if m.Version == "" || m.Exe.Name == "" || m.Exe.SHA256 == "" {
@@ -244,22 +422,36 @@ func handlerUpdate(w http.ResponseWriter, r *http.Request) {
 // 下载 + 校验 + 就地替换
 // ============================================================================
 
-// downloadFile 下载 url 到 dest，可选校验内容长度
+// downloadFile 下载 url 到 dest，可选校验内容长度。
+// 命中镜像时附加令牌；若返回 401，则尝试用 enroll 密钥自注册一次再下载。
 func downloadFile(url, dest string, expectSize int64) error {
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	fetch := func(token string, enroll bool) (*http.Response, error) {
+		req, err := http.NewRequest(http.MethodGet, mirrorURLWith(url, token, enroll), nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("User-Agent", "MESConverter/"+appVersion)
+		cli := &http.Client{Timeout: 180 * time.Second}
+		return cli.Do(req)
+	}
+	resp, err := fetch(mirrorToken, false)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("User-Agent", "MESConverter/"+appVersion)
-	cli := &http.Client{Timeout: 180 * time.Second}
-	resp, err := cli.Do(req)
-	if err != nil {
-		return err
+	if resp.StatusCode == http.StatusUnauthorized && isMirrorURL(url) {
+		resp.Body.Close()
+		newTok := randHex(16)
+		saveMirrorToken(newTok)
+		resp, err = fetch(newTok, true)
+		if err != nil {
+			return err
+		}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("下载更新失败：HTTP %d", resp.StatusCode)
 	}
+	captureNextToken(resp)
 	f, err := os.Create(dest)
 	if err != nil {
 		return err
@@ -289,10 +481,12 @@ func sha256File(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// applyUpdateFromManifest 下载 exe 并就地替换当前 exe。
+// applyUpdateFromManifest 下载 exe 并就地替换当前 exe。返回最终 exe 路径（文件名可能已被规范化）。
 // 用「改名旧 exe → 移动新 exe 落位」的方式，绕开「不能覆盖正在运行的 exe」的限制。
 // 关键：下载完先校验 SHA256 与清单一致，不一致立即放弃，绝不替换。
-func applyUpdateFromManifest(m *updateManifest, base string) error {
+// 替换成功后，把文件名里可能带着的旧版本号去掉（如 MES-Converter-v1.8.0.exe → MES-Converter.exe），
+// 避免「文件名显示 1.8.0、实际跑的是 1.9.0」的误导。
+func applyUpdateFromManifest(m *updateManifest, base string) (string, error) {
 	var dlURL string
 	if base != "" {
 		dlURL = base + "/" + m.Exe.Name
@@ -301,47 +495,59 @@ func applyUpdateFromManifest(m *updateManifest, base string) error {
 	}
 	exe, err := os.Executable()
 	if err != nil {
-		return err
+		return "", err
 	}
 	exe = filepath.Clean(exe)
 	tmp := exe + ".new"
 	_ = os.Remove(tmp)
 	if err := downloadFile(dlURL, tmp, m.Exe.Size); err != nil {
 		_ = os.Remove(tmp)
-		return err
+		return "", err
 	}
 	// 校验 SHA256 —— 不通过则中止，绝不替换（防投毒）
 	sum, err := sha256File(tmp)
 	if err != nil {
 		_ = os.Remove(tmp)
-		return err
+		return "", err
 	}
 	if !strings.EqualFold(sum, m.Exe.SHA256) {
 		_ = os.Remove(tmp)
-		return errors.New("更新包校验失败（SHA256 不匹配），已放弃更新以保证安全")
+		return "", errors.New("更新包校验失败（SHA256 不匹配），已放弃更新以保证安全")
 	}
 	old := exe + ".old"
 	_ = os.Remove(old)
 	if err := os.Rename(exe, old); err != nil {
 		_ = os.Remove(tmp)
-		return err
+		return "", err
 	}
 	if err := os.Rename(tmp, exe); err != nil {
 		_ = os.Rename(old, exe) // 回滚，尽量不影响正在用的进程
-		return err
+		return "", err
 	}
 	_ = os.Remove(old)
-	return nil
+	// 规范化文件名：去掉可能残留的旧版本号
+	finalName := filepath.Join(filepath.Dir(exe), stripVersionInName(filepath.Base(exe)))
+	if finalName != exe {
+		if err := os.Rename(exe, finalName); err == nil {
+			exe = finalName
+		}
+	}
+	return exe, nil
 }
 
 // relaunchSelf 启动新 exe 并退出当前进程。
 // 先释放单实例锁，让新进程能立即拿到锁；用一次性环境变量告知新进程「这是重启，别把自己当重复实例」。
-func relaunchSelf() {
-	exe, err := os.Executable()
-	if err != nil {
+// target 为空时回退到 os.Executable()。
+func relaunchSelf(target string) {
+	if target == "" {
+		if e, err := os.Executable(); err == nil {
+			target = e
+		}
+	}
+	if target == "" {
 		return
 	}
-	cmd := exec.Command(exe, os.Args[1:]...)
+	cmd := exec.Command(target, os.Args[1:]...)
 	if wd, e := os.Getwd(); e == nil {
 		cmd.Dir = wd
 	}
@@ -391,7 +597,7 @@ func autoUpdate() {
 	if m == nil {
 		return
 	}
-	if err := applyUpdateFromManifest(m, base); err != nil {
+	if _, err := applyUpdateFromManifest(m, base); err != nil {
 		appLog("后台自动更新失败：%v", err)
 		return
 	}
@@ -410,7 +616,8 @@ func handlerUpdateApply(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	if err := applyUpdateFromManifest(m, base); err != nil {
+	final, err := applyUpdateFromManifest(m, base)
+	if err != nil {
 		writeJSON(w, map[string]interface{}{
 			"ok": false, "error": fmt.Sprintf(L["msg_update_apply_fail"], err.Error()),
 		})
@@ -423,6 +630,6 @@ func handlerUpdateApply(w http.ResponseWriter, r *http.Request) {
 	// 先让响应发出去，再重启，确保前端能收到「已更新」提示
 	go func() {
 		time.Sleep(600 * time.Millisecond)
-		relaunchSelf()
+		relaunchSelf(final)
 	}()
 }

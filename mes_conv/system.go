@@ -7,14 +7,15 @@ package main
 //   · 局域网访问 —— 同事的浏览器能打开界面，但如果没有口令，谁都能点「转换」
 //   · 口令锁     —— 设了口令之后，除探活与认证入口外所有接口都要带 token
 //
-// 设置落在 exe 同目录的 sys_settings.json：{"password_hash":"salt$hash","lan":false}
-// 口令只存 salt + sha256，不存明文；token 只存在内存里（重启即失效）。
+// 设置落在 exe 同目录的 sys_settings.json：{"password_hash":"$argon2id$...","lan":false}
+// 口令用 Argon2id 加盐慢哈希，只存哈希不存明文；token 只存在内存里（重启即失效）。
 // ============================================================================
 
 import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -25,11 +26,14 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/crypto/argon2"
 )
 
 // SysSettings 落盘的系统设置
 type SysSettings struct {
-	// PasswordHash salt$sha256hex(salt+pwd)；空串 = 未启用口令
+	// PasswordHash 口令哈希；空串 = 未启用口令。
+	// 现为 Argon2id 自描述串（$argon2id$...），仍兼容旧 sha256 格式并在登录时升级。
 	PasswordHash string `json:"password_hash,omitempty"`
 	// LAN 是否允许局域网访问。改动需重启才生效（监听地址在启动时确定）
 	LAN bool `json:"lan"`
@@ -81,15 +85,78 @@ func saveSysSettings(s SysSettings) error {
 }
 
 // ---------- 口令 ----------
+//
+// 口令用 Argon2id 存储（自带盐、慢、内存硬，适合口令而非通用哈希）。
+// 编码为自描述字符串，便于以后调参或换算法而不动数据结构：
+//
+//	$argon2id$v=19$m=65536,t=3,p=2$<base64(salt)>$<base64(hash)>
+//
+// 老版本存的是 "hex(salt)$hex(sha256(salt+pwd))"，仍可校验通过；
+// 用户一旦用老口令登录成功，就地升级为 Argon2id（见 handlerAuth）。
 
-func hashPassword(pwd string) string {
-	salt := make([]byte, 16)
+const (
+	argon2Time    uint32 = 3
+	argon2Memory  uint32 = 64 * 1024 // 64 MiB
+	argon2Threads uint8  = 2
+	argon2KeyLen  uint32 = 32
+	argon2SaltLen        = 16
+)
+
+// argon2Encode 生成一条 Argon2id 记录
+func argon2Encode(pwd string) string {
+	salt := make([]byte, argon2SaltLen)
 	_, _ = rand.Read(salt)
-	h := sha256.Sum256(append(append([]byte{}, salt...), []byte(pwd)...))
-	return hex.EncodeToString(salt) + "$" + hex.EncodeToString(h[:])
+	sum := argon2.IDKey([]byte(pwd), salt, argon2Time, argon2Memory, argon2Threads, argon2KeyLen)
+	return fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s",
+		argon2.Version, argon2Memory, argon2Time, argon2Threads,
+		base64.RawStdEncoding.EncodeToString(salt),
+		base64.RawStdEncoding.EncodeToString(sum))
 }
 
+// argon2Verify 校验一条 Argon2id 记录
+func argon2Verify(stored, pwd string) bool {
+	parts := strings.Split(stored, "$")
+	// ["", "argon2id", "v=19", "m=..,t=..,p=..", salt, hash]
+	if len(parts) != 6 || parts[1] != "argon2id" {
+		return false
+	}
+	var ver int
+	if _, err := fmt.Sscanf(parts[2], "v=%d", &ver); err != nil || ver != argon2.Version {
+		return false
+	}
+	var mem, tim uint32
+	var par uint8
+	if _, err := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &mem, &tim, &par); err != nil {
+		return false
+	}
+	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
+	if err != nil {
+		return false
+	}
+	want, err := base64.RawStdEncoding.DecodeString(parts[5])
+	if err != nil || len(want) == 0 {
+		return false
+	}
+	got := argon2.IDKey([]byte(pwd), salt, tim, mem, par, uint32(len(want)))
+	return subtle.ConstantTimeCompare(got, want) == 1
+}
+
+func hashPassword(pwd string) string { return argon2Encode(pwd) }
+
+// needsRehash 判断存量口令是否还是旧的 sha256 格式（登录成功后顺手升级）
+func needsRehash(stored string) bool {
+	return !strings.HasPrefix(stored, "$argon2id$")
+}
+
+// verifyPassword 兼容两种格式：优先 Argon2id，旧记录回退 sha256。
 func verifyPassword(stored, pwd string) bool {
+	if stored == "" {
+		return false
+	}
+	if strings.HasPrefix(stored, "$argon2id$") {
+		return argon2Verify(stored, pwd)
+	}
+	// 旧格式：hex(salt)$hex(sha256(salt+pwd))
 	i := strings.IndexByte(stored, '$')
 	if i <= 0 || i == len(stored)-1 {
 		return false
@@ -144,8 +211,55 @@ func revokeToken() {
 	authMu.Unlock()
 }
 
+// ---------- 一次性下载令牌 ----------
+//
+// /download 是浏览器直链（<a download>），没法带自定义请求头。若把长期会话 token
+// 拼在 URL 上（?token=…），会进浏览器历史、服务器/代理日志、Referer 与截图。
+// 折中做法：先调 /api/download-token 换一个「短时效 + 用一次即废」的下载令牌，
+// 再用它下载；泄漏面与危害都远小于长期 token。
+
+var dlMu sync.Mutex
+var dlTokens = map[string]time.Time{} // token -> 过期时间
+
+// issueDownloadToken 签发一次性下载令牌（默认 60 秒）
+func issueDownloadToken() string {
+	tok := issueToken() // 复用随机源
+	dlMu.Lock()
+	// 顺手清掉过期项，避免长时间运行累积
+	now := time.Now()
+	for k, exp := range dlTokens {
+		if now.After(exp) {
+			delete(dlTokens, k)
+		}
+	}
+	dlTokens[tok] = now.Add(60 * time.Second)
+	dlMu.Unlock()
+	return tok
+}
+
+// consumeDownloadToken 校验并立即作废（一次性）。空/过期/已用过都返回 false。
+func consumeDownloadToken(tok string) bool {
+	if tok == "" {
+		return false
+	}
+	dlMu.Lock()
+	defer dlMu.Unlock()
+	exp, ok := dlTokens[tok]
+	if !ok {
+		return false
+	}
+	delete(dlTokens, tok) // 用一次即废
+	return time.Now().Before(exp)
+}
+
+// handlerDownloadToken 签发一次性下载令牌（需通过口令校验才能调用）
+func handlerDownloadToken(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]interface{}{"ok": true, "dt": issueDownloadToken()})
+}
+
 // authMiddleware 口令锁。未设口令时完全透传；设了口令后白名单之外全要 token。
-// token 可以放在 X-Token 头、query（?token=，给 /download 这类直链用）或表单里。
+// token 只接受请求头 X-Token 或 Authorization: Bearer，不再从 URL / 表单读取
+// （避免泄漏到日志与历史）。/download 这类直链改用一次性下载令牌 dt。
 func authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if sysSettings().PasswordHash == "" {
@@ -159,10 +273,16 @@ func authMiddleware(next http.Handler) http.Handler {
 		}
 		tok := r.Header.Get("X-Token")
 		if tok == "" {
-			tok = r.URL.Query().Get("token")
+			if ah := r.Header.Get("Authorization"); strings.HasPrefix(ah, "Bearer ") {
+				tok = strings.TrimSpace(ah[len("Bearer "):])
+			}
 		}
-		if tok == "" {
-			tok = r.FormValue("token")
+		// 直链下载：接受尚未使用的一次性下载令牌
+		if !tokenValid(tok) && r.URL.Path == "/download" {
+			if consumeDownloadToken(r.URL.Query().Get("dt")) {
+				next.ServeHTTP(w, r)
+				return
+			}
 		}
 		if !tokenValid(tok) {
 			writeJSON(w, map[string]interface{}{
@@ -223,6 +343,7 @@ func handlerSystemInfo(w http.ResponseWriter, r *http.Request) {
 		"autostart_cmd":  cmd,
 		"lan":            s.LAN,
 		"has_password":   s.PasswordHash != "",
+		"lan_insecure":   s.LAN && s.PasswordHash == "",
 		"auth":           authToken != "",
 		"port":           currentPort,
 		"addrs":          lanURLs(),
@@ -277,6 +398,13 @@ func handlerAuth(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]interface{}{"ok": false, "error": L["err_pwd_wrong"]})
 		return
 	}
+	// 存量口令若是旧 sha256 格式，就地升级为 Argon2id（用户无感，只发生一次）
+	if needsRehash(s.PasswordHash) {
+		s.PasswordHash = hashPassword(pwd)
+		if err := saveSysSettings(s); err == nil {
+			appLog("口令哈希已升级为 Argon2id")
+		}
+	}
 	writeJSON(w, map[string]interface{}{"ok": true, "token": issueToken(), "need_auth": true})
 }
 
@@ -286,7 +414,9 @@ func handlerAuthState(w http.ResponseWriter, r *http.Request) {
 	need := s.PasswordHash != ""
 	tok := r.Header.Get("X-Token")
 	if tok == "" {
-		tok = r.URL.Query().Get("token")
+		if ah := r.Header.Get("Authorization"); strings.HasPrefix(ah, "Bearer ") {
+			tok = strings.TrimSpace(ah[len("Bearer "):])
+		}
 	}
 	writeJSON(w, map[string]interface{}{
 		"ok":        true,
@@ -354,11 +484,19 @@ func handlerSetAutostart(w http.ResponseWriter, r *http.Request) {
 }
 
 // handlerSetLAN 开关局域网访问（保存后需重启生效）
+// 安全约束：开启局域网等于把服务暴露给整个网段，若未设访问口令则拒绝开启，
+// 避免「谁都能打开界面点转换」。用户须先设置口令。
 func handlerSetLAN(w http.ResponseWriter, r *http.Request) {
 	lang := reqLang(r)
 	L := msgs(lang)
 	on := r.FormValue("on") == "1"
 	s := sysSettings()
+	if on && s.PasswordHash == "" {
+		writeJSON(w, map[string]interface{}{
+			"ok": false, "error": L["msg_lan_need_pwd"], "need_password": true,
+		})
+		return
+	}
 	s.LAN = on
 	if err := saveSysSettings(s); err != nil {
 		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})

@@ -1396,13 +1396,27 @@ window.fetch = function(input, init){
     return res;
   });
 };
-// /download 是直链（不走 fetch），点的时候把 token 拼到 query 上
+// /download 是浏览器直链（<a download>），带不了自定义请求头。
+// 不再把长期 token 拼到 URL（会进历史/日志/Referer）；改为点击时先换一个
+// 一次性下载令牌 dt（60 秒、用一次即废），再拼到 href 上触发下载。
 document.addEventListener("click",e=>{
   const a = e.target.closest && e.target.closest('a[href^="/download"]');
   if(!a || !window.__authToken) return;
   const raw = a.getAttribute("href")||"";
-  if(raw.indexOf("token=")>=0) return;
-  a.setAttribute("href", raw + (raw.indexOf("?")<0?"?":"&") + "token=" + encodeURIComponent(window.__authToken));
+  if(raw.indexOf("dt=")>=0) return;           // 已换过令牌，交给浏览器直接下载
+  if(a.dataset.dtBusy==="1") return;
+  e.preventDefault();
+  a.dataset.dtBusy="1";
+  fetch("/api/download-token",{method:"POST"})
+    .then(r=>r.json())
+    .then(d=>{
+      a.dataset.dtBusy="0";
+      if(!d || !d.ok || !d.dt) return;       // 失败就静默放弃，避免错误跳转
+      const sep = raw.indexOf("?")<0?"?":"&";
+      a.setAttribute("href", raw+sep+"dt="+encodeURIComponent(d.dt));
+      a.click();                              // 重新触发一次，这次带 dt
+    })
+    .catch(()=>{ a.dataset.dtBusy="0"; });
 }, true);
 
 let _authPending=false;

@@ -2,6 +2,39 @@
 
 版本号在 `mes_conv/version.go`，本文件按版本倒序记录。
 
+## v1.10.0
+
+这一版做两件事：把**更新镜像服务**从「能转发」补成「能扛生产」，并给整个工具做一轮**安全加固**（口令换 Argon2id、令牌不再走 URL、更新清单 Ed25519 验签、局域网强制设口令、请求体限流）。同时修掉「更新后文件名仍带旧版本号」的尾巴，并把镜像默认基址切到 `x.lzplus.top` 根路径。
+
+### 安全加固（评审 P0）
+- **口令改用 Argon2id**：原先是 `salt + SHA256`，SHA256 太快、配置文件一旦泄漏易被高速离线爆破。现改为 Argon2id（自带盐、慢、内存硬），自描述编码 `$argon2id$v=19$m=..,t=..,p=..$salt$hash`。旧格式仍可校验，**用户下次登录时自动就地升级**，无感迁移（依赖 `golang.org/x/crypto/argon2`）
+- **令牌不再放 URL**：原先 `/download` 直链把长期 token 拼在 `?token=` 上，会进浏览器历史 / 服务器日志 / Referer / 截图。现认证只认请求头 `X-Token` 或 `Authorization: Bearer`；直链下载改用**一次性下载令牌**——先 `POST /api/download-token` 换一个「60 秒 + 用一次即废」的 `dt` 再下载，泄漏面与危害都极小
+- **更新清单 Ed25519 验签（供应链信任根）**：SHA256 只保证「内容一致」，不保证「来源可信」——能同时改 exe 与清单哈希的人仍可骗过校验。现 CI 用 Ed25519 私钥签 `version.json`（产出 `version.sig`），客户端内置公钥验签：**验签通过才信任清单里的 SHA256**；验签失败直接拒绝更新。无签名清单默认放行但记警告，设 `MES_UPDATE_REQUIRE_SIG=1` 可强制「必须有签名」
+  - 配套：release.yml 增加签名步骤（用 secret `MES_SIGN_PRIVATE_KEY`），`version.sig` 随 Release 一起上传
+- **局域网访问强制要求口令**：原先开 LAN 只是把服务暴露给整个网段，没口令谁都能点「转换」。现 `LAN=true` 且未设口令时**拒绝开启**并提示先设口令；`/api/system` 暴露 `lan_insecure` 供前端提示
+- **请求体大小限制**：为防同机 / 局域网任何人用超大 POST 打爆内存，中间件给所有请求体加 32MB 上限（`http.MaxBytesReader` + Content-Length 预检）
+
+### 镜像服务端（mirror/）
+- **GitHub Token 环境变量**：新增 `MIRROR_GITHUB_TOKEN`，服务端拉取时带 `Authorization: Bearer`，绕过 GitHub 匿名配额；已在仓库维护，不入库明文
+- **陈旧兜底（stale-while-down）**：`version.json` / release 元数据落盘缓存；上游不可达时回退缓存内容响应，并打 `X-Cache: stale` 头，工厂工位机不因 GitHub 抖动而断更
+- **手动立即拉取**：`POST /admin/refresh?admin_token=`（受 `MIRROR_ADMIN_TOKEN` 保护）强制服务端重新拉取并预热缓存，发版后不必等缓存自然刷新
+- **下载审计 + 计数**：`audit.log` 记录每次请求的时间、来源 IP（`X-Forwarded-For`）、资产、是否带令牌、状态码与字节数，便于运维排查与流量统计
+- **一次性旋转令牌**：每个客户端 `GET /version.json?enroll=1&secret=mes-mirror-internal` 自注册，服务端签发令牌并在响应头 `X-Next-Token` 给出下一枚；**每次拉取后用后旋转**，旧令牌立即失效，相当于一次性，避免镜像被滥用
+- **运维状态页**：`/status` 提供 30 秒自刷新的可读状态页，`/api/status` 返回 JSON，`/healthz` 供反代探活
+
+### 客户端（mes_conv/）
+- **更新后文件名规范化**：无感更新替换 exe 时自动剥离文件名里的 `-vX.Y.Z` / `_vX.Y.Z` 版本号，解决「运行的是 1.9.0 但文件名还显示 1.8.0」的困惑；校验 sha256 后仍比对 `version.json` 清单，不符即放弃
+- **镜像默认基址切到 `x.lzplus.top` 根路径**：`x.lzplus.top` 现已不再托管 Mastodon，反代可直接根路径（`x.lzplus.top → 127.0.0.1:18080`），无需子路径；仍可用 `MES_UPDATE_MIRROR` 环境变量覆盖（内网地址 / 子路径 `/mirror` 等）
+
+### 版本
+- 版本 1.9.0 → 1.10.0（version.go / versioninfo.json / 本文档三处）
+
+### 已知边界
+- `x.lzplus.top` 需在其 Cloudflare 加一条 A 记录指向 `43.128.199.65`（橙云）才对工厂可达；未加前镜像不可达，客户端自动回退 GitHub
+- 旋转令牌机制下，客户端本地缓存的令牌一旦用尽即 401，会自动以 enroll 密钥重新自注册，用户无感知
+- **Ed25519 验签需先配 CI 私钥**：仓库 secret `MES_SIGN_PRIVATE_KEY`（base64 的 ed25519 私钥）未配置时 CI 跳过签名，客户端按「未签名清单」处理（仍校验 SHA256，但无签名信任根）。配置后自下一版起清单即带签名。已用该密钥对做过 openssl 端到端验签，确认公钥/私钥配对正确
+- **Argon2id 自动升级**：存量旧 `salt+sha256` 口令在你下次用该口令登录时自动升级为 Argon2id（透明、无感）；未登录前配置文件里仍是旧格式，属正常
+
 ## v1.9.0
 
 这一版把「自动更新」从「能用」补到「可信」：更新包下载后必须校验哈希才允许替换，并新增自有更新镜像，工厂工位机不必直连 GitHub。

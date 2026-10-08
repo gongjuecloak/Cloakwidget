@@ -1186,6 +1186,26 @@ func appLog(format string, args ...interface{}) {
 	_, _ = f.WriteString(line + "\n")
 }
 
+// limitBodyMiddleware 限制请求体大小。
+// 转换接口要收配置 JSON / 表头数据，虽然正常都不大，但同机或局域网上任何人都能打这个服务，
+// 不设上限的话一个超大 POST 就能把内存吃满。上限 32MB，足够任何 legit 配置。
+const maxBodyBytes = 32 << 20 // 32 MiB
+
+func limitBodyMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ContentLength > maxBodyBytes {
+			writeJSON(w, map[string]interface{}{
+				"ok": false, "error": "请求体过大（上限 32MB）",
+			})
+			return
+		}
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // logMiddleware 记录 API 调用与下载请求；静态首页不记（噪声大）。
 func logMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1286,6 +1306,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("/api/system", handlerSystemInfo)
 	mux.HandleFunc("/api/auth", handlerAuth)
 	mux.HandleFunc("/api/auth/state", handlerAuthState)
+	mux.HandleFunc("/api/download-token", handlerDownloadToken)
 	mux.HandleFunc("/api/system/password", handlerSetPassword)
 	mux.HandleFunc("/api/system/autostart", handlerSetAutostart)
 	mux.HandleFunc("/api/system/lan", handlerSetLAN)
@@ -1357,7 +1378,7 @@ func startServer(port int) error {
 	}
 
 	go func() {
-		_ = http.Serve(ln, logMiddleware(authMiddleware(buildMux())))
+		_ = http.Serve(ln, limitBodyMiddleware(logMiddleware(authMiddleware(buildMux()))))
 	}()
 	return nil
 }

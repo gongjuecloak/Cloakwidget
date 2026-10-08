@@ -7,6 +7,8 @@ mes_conv/backup/
 mes_conv/configs/
 # 运行期自动更新状态（记录上次检查时间，避免每次启动都打 GitHub）
 mes_conv/autoupdate.json
+# 镜像访问令牌（运行期由客户端自动协商写入，不入库）
+mes_mirror_token
 # 就地更新时的临时文件
 *.new
 *.old

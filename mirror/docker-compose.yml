@@ -16,3 +16,7 @@ services:
       - MIRROR_REPO=gongjuecloak/Cloakwidget
       - MIRROR_PORT=8080
       - MIRROR_CACHE=/data/cache
+      # 以下为可选安全/控制变量；未设置时：GitHub 匿名（有速率上限）、enroll 开放注册、refresh 需令牌
+      - MIRROR_GITHUB_TOKEN=${MIRROR_GITHUB_TOKEN}
+      - MIRROR_ACCESS_TOKEN=${MIRROR_ACCESS_TOKEN}
+      - MIRROR_ADMIN_TOKEN=${MIRROR_ADMIN_TOKEN}
