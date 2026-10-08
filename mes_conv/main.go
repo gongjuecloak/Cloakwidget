@@ -95,7 +95,9 @@ func main() {
 
 	// 单实例：已有实例在运行就直接打开它的界面并退出，避免两个托盘图标 / 两个服务。
 	// -nosingle 时跳过（调试/验证用：可以在另一个端口独立跑一份，不去打扰用户正在用的那个）。
-	if !*nosingle && !acquireSingleInstance() {
+	// 就地更新后的重启进程带 MES_UPDATE_RESTART：旧进程即将退出，不做重复检测，直接接管。
+	isRestart := os.Getenv("MES_UPDATE_RESTART") == "1"
+	if !isRestart && !*nosingle && !acquireSingleInstance() {
 		if p := findRunningInstance(*port); p > 0 {
 			appLog("检测到本程序已在运行（端口 %d），直接打开该界面。", p)
 			if !noBrowser {
@@ -112,6 +114,9 @@ func main() {
 	if !started {
 		return
 	}
+
+	// 后台静默自动更新：启动后稍等再查 GitHub，不阻塞启动；查不到 / 无更新都不影响使用
+	go autoUpdate()
 
 	// 主 goroutine 交给系统托盘消息循环：程序常驻右下角，右键可「打开界面 / 打开输出文件夹 / 退出」
 	runTray(actualPort, *lang)

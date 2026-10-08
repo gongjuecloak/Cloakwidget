@@ -5,6 +5,11 @@ mes_conv/out/
 mes_conv/logs/
 mes_conv/backup/
 mes_conv/configs/
+# 运行期自动更新状态（记录上次检查时间，避免每次启动都打 GitHub）
+mes_conv/autoupdate.json
+# 就地更新时的临时文件
+*.new
+*.old
 _pkg/
 
 # 运行期生成的配置 / 状态（首次运行由程序自动写出，仓库里只保留内置默认值）

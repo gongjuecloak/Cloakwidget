@@ -49,3 +49,12 @@ func acquireSingleInstance() bool {
 	mutexHandle = h
 	return true
 }
+
+// releaseSingleInstance 主动关闭命名互斥体句柄。用于「就地更新后重启」场景：
+// 旧进程先释放锁，新进程才能立即拿到锁，避免被误判为重复实例而退出。
+func releaseSingleInstance() {
+	if mutexHandle != 0 {
+		procCloseHandle.Call(mutexHandle)
+		mutexHandle = 0
+	}
+}

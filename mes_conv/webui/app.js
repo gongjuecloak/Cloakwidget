@@ -1167,12 +1167,12 @@ const STR2 = {
     sys_block_tpl:"物料档案模板基准",
     sys_block_tpl_hint:"第一次转换会把 MES 模板的表头记下来；以后模板被换过（加列 / 删列 / 调顺序）转换时会告警。",
     sys_block_diag:"诊断与更新",
-    sys_block_diag_hint:"出问题时打一个排障包（日志 + 配置 + 环境信息，口令已脱敏），发给维护的人即可。程序不会自动下载更新。",
+    sys_block_diag_hint:"程序会在启动时自动检查 GitHub 上的新版本并后台更新（下次启动生效）；也可点右侧按钮立即更新。排障包用于出问题时把日志 + 配置 + 环境信息（口令已脱敏）发给维护的人。",
     sys_save:"保存", sys_on:"已开启", sys_off:"已关闭", sys_pwd_set:"已启用", sys_pwd_unset:"未启用",
     sys_pwd_new_ph:"新口令", sys_pwd_old_ph:"原口令",
     sys_pwd_save:"设置口令", sys_pwd_clear:"取消口令",
     sys_tpl_reset:"清除基准", sys_refresh:"刷新",
-    sys_diag:"生成排障包", sys_diag_dl:"下载排障包", sys_update:"检查更新",
+    sys_diag:"生成排障包", sys_diag_dl:"下载排障包", sys_update:"检查并更新", sys_update_restarting:"正在重启以生效新版本…",
     sys_addr:"局域网地址：", sys_autocmd:"启动命令：",
     tbl_search_ph:"搜索目标列 / 源列…", tbl_group_all:"全部填充方式", tbl_shown:"显示 %d / %d 行",
     tbl_drag_hint:"拖动左侧 ⠿ 调整顺序（顺序即输出列顺序）",
@@ -1219,12 +1219,12 @@ const STR2 = {
     sys_block_tpl:"物料檔案樣板基準",
     sys_block_tpl_hint:"第一次轉換會把 MES 樣板的表頭記下來；以後樣板被換過（加欄 / 刪欄 / 調順序）轉換時會告警。",
     sys_block_diag:"診斷與更新",
-    sys_block_diag_hint:"出問題時打包一個排障包（日誌 + 設定 + 環境資訊，密碼已去識別化），發給維護的人即可。程式不會自動下載更新。",
+    sys_block_diag_hint:"程式會在啟動時自動檢查 GitHub 上的新版本並背景更新（下次啟動生效）；也可點右側按鈕立即更新。排障包用於出問題時把日誌 + 設定 + 環境資訊（密碼已去識別化）發給維護的人。",
     sys_save:"儲存", sys_on:"已開啟", sys_off:"已關閉", sys_pwd_set:"已啟用", sys_pwd_unset:"未啟用",
     sys_pwd_new_ph:"新密碼", sys_pwd_old_ph:"原密碼",
     sys_pwd_save:"設定密碼", sys_pwd_clear:"取消密碼",
     sys_tpl_reset:"清除基準", sys_refresh:"重新整理",
-    sys_diag:"產生排障包", sys_diag_dl:"下載排障包", sys_update:"檢查更新",
+    sys_diag:"產生排障包", sys_diag_dl:"下載排障包", sys_update:"檢查並更新", sys_update_restarting:"正在重新啟動以生效新版本…",
     sys_addr:"區域網路網址：", sys_autocmd:"啟動命令：",
     tbl_search_ph:"搜尋目標欄 / 來源欄…", tbl_group_all:"全部填入方式", tbl_shown:"顯示 %d / %d 列",
     tbl_drag_hint:"拖曳左側 ⠿ 調整順序（順序即輸出欄順序）",
@@ -1271,12 +1271,12 @@ const STR2 = {
     sys_block_tpl:"Mốc tiêu đề mẫu vật liệu",
     sys_block_tpl_hint:"Lần chuyển đầu tiên sẽ ghi lại tiêu đề mẫu MES; các thay đổi sau (thêm / bớt / đổi thứ tự cột) sẽ được cảnh báo.",
     sys_block_diag:"Chẩn đoán & cập nhật",
-    sys_block_diag_hint:"Tạo gói chẩn đoán (log + cấu hình + môi trường, mật khẩu đã ẩn) để gửi cho người bảo trì. Không tự động tải bản cập nhật.",
+    sys_block_diag_hint:"Chương trình sẽ tự kiểm tra bản mới trên GitHub khi khởi động và cập nhật nền (có hiệu lực lần khởi động sau); cũng có thể bấm nút bên phải để cập nhật ngay. Gói chẩn đoán dùng để gửi log + cấu hình + môi trường (mật khẩu đã ẩn) cho người bảo trì khi có lỗi.",
     sys_save:"Lưu", sys_on:"Đang bật", sys_off:"Đang tắt", sys_pwd_set:"Đã bật", sys_pwd_unset:"Chưa đặt",
     sys_pwd_new_ph:"Mật khẩu mới", sys_pwd_old_ph:"Mật khẩu hiện tại",
     sys_pwd_save:"Đặt mật khẩu", sys_pwd_clear:"Bỏ mật khẩu",
     sys_tpl_reset:"Xóa mốc", sys_refresh:"Làm mới",
-    sys_diag:"Tạo gói chẩn đoán", sys_diag_dl:"Tải gói chẩn đoán", sys_update:"Kiểm tra cập nhật",
+    sys_diag:"Tạo gói chẩn đoán", sys_diag_dl:"Tải gói chẩn đoán", sys_update:"Kiểm tra và cập nhật", sys_update_restarting:"Đang khởi động lại để áp dụng bản mới…",
     sys_addr:"Địa chỉ LAN: ", sys_autocmd:"Lệnh khởi động: ",
     tbl_search_ph:"Tìm cột đích / cột nguồn…", tbl_group_all:"Mọi cách điền", tbl_shown:"Hiện %d / %d dòng",
     tbl_drag_hint:"Kéo ⠿ bên trái để đổi thứ tự (thứ tự = thứ tự cột đầu ra)",
@@ -1323,12 +1323,12 @@ const STR2 = {
     sys_block_tpl:"Material template baseline",
     sys_block_tpl_hint:"The first conversion records the MES template header; later changes (added / removed / reordered columns) will be flagged.",
     sys_block_diag:"Diagnostics & updates",
-    sys_block_diag_hint:"Build a bundle (logs + config + environment, password redacted) to hand to whoever maintains it. Updates are never downloaded automatically.",
+    sys_block_diag_hint:"The app auto-checks GitHub for new versions on startup and updates in the background (applied on next launch); or click the button to update now. The diagnostic bundle packages logs + config + environment (password redacted) to send to whoever maintains it.",
     sys_save:"Save", sys_on:"On", sys_off:"Off", sys_pwd_set:"Enabled", sys_pwd_unset:"Not set",
     sys_pwd_new_ph:"New password", sys_pwd_old_ph:"Current password",
     sys_pwd_save:"Set password", sys_pwd_clear:"Remove password",
     sys_tpl_reset:"Clear baseline", sys_refresh:"Refresh",
-    sys_diag:"Build bundle", sys_diag_dl:"Download bundle", sys_update:"Check for updates",
+    sys_diag:"Build bundle", sys_diag_dl:"Download bundle", sys_update:"Check & update", sys_update_restarting:"Restarting to apply the new version…",
     sys_addr:"LAN address: ", sys_autocmd:"Command: ",
     tbl_search_ph:"Search target / source column…", tbl_group_all:"All fill methods", tbl_shown:"Showing %d / %d rows",
     tbl_drag_hint:"Drag ⠿ on the left to reorder (order = output column order)",
@@ -1882,13 +1882,11 @@ if(sysUpdateBtn) sysUpdateBtn.addEventListener("click",async()=>{
   const st=document.getElementById("sysUpdateState");
   if(st) st.textContent=t("sys_update")+"…";
   try{
-    const r=await fetch("/api/system/update?lang="+encodeURIComponent(currentLang));
+    const r=await fetch("/api/system/update/apply",{method:"POST"});
     const d=await r.json();
     if(st) st.textContent=d.message||d.error||"";
-    if(d.ok && d.has_update){
-      const go=confirm(d.message+"\n\n"+(d.notes||"").slice(0,600));
-      if(go) window.open(d.download||d.url,"_blank");
-    }
+    // 后端会在约 0.6s 后自行重启以生效新版本；这里给个过渡提示
+    if(d.ok && d.restart){ setTimeout(()=>{ if(st) st.textContent=t("sys_update_restarting"); }, 1000); }
   }catch(e){ if(st) st.textContent=fetchErrText(e); }
 });
 

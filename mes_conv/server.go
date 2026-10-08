@@ -1292,6 +1292,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("/api/system/welcomed", handlerSetWelcomed)
 	mux.HandleFunc("/api/system/diag", handlerDiag)
 	mux.HandleFunc("/api/system/update", handlerUpdate)
+	mux.HandleFunc("/api/system/update/apply", handlerUpdateApply)
 	mux.HandleFunc("/api/values-export", handlerValuesExport)
 	mux.HandleFunc("/api/values-import", handlerValuesImport)
 	mux.HandleFunc("/api/profiles", handlerProfiles)
@@ -1325,7 +1326,20 @@ func startServer(port int) error {
 		host = "0.0.0.0"
 	}
 	addr := fmt.Sprintf("%s:%d", host, port)
-	ln, err := net.Listen("tcp", addr)
+	var ln net.Listener
+	var err error
+	if os.Getenv("MES_UPDATE_RESTART") == "1" {
+		// 重启场景：旧进程还占着端口，等它退出后再绑定（最多约 5 秒）
+		for i := 0; i < 20; i++ {
+			ln, err = net.Listen("tcp", addr)
+			if err == nil {
+				break
+			}
+			time.Sleep(250 * time.Millisecond)
+		}
+	} else {
+		ln, err = net.Listen("tcp", addr)
+	}
 	if err != nil {
 		return err
 	}
@@ -1352,8 +1366,11 @@ func startServer(port int) error {
 // 返回 (端口, 是否由本进程提供服务)；第二个返回值为 false 表示
 // 「默认端口上已有本程序实例，已打开它的界面，本进程应直接退出」——不会出现两个托盘图标。
 func serveAsync(base int) (int, bool) {
+	// 就地更新后重启的进程带 MES_UPDATE_RESTART 环境变量：旧进程还占着端口、且本身就是
+	// 同一份程序，跳过「已有实例」探测，直接绑定（startServer 内部会等旧进程释放端口）。
+	isRestart := os.Getenv("MES_UPDATE_RESTART") == "1"
 	// 1) 默认端口上已有本程序 → 只打开它，绝不起第二个
-	if probeExisting(base) {
+	if !isRestart && probeExisting(base) {
 		appLog("端口 %d 上已有本程序在运行，直接打开该界面（不重复启动服务）", base)
 		if !noBrowser {
 			openBrowser(fmt.Sprintf("http://127.0.0.1:%d/", base))
@@ -1362,7 +1379,7 @@ func serveAsync(base int) (int, bool) {
 	}
 	// 2) 依次尝试；每个端口先看是否已有本程序实例，再尝试绑定
 	for p := base; p < base+20; p++ {
-		if p != base && probeExisting(p) {
+		if p != base && !isRestart && probeExisting(p) {
 			appLog("端口 %d 上已有本程序在运行，直接打开该界面", p)
 			if !noBrowser {
 				openBrowser(fmt.Sprintf("http://127.0.0.1:%d/", p))
