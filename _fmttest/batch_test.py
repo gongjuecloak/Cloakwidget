@@ -3,12 +3,15 @@
 import sys, io, os, json, time, subprocess, urllib.request, uuid, shutil
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
-HERE = r"C:/Users/Cloak_Zeng/WorkBuddy/2026-10-06-14-57-26"
-EXE = os.path.join(HERE, "mes_conv", "_newbuild.exe")
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MES = os.path.join(HERE, "mes_conv")
+EXE = os.path.join(MES, os.environ.get("MES_EXE", "_newbuild.exe"))
 PORT = int(os.environ.get("APP_PORT", "8761"))
 BASE = "http://127.0.0.1:%d" % PORT
 OUT = os.path.join(MES, "out")
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _fix  # noqa: E402
 
 PASS = FAIL = 0
 def check(name, ok, extra=""):
@@ -71,9 +74,8 @@ try:
             try: os.remove(os.path.join(OUT, n))
             except Exception: pass
 
-    S = r"D:/User/Cloak_Zeng/Download"
-    tpl = rd(os.path.join(S, "物料档案导入模版 (3).xlsx"))
-    full = rd(os.path.join(S, "20261006 匯入 577筆.xlsx"))
+    tpl = rd(_fix.find(_fix.SRC, _fix.TPL_NAMES))
+    full = rd(_fix.find(_fix.SRC, _fix.MAT_FULL_NAMES))
     p1, p2 = os.path.join(HERE, "_fmttest/拆_1.xlsx"), os.path.join(HERE, "_fmttest/拆_2.xlsx")
 
     print("\n【1】物料档案：两个源文件一次提交（应合并成一份、共 577 行）")
@@ -125,9 +127,8 @@ try:
     check("★ 批量合并结果与单文件逐格一致", diff == 0, "%d 处差异" % diff)
 
     print("\n【4】订单模块：两个订单文件一次提交")
-    OS = r"D:/User/Cloak_Zeng/Code/python/project-001/code-file/015/文件"
-    order = rd(os.path.join(OS, "訂單資料.xlsx"))
-    work = rd(os.path.join(OS, "工單資料.xlsx"))
+    order = rd(_fix.find(_fix.ORD, _fix.ORD_NAMES))
+    work = rd(_fix.find(_fix.ORD, _fix.WORK_NAMES))
     r3 = post("/api/orders/convert", {"lang": "zh"}, {
         "order": [("訂單A.xlsx", order), ("訂單B.xlsx", order)],
         "work": [("工單資料.xlsx", work)],

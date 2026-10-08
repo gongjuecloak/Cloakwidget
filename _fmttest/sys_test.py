@@ -7,9 +7,9 @@
 import sys, io, os, json, time, subprocess, urllib.request, urllib.error, urllib.parse, uuid, zipfile, shutil
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
-HERE = r"C:/Users/Cloak_Zeng/WorkBuddy/2026-10-06-14-57-26"
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MES = os.path.join(HERE, "mes_conv")
-EXE = os.path.join(MES, "_newbuild.exe")
+EXE = os.path.join(MES, os.environ.get("MES_EXE", "_newbuild.exe"))
 PORT = int(os.environ.get("APP_PORT", "8767"))
 BASE = "http://127.0.0.1:%d" % PORT
 SYSJSON = os.path.join(MES, "sys_settings.json")

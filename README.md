@@ -36,7 +36,9 @@ mes_conv/                         Go 源码（工具本体）
   orders_server.go                订单模块 HTTP 接口
   orders_i18n.go                  订单模块四语文案
   i18n_common.go                  两个模块共用的四语文案（汇总/模板/系统）
-  webui.html                      界面（内嵌进 exe，同目录放文件可覆盖）
+  webui/                          界面（index.html / style.css / i18n.js / app.js，
+                                   用 //go:embed webui/* 内嵌进 exe，同目录放文件可覆盖）
+  assets.go                       内嵌资源读取与「磁盘优先、内嵌兜底」组装
   mapping.json                    物料档案配置（运行期可改）
   mbfields.go                     MB 字段中文名对照
   report.go / progress.go         报告落盘、进度上报
@@ -142,5 +144,7 @@ python mes_conv/verify_tray.py  # 托盘窗口 + 退出路径
 ## 版本管理
 
 - 版本号只在 `mes_conv/version.go` 定义；`versioninfo.json` 与 `CHANGELOG.md` 需同步
-- 每次发版：改版本号 → 更新 CHANGELOG → `./build.sh` → `git tag v1.x.0`
+- **自动发版**：推 `v*` 标签即可，GitHub Actions 会跑测试 → 构建 → 建 Release 并上传 `MES-Converter-vX.Y.Z.exe`
+  （版本号由标签自动写回源码，无需手动改两处）。如需本地手动发版：`git tag v1.x.0 && git push --tags`
 - **不要提交** exe、`out/`、`logs/`、`backup/`、`configs/`、运行期 `orders.json`（已在 `.gitignore`）
+- 自签名用 `sign.ps1`（详见 `签名说明.md`）；自签名**不能**消除 SmartScreen，仅供完整性校验

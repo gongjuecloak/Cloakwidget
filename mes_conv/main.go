@@ -10,8 +10,8 @@ import (
 
 func main() {
 	cli := flag.Bool("cli", false, "无界面模式：直接按 mapping.json 转换")
-	src := flag.String("src", "D:/User/Cloak_Zeng/Download/20261006 匯入 577筆.xlsx", "源文件")
-	tpl := flag.String("tpl", "D:/User/Cloak_Zeng/Download/物料档案导入模版 (3).xlsx", "模板文件")
+	src := flag.String("src", "", "源文件（-cli 模式必填）")
+	tpl := flag.String("tpl", "", "模板文件（-cli 模式必填）")
 	out := flag.String("out", "", "输出文件（默认：out/ 下按时间命名）")
 	port := flag.Int("port", 8731, "Web UI 端口")
 	lang := flag.String("lang", "zh", "提示语言：zh 简体 / zht 繁体 / vi 越南语 / en 英文")
@@ -49,6 +49,16 @@ func main() {
 	}
 
 	if *cli {
+		if *src == "" || *tpl == "" {
+			fmt.Fprintln(os.Stderr, "错误：-cli 模式需要同时指定 -src 与 -tpl")
+			fmt.Fprintln(os.Stderr, "")
+			fmt.Fprintln(os.Stderr, "用法：")
+			fmt.Fprintln(os.Stderr, `  "物料档案转换工具.exe" -cli -src "源档.xlsx" -tpl "物料档案导入模板.xlsx"`)
+			fmt.Fprintln(os.Stderr, `  "物料档案转换工具.exe" -cli -src "源档.xlsx" -tpl "模板.xlsx" -out "结果.xlsx" -lang zh`)
+			fmt.Fprintln(os.Stderr, "")
+			fmt.Fprintln(os.Stderr, "不传任何参数直接双击运行时，程序会打开图形界面，无需命令行参数。")
+			os.Exit(2)
+		}
 		cfg := ensureConfig()
 		outPath := *out
 		if outPath == "" {

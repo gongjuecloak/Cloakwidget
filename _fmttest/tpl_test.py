@@ -4,14 +4,16 @@ import sys, io, os, json, time, subprocess, urllib.request, uuid
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 import openpyxl
 
-HERE = r"C:/Users/Cloak_Zeng/WorkBuddy/2026-10-06-14-57-26"
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MES = os.path.join(HERE, "mes_conv")
-EXE = os.path.join(MES, "_newbuild.exe")
+EXE = os.path.join(MES, os.environ.get("MES_EXE", "_newbuild.exe"))
 PORT = int(os.environ.get("APP_PORT", "8765"))
 BASE = "http://127.0.0.1:%d" % PORT
 FT = os.path.join(HERE, "_fmttest")
-S = r"D:/User/Cloak_Zeng/Download"
 BASELINE = os.path.join(MES, "tpl_baseline.json")
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _fix  # noqa: E402
 
 PASS = FAIL = 0
 def check(name, ok, extra=""):
@@ -47,7 +49,7 @@ def rd(p): return open(p, "rb").read()
 def join(s): return "\n".join(s or [])
 
 # ---------- 模板变体 ----------
-tpl0 = rd(os.path.join(S, "物料档案导入模版 (3).xlsx"))
+tpl0 = rd(_fix.find(_fix.SRC, _fix.TPL_NAMES))
 
 def load_tpl_headers(data, tmp):
     open(tmp, "wb").write(data)

@@ -1,12 +1,30 @@
-// 校验 webui.html 四语词条完整性：
+// 校验界面四语词条完整性：
 //  1) 四语 key 集合一致（不出现某语言漏词条）
 //  2) JS 里用到的 t("xxx") / fmt("xxx") 都有定义
+//
+// 界面已拆成 webui/ 下多个文件，默认读同目录的 webui/；
+// 也接受单个 webui.html（旧结构，向后兼容）。
 const fs = require('fs');
-const path = process.argv[2] || 'webui.html';
-const html = fs.readFileSync(path, 'utf8');
-const m = html.match(/<script>([\s\S]*?)<\/script>/);
-if (!m) { console.error('未找到 <script>'); process.exit(1); }
-const js = m[1];
+const path = require('path');
+
+const arg = process.argv[2] || path.join(__dirname, 'webui');
+let js;
+
+if (fs.existsSync(arg) && fs.statSync(arg).isDirectory()) {
+  const read = n => fs.readFileSync(path.join(arg, n), 'utf8');
+  const index = read('index.html');
+  if (!index.includes('<!--@STYLE-->') || !index.includes('<!--@SCRIPT-->')) {
+    console.error('index.html 里找不到 <!--@STYLE--> / <!--@SCRIPT--> 占位符');
+    process.exit(1);
+  }
+  // 顺序与 Go 侧 assembleHTML 一致：i18n.js 在前，app.js 在后
+  js = read('i18n.js') + '\n' + read('app.js');
+} else {
+  const html = fs.readFileSync(arg, 'utf8');
+  const m = html.match(/<script>([\s\S]*?)<\/script>/);
+  if (!m) { console.error('未找到 <script>'); process.exit(1); }
+  js = m[1];
+}
 
 const start = js.indexOf('const STR =');
 const relEnd = js.indexOf('\n};', start);

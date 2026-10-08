@@ -2,7 +2,9 @@
 import sys, io, os, openpyxl
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
-BASE = "_golden/go_订单工单.xlsx"
+# 路径基于脚本位置推导，从任何目录运行都可以
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BASE = os.path.join(ROOT, "_golden/go_订单工单.xlsx")
 
 def norm(v):
     if v is None: return ""
@@ -18,9 +20,9 @@ def load(p, sheet):
     wb.close(); return rows
 
 variants = [
-    ("xlsx 改名成 .xls", "_fmttest/out_伪装.xls.xlsx"),
-    ("UTF-8 CSV",        "_fmttest/out_訂單資料_utf8.csv.xlsx"),
-    ("GBK CSV",          "_fmttest/out_訂單資料_gbk.csv.xlsx"),
+    ("xlsx 改名成 .xls", os.path.join(ROOT, "_fmttest/out_伪装.xls.xlsx")),
+    ("UTF-8 CSV",        os.path.join(ROOT, "_fmttest/out_訂單資料_utf8.csv.xlsx")),
+    ("GBK CSV",          os.path.join(ROOT, "_fmttest/out_訂單資料_gbk.csv.xlsx")),
 ]
 sheets = ["销售订单主表", "销售订单明细", "工单"]
 allok = True

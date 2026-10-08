@@ -178,21 +178,50 @@ func handlerIndex(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	// 界面禁止缓存：否则改了 webui.html 后浏览器仍显示旧版本，极易误判为「没生效」
+	// 界面禁止缓存：否则改了界面文件后浏览器仍显示旧版本，极易误判为「没生效」
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
 	w.Header().Set("Pragma", "no-cache")
-	// 磁盘优先（临时改界面免重编），缺失则回退内嵌版本（只发一个 exe 也能用）
-	if b, err := os.ReadFile(filepath.Join(exeDir(), "webui.html")); err == nil && len(b) > 0 {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write(b)
-		return
-	}
-	if len(embeddedHTML) == 0 {
-		http.Error(w, "找不到 webui.html（请确保它与本程序在同一目录）", 500)
-		return
-	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write(embeddedHTML)
+	_, _ = w.Write(indexHTML())
+}
+
+// indexHTML 返回可直接发送的单文件界面 HTML。
+//
+// 界面源码拆在 mes_conv/webui/ 下（index.html + style.css + i18n.js + app.js），
+// 由 go:embed 内嵌；这里按占位符把 CSS/JS 内联回单文件，所以对外仍只发一个 exe、
+// 页面也不产生任何外部请求。
+//
+// 覆盖顺序（从高到低）：
+//  1. exe 同级 webui.html —— 整页覆盖，改界面免重编
+//  2. exe 同级 webui/ 目录下的同名文件 —— 只替换其中一块
+//  3. 内嵌版本
+func indexHTML() []byte {
+	if b, err := os.ReadFile(filepath.Join(exeDir(), "webui.html")); err == nil && len(b) > 0 {
+		return b
+	}
+	dir := filepath.Join(exeDir(), "webui")
+	return assembleHTML(
+		pickPageFile(dir, "index.html", embeddedIndex),
+		pickPageFile(dir, "style.css", embeddedCSS),
+		pickPageFile(dir, "i18n.js", embeddedI18n),
+		pickPageFile(dir, "app.js", embeddedApp),
+	)
+}
+
+// pickPageFile 优先读磁盘 webui/ 目录里的同名文件，缺失则回退内嵌内容。
+func pickPageFile(dir, name string, fallback []byte) []byte {
+	if b, err := os.ReadFile(filepath.Join(dir, name)); err == nil && len(b) > 0 {
+		return b
+	}
+	return fallback
+}
+
+// assembleHTML 把 CSS 与 JS 内联进 index.html 的两个占位符。
+func assembleHTML(index, css, i18n, app []byte) []byte {
+	s := string(index)
+	s = strings.Replace(s, "<!--@STYLE-->", "<style>\n"+string(css)+"</style>", 1)
+	s = strings.Replace(s, "<!--@SCRIPT-->", "<script>\n"+string(i18n)+string(app)+"</script>", 1)
+	return []byte(s)
 }
 
 // ---------- 配置 ----------
@@ -1260,6 +1289,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("/api/system/password", handlerSetPassword)
 	mux.HandleFunc("/api/system/autostart", handlerSetAutostart)
 	mux.HandleFunc("/api/system/lan", handlerSetLAN)
+	mux.HandleFunc("/api/system/welcomed", handlerSetWelcomed)
 	mux.HandleFunc("/api/system/diag", handlerDiag)
 	mux.HandleFunc("/api/system/update", handlerUpdate)
 	mux.HandleFunc("/api/values-export", handlerValuesExport)

@@ -231,7 +231,32 @@ func handlerSystemInfo(w http.ResponseWriter, r *http.Request) {
 		"auto_msg_on":    L["msg_autostart_on"],
 		"auto_msg_off":   L["msg_autostart_off"],
 		"update_current": appVersion,
+		"first_run":      isFirstRun(),
 	})
+}
+
+// ---------- 首次运行引导 ----------
+
+// welcomeFlagPath 首次运行标记。看过一次引导就写下来，之后不再弹。
+// 放在 exe 同级，程序目录整体拷走时标记也跟着走。
+func welcomeFlagPath() string {
+	return filepath.Join(exeDir(), "welcomed")
+}
+
+// isFirstRun 还没有引导过即视为首次运行。
+func isFirstRun() bool {
+	_, err := os.Stat(welcomeFlagPath())
+	return os.IsNotExist(err)
+}
+
+// handlerSetWelcomed 前端点过「开始使用」后回调，标记引导已完成。
+func handlerSetWelcomed(w http.ResponseWriter, r *http.Request) {
+	body := time.Now().Format("2006-01-02 15:04:05") + "\n"
+	if err := os.WriteFile(welcomeFlagPath(), []byte(body), 0644); err != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, map[string]interface{}{"ok": true})
 }
 
 // handlerAuth 用口令换 token

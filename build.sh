@@ -76,10 +76,12 @@ echo "  已生成 $EXE_NAME（$((SIZE/1048576)) MB，构建时间 $BT）"
 step "同步分享版目录"
 mkdir -p "$SHARE"
 cp -f "$EXE_NAME" "$SHARE/"
-cp -f webui.html "$SHARE/"
 cp -f mapping.json "$SHARE/"
 [ -f orders.json ] && cp -f orders.json "$SHARE/"
-echo "  已同步：$EXE_NAME / webui.html / mapping.json"
+# 界面已拆到 webui/ 并内嵌进 exe，不再单独同步 webui.html。
+# 若分享版里残留旧的 webui.html，程序会把它当作「磁盘覆盖」优先读取，务必清掉。
+rm -f "$SHARE/webui.html"
+echo "  已同步：$EXE_NAME / mapping.json"
 echo "  提示：分享版的 README.md 是手写文档，脚本不覆盖"
 
 echo

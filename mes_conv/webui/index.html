@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MES 物料档案转换工具</title>
+<!--@STYLE-->
+</head>
+<body>
+<datalist id="srcCols"></datalist>
+<datalist id="tgtCols"></datalist>
+<header>
+  <div class="brand">
+    <div class="logo" id="appLogo">MES</div>
+    <div>
+      <h1 id="app_title">MES 物料档案转换工具</h1>
+      <p id="app_subtitle">鼎新 ERP 物料档 → MES 导入模板，一键转换</p>
+    </div>
+  </div>
+  <div class="lang">
+    <button id="backHomeBtn" class="back-btn" style="display:none">← 返回</button>
+    <label id="lang_label" for="langSel">语言</label>
+    <select id="langSel">
+      <option value="zh">简体中文</option>
+      <option value="zht">繁體中文</option>
+      <option value="vi">Tiếng Việt</option>
+      <option value="en">English</option>
+    </select>
+    <button id="cfgNavBtn" class="ghost" style="margin-left:12px" disabled>⚙ 配置</button>
+    <button id="helpBtn" class="ghost">? 使用说明</button>
+    <button id="aboutBtn" class="ghost">关于</button>
+  </div>
+</header>
+
+<main>
+  <!-- ===== 首页：选择模块 ===== -->
+  <div id="viewHome" class="view">
+    <div class="home-intro">
+      <h2 id="home_title">请选择要使用的模块</h2>
+      <p id="home_desc">两个模块各自独立，配置与输出互不影响</p>
+    </div>
+    <div class="mod-grid">
+      <div class="mod-card" id="modMaterials">
+        <div class="mod-ico">📦</div>
+        <h3 id="mod_mat_name">物料档案</h3>
+        <p id="mod_mat_desc">把鼎新 ERP 导出的物料档（INVMB）转换成 MES 的「物料档案导入模板」，自动做字段映射、单位归一与预检。</p>
+        <div class="mod-tags">
+          <span class="mod-tag" id="mod_mat_t1">字段映射</span>
+          <span class="mod-tag" id="mod_mat_t2">单位归一</span>
+          <span class="mod-tag" id="mod_mat_t3">导入前预检</span>
+        </div>
+        <div class="mod-go" id="mod_mat_go">进入 →</div>
+      </div>
+      <div class="mod-card" id="modOrders">
+        <div class="mod-ico">🧾</div>
+        <h3 id="mod_ord_name">订单 / 工单</h3>
+        <p id="mod_ord_desc">把鼎新 ERP 导出的订单档与製令（工单）档，转换成 MES 的「销售订单主表 / 销售订单明细 / 工单」三张表，自动回填销售订单行号与打标判定。</p>
+        <div class="mod-tags">
+          <span class="mod-tag" id="mod_ord_t1">主表 + 明细 + 工单</span>
+          <span class="mod-tag" id="mod_ord_t2">行号回填</span>
+          <span class="mod-tag" id="mod_ord_t3">打标判定</span>
+        </div>
+        <div class="mod-go" id="mod_ord_go">进入 →</div>
+      </div>
+    </div>
+    <div class="cfg-entry" id="cfgEntry">
+      <div class="mod-ico">⚙️</div>
+      <div>
+        <h3 id="cfg_entry_name">配置中心</h3>
+        <p id="cfg_entry_desc">字段映射、单位表、字典表、表头别名都在这里维护；操作页面只负责选文件与转换</p>
+      </div>
+      <div class="mod-go" id="cfg_entry_go">进入 →</div>
+    </div>
+  </div>
+
+  <!-- ===== 模块一：物料档案 ===== -->
+  <div id="viewMaterials" class="view" style="display:none">
+  <div class="steps">
+    <div class="card" id="srcCard">
+      <div class="step-no">1</div>
+      <h2 id="step_source">第 1 步 · 选择源文件</h2>
+      <p id="step_source_desc">选择从鼎新 ERP 导出的物料档（.xlsx / .xls / .csv）</p>
+      <label class="file-btn"><input type="file" id="srcFile" accept=".xlsx,.xls,.csv,.txt" multiple><span id="srcLabel">选择文件</span></label>
+      <div class="file-name" id="srcName"></div>
+      <div class="file-list" id="srcList"></div>
+      <div class="drop-hint" id="srcDropHint">也可以直接把文件拖到这里；可一次选多个，按列名合并成一份结果</div>
+    </div>
+    <div class="card" id="tplCard">
+      <div class="step-no">2</div>
+      <h2 id="step_template">第 2 步 · 选择模板</h2>
+      <p id="step_template_desc">选择 MES 的「物料档案导入模板」（.xlsx）</p>
+      <label class="file-btn"><input type="file" id="tplFile" accept=".xlsx"><span id="tplLabel">选择文件</span></label>
+      <div class="file-name" id="tplName"></div>
+      <div class="drop-hint" id="tplDropHint">也可以直接把文件拖到这里</div>
+    </div>
+  </div>
+
+  <div class="actions">
+    <button id="startBtn" class="primary">开始转换</button>
+  </div>
+
+  <div id="progressWrap" style="display:none;margin:14px 0 0">
+    <div style="height:8px;background:#e5e7eb;border-radius:999px;overflow:hidden">
+      <div id="progressBar" style="height:100%;width:0;background:#2563eb;transition:width .2s ease"></div>
+    </div>
+    <div id="progressText" style="margin-top:6px;font-size:13px;color:#6b7280"></div>
+  </div>
+
+  <div id="statusBanner" class="banner" role="status" aria-live="polite"></div>
+
+  <section id="resultSection" class="result">
+    <div class="ok-icon">✓</div>
+    <h2 id="result_title">转换完成！</h2>
+    <p id="result_desc">文件已生成，点击下载即可导入 MES。</p>
+    <div class="stats" id="stats"></div>
+    <div class="donut-wrap" id="donutWrap"></div>
+    <div class="result-btns">
+      <a id="downloadLink" class="primary" href="#">下载结果文件</a>
+      <button id="openFolderBtn" class="ghost">打开输出文件夹</button>
+    </div>
+  </section>
+
+  <section id="checkSection" class="check-section">
+    <div class="section-title">
+      <h3 id="check_title">预检结果</h3>
+      <span class="ghost" id="check_summary"></span>
+    </div>
+    <ul class="check-list" id="checkList"></ul>
+    <div id="issueWrap" class="scrollbox" style="display:none">
+      <table><thead><tr>
+        <th id="issue_row" style="width:80px">行号</th>
+        <th id="issue_col" style="width:130px">列</th>
+        <th id="issue_msg">说明</th>
+      </tr></thead><tbody id="issueBody"></tbody></table>
+    </div>
+  </section>
+
+  <section id="historySection" class="history">
+    <div class="section-title">
+      <h3 id="history_title">最近转换</h3>
+      <button id="refreshHistBtn" class="ghost">刷新</button>
+    </div>
+    <table><thead><tr>
+      <th id="hist_time" style="width:170px">时间</th>
+      <th id="hist_file">文件</th>
+      <th id="hist_rows" style="width:80px">行数</th>
+      <th id="hist_status" style="width:110px">预检</th>
+      <th style="width:160px"></th>
+    </tr></thead><tbody id="histBody"></tbody></table>
+  </section>
+
+  <section id="statsSection" class="history">
+    <div class="section-title">
+      <h3 id="stats_title">转换统计</h3>
+      <button id="refreshStatsBtn" class="ghost">刷新</button>
+    </div>
+    <div class="stats-grid" id="statsGrid"></div>
+    <div class="bars" id="statsBars"></div>
+    <div class="bar-labels" id="statsBarLabels"></div>
+  </section>
+
+  <section id="logSection" class="log-section">
+    <div class="log-head">
+      <h3 id="log_title">转换日志</h3>
+      <div class="btns">
+        <button id="copyLogBtn" class="ghost">复制日志</button>
+        <button id="toggleLogBtn" class="ghost">查看日志</button>
+      </div>
+    </div>
+    <pre id="logBox" class="log-box"></pre>
+  </section>
+
+  </div><!-- /viewMaterials -->
+
+  <!-- ===== 模块二：订单 / 工单 ===== -->
+  <div id="viewOrders" class="view" style="display:none">
+    <div class="steps">
+      <div class="card" id="ordSrcCard">
+        <div class="step-no">1</div>
+        <h2 id="ord_step_source">订单文件（可选）</h2>
+        <p id="ord_step_source_desc">鼎新 ERP 导出的订单档（.xlsx / .xls / .csv），用于生成销售订单主表与明细</p>
+        <label class="file-btn"><input type="file" id="ordSrcFile" accept=".xlsx,.xls,.csv,.txt" multiple><span id="ordSrcLabel">选择文件</span></label>
+        <div class="file-name" id="ordSrcName"></div>
+        <div class="file-list" id="ordSrcList"></div>
+        <div class="drop-hint" id="ordSrcDropHint">也可以直接把文件拖到这里；可一次选多个</div>
+      </div>
+      <div class="card" id="ordWorkCard">
+        <div class="step-no">2</div>
+        <h2 id="ord_step_work">工单文件（可选）</h2>
+        <p id="ord_step_work_desc">鼎新 ERP 导出的製令（工单）档（.xlsx / .xls / .csv），用于生成工单表</p>
+        <label class="file-btn"><input type="file" id="ordWorkFile" accept=".xlsx,.xls,.csv,.txt" multiple><span id="ordWorkLabel">选择文件</span></label>
+        <div class="file-name" id="ordWorkName"></div>
+        <div class="file-list" id="ordWorkList"></div>
+        <div class="drop-hint" id="ordWorkDropHint">也可以直接把文件拖到这里；可一次选多个</div>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button id="ordStartBtn" class="primary">开始转换</button>
+    </div>
+
+    <div id="ordProgressWrap" style="display:none;margin:14px 0 0">
+      <div style="height:8px;background:#e5e7eb;border-radius:999px;overflow:hidden">
+        <div id="ordProgressBar" style="height:100%;width:0;background:#2563eb;transition:width .2s ease"></div>
+      </div>
+      <div id="ordProgressText" style="margin-top:6px;font-size:13px;color:#6b7280"></div>
+    </div>
+
+    <div id="ordBanner" class="banner" role="status" aria-live="polite"></div>
+
+    <section id="ordResultSection" class="result">
+      <div class="ok-icon">✓</div>
+      <h2 id="ord_result_title">转换完成！</h2>
+      <p id="ord_result_desc">文件已生成，点击下载即可导入 MES。</p>
+      <div class="stats" id="ordStats"></div>
+      <div class="donut-wrap" id="ordDonutWrap"></div>
+      <div class="result-btns">
+        <a id="ordDownloadLink" class="primary" href="#">下载结果文件</a>
+        <button id="ordOpenFolderBtn" class="ghost">打开输出文件夹</button>
+      </div>
+    </section>
+
+    <section id="ordCheckSection" class="check-section">
+      <div class="section-title">
+        <h3 id="ord_check_title">预检结果</h3>
+        <span class="ghost" id="ordCheckSummary"></span>
+      </div>
+      <ul class="check-list" id="ordCheckList"></ul>
+      <div id="ordIssueWrap" class="scrollbox" style="display:none">
+        <table><thead><tr>
+          <th id="ord_issue_row" style="width:80px">行号</th>
+          <th id="ord_issue_col" style="width:130px">列</th>
+          <th id="ord_issue_msg">说明</th>
+        </tr></thead><tbody id="ordIssueBody"></tbody></table>
+      </div>
+    </section>
+
+    <section id="ordHistSection" class="history">
+      <div class="section-title">
+        <h3 id="ord_history_title">最近转换</h3>
+        <button id="ordRefreshHistBtn" class="ghost">刷新</button>
+      </div>
+      <table><thead><tr>
+        <th id="ord_hist_time" style="width:170px">时间</th>
+        <th id="ord_hist_file">文件</th>
+        <th id="ord_hist_rows" style="width:80px">行数</th>
+        <th id="ord_hist_status" style="width:110px">预检</th>
+        <th style="width:160px"></th>
+      </tr></thead><tbody id="ordHistBody"></tbody></table>
+    </section>
+
+    <section id="ordLogSection" class="log-section">
+      <div class="log-head">
+        <h3 id="ord_log_title">转换日志</h3>
+        <div class="btns">
+          <button id="ordCopyLogBtn" class="ghost">复制日志</button>
+          <button id="ordToggleLogBtn" class="ghost">查看日志</button>
+        </div>
+      </div>
+      <pre id="ordLogBox" class="log-box"></pre>
+    </section>
+
+  </div><!-- /viewOrders -->
+
+  <!-- ===== 配置中心：所有配置集中在这里，操作页面不维护配置 ===== -->
+  <div id="viewConfig" class="view" style="display:none">
+    <div id="cfgFailBanner" class="banner err" role="alert"></div>
+    <div class="cfg-head">
+      <h2 id="cfg_title">配置中心</h2>
+      <p id="cfg_desc">两个模块的字段映射与规则都在这里维护。选文件、转换这些日常操作在各自的模块页面完成，这里只改配置。</p>
+    </div>
+    <div class="cfg-tabs" role="tablist" aria-label="配置模块">
+      <button type="button" class="cfg-tab active" role="tab" id="cfgTabMat" data-tab="mat" aria-controls="cfgPaneMat" aria-selected="true">物料档案</button>
+      <button type="button" class="cfg-tab" role="tab" id="cfgTabOrd" data-tab="ord" aria-controls="cfgPaneOrd" aria-selected="false">订单 / 工单</button>
+      <button type="button" class="cfg-tab" role="tab" id="cfgTabSys" data-tab="sys" aria-controls="cfgPaneSys" aria-selected="false">系统</button>
+    </div>
+
+    <!-- ---------- 面板一：物料档案配置 ---------- -->
+    <section class="advanced" id="cfgPaneMat" role="tabpanel" aria-labelledby="cfgTabMat">
+      <p class="muted" id="advanced_desc">以下为字段映射配置，仅管理员维护。普通用户无需修改。所有设置都以表单填写，无需写代码。</p>
+      <div class="adv-top">
+        <label id="lbl_outsheet" for="outSheetInput">输出工作表名称</label>
+        <input id="outSheetInput" type="text" value="物料档案">
+      </div>
+      <div class="adv-actions">
+        <button id="loadConfigBtn" class="ghost">载入当前配置</button>
+        <button id="saveConfigBtn" class="ghost">保存配置</button>
+        <button id="addFieldBtn" class="ghost">新增字段</button>
+        <button id="exportConfigBtn" class="ghost">导出配置</button>
+        <button id="importConfigBtn" class="ghost">导入配置</button>
+        <input type="file" id="importCfgFile" accept=".json" style="display:none">
+      </div>
+      <div id="advMsg" class="adv-msg"></div>
+
+      <div class="block-title"><span id="block_profiles">配置档（多套配置）</span>
+        <small id="block_profiles_hint">把当前配置存成一份命名档案，不同工厂 / 模板一键载入</small></div>
+      <div class="pc-line">
+        <select id="profileSel" style="width:260px"></select>
+        <button id="profileLoadBtn" class="ghost">载入</button>
+        <button id="profileSaveBtn" class="ghost">另存为配置档</button>
+        <button id="profileDelBtn" class="ghost">删除</button>
+      </div>
+
+      <div class="block-title"><span id="block_values">值域表（导出给业务维护）</span>
+        <small id="block_values_hint">把字典表 / 单位表导出成 CSV，交给懂业务的人改，再导回来，不用碰 JSON</small></div>
+      <div class="pc-line">
+        <button id="valuesExportBtn" class="ghost">导出值域表 CSV</button>
+        <button id="valuesImportBtn" class="ghost">导入值域表 CSV</button>
+        <input type="file" id="valuesFile" accept=".csv,.txt" style="display:none">
+      </div>
+
+      <div class="block-title"><span id="block_backup">配置备份</span>
+        <small id="block_backup_hint">每次保存都会自动留一份备份，改坏了可以还原</small></div>
+      <div class="pc-line">
+        <select id="backupSel" style="width:260px"></select>
+        <button id="restoreBtn" class="ghost">恢复此备份</button>
+        <button id="refreshBackupBtn" class="ghost">刷新列表</button>
+      </div>
+
+      <div class="block-title"><span id="block_fields">字段映射</span>
+        <small id="block_fields_hint">每一行 = 一个目标列怎么填</small></div>
+      <table id="fieldTable">
+        <thead><tr>
+          <th id="th_target">目标列</th><th id="th_source">源列(MBxxx)</th>
+          <th id="th_op">填充方式</th><th id="th_param">参数设置</th>
+          <th id="th_desc">说明</th><th></th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+      <div class="help" id="adv_help"></div>
+
+      <div class="block-title"><span id="block_unit">单位翻译表</span>
+        <small id="block_unit_hint">左边填原符号，右边填中文单位名，例如 kg → 千克</small></div>
+      <table>
+        <thead><tr><th id="unit_from" style="width:45%">原符号 / 原单位</th><th id="unit_to" style="width:45%">翻译为</th><th></th></tr></thead>
+        <tbody id="unitBody"></tbody>
+      </table>
+      <button class="mini-btn" id="addUnitBtn">+ 添加单位</button>
+
+      <div class="block-title"><span id="block_dicts">字典表（原值 → 翻译）</span>
+        <small id="block_dicts_hint">把源文件里的代码翻译成人能看懂的中文，例如 110 → 成品</small></div>
+      <div id="dictsWrap"></div>
+      <button class="mini-btn" id="addDictBtn">+ 新增字典</button>
+
+      <div class="block-title"><span id="block_wl">允许值清单</span>
+        <small id="block_wl_hint">某列的值不在清单里时，预检会告警（不改写数据）。例如「基本单位」只允许 MES 单位档案里的单位名</small></div>
+      <div id="wlWrap"></div>
+      <button class="mini-btn" id="addWlBtn">+ 添加一列的允许值</button>
+    </section>
+
+    <!-- ---------- 面板二：订单 / 工单配置 ---------- -->
+    <section class="advanced" id="cfgPaneOrd" style="display:none" role="tabpanel" aria-labelledby="cfgTabOrd">
+      <p class="muted" id="ord_advanced_desc">订单模块的字段映射与判定规则。所有设置都以表单填写，无需写代码。</p>
+
+      <div class="adv-actions">
+        <button id="ordCfgReloadBtn" class="ghost">载入当前配置</button>
+        <button id="ordCfgSaveBtn" class="ghost">保存配置</button>
+      </div>
+      <div id="ordAdvMsg" class="adv-msg"></div>
+
+      <div class="block-title"><span id="ord_block_map">字段映射</span>
+        <small id="ord_block_map_hint">每行 = 一个输出列：源列（可留空表示不导出）+ 源档为空时填入的默认值。表格行序就是输出列顺序。</small></div>
+      <div id="ordMapWrap"></div>
+
+      <div class="block-title"><span id="ord_block_tag">打标判定</span>
+        <small id="ord_block_tag_hint">产品编码以任一前缀开头 → 「是」，否则「否」</small></div>
+      <div id="ordTagWrap" class="pc-line"></div>
+
+      <div class="block-title"><span id="ord_block_sw">运行选项</span></div>
+      <div class="switches" id="ordSwitches"></div>
+
+      <div class="block-title"><span id="ord_block_alias">表头别名表</span>
+        <small id="ord_block_alias_hint">源档表头五花八门时靠它识别。匹配时已做简繁归一，写简写繁都认。</small></div>
+      <div id="ordAliasWrap"></div>
+    </section>
+
+    <!-- ---------- 面板三：系统 ---------- -->
+    <section class="advanced" id="cfgPaneSys" style="display:none" role="tabpanel" aria-labelledby="cfgTabSys">
+      <p class="muted" id="sys_desc">程序自身的运行方式：谁能访问、开机是否自动启动、MES 模板有没有变、出问题怎么取证。与字段映射无关；涉及监听的改动需要重启程序。</p>
+
+      <div class="block-title"><span id="sys_block_access">访问与安全</span>
+        <small id="sys_block_access_hint">默认只监听本机 127.0.0.1，同事访问不到。开启局域网后建议同时设一个口令。</small></div>
+      <div class="sys-grid">
+        <div class="sys-card">
+          <div class="sys-card-h"><span id="sys_lan_title">局域网访问</span><span class="pill" id="sysLanPill">—</span></div>
+          <p class="sys-card-p" id="sys_lan_desc">打开后，同一局域网内的同事用浏览器即可访问本工具（改完需重启程序生效）。</p>
+          <div class="pc-line">
+            <label class="sw"><input type="checkbox" id="sysLanChk"><span id="sys_lan_sw">允许局域网访问</span></label>
+            <button class="ghost" id="sysLanSave">保存</button>
+          </div>
+          <div class="sys-addr" id="sysAddrs"></div>
+        </div>
+        <div class="sys-card">
+          <div class="sys-card-h"><span id="sys_pwd_title">访问口令</span><span class="pill" id="sysPwdPill">—</span></div>
+          <p class="sys-card-p" id="sys_pwd_desc">设了口令后，除探活外的所有接口都要先验证；口令只存加盐哈希，不存明文。</p>
+          <div class="pc-line">
+            <input type="password" id="sysPwdNew" autocomplete="new-password" placeholder="新口令" style="width:130px">
+            <input type="password" id="sysPwdOld" autocomplete="current-password" placeholder="原口令" style="width:130px;display:none">
+            <button class="ghost" id="sysPwdSave">设置口令</button>
+            <button class="ghost" id="sysPwdClear">取消口令</button>
+          </div>
+        </div>
+        <div class="sys-card">
+          <div class="sys-card-h"><span id="sys_auto_title">开机自启</span><span class="pill" id="sysAutoPill">—</span></div>
+          <p class="sys-card-p" id="sys_auto_desc">登录 Windows 后自动在右下角托盘运行，不弹浏览器。只写当前用户的启动项，不需要管理员权限。</p>
+          <div class="pc-line">
+            <label class="sw"><input type="checkbox" id="sysAutoChk"><span id="sys_auto_sw">开机自动运行</span></label>
+            <button class="ghost" id="sysAutoSave">保存</button>
+          </div>
+          <div class="sys-addr" id="sysAutoCmd"></div>
+        </div>
+      </div>
+
+      <div class="block-title"><span id="sys_block_tpl">物料档案模板基准</span>
+        <small id="sys_block_tpl_hint">第一次转换会把 MES 模板的表头记下来；以后模板被换过（加列 / 删列 / 调顺序）转换时会告警。</small></div>
+      <div class="pc-line">
+        <span class="sys-tpl" id="sysTplState">—</span>
+        <button class="ghost" id="sysTplReset">清除基准</button>
+        <button class="ghost" id="sysTplRefresh">刷新</button>
+      </div>
+
+      <div class="block-title"><span id="sys_block_diag">诊断与更新</span>
+        <small id="sys_block_diag_hint">出问题时打一个排障包（日志 + 配置 + 环境信息，口令已脱敏），发给维护的人即可。程序不会自动下载更新。</small></div>
+      <div class="pc-line">
+        <button class="ghost" id="sysDiagBtn">生成排障包</button>
+        <a class="ghost" id="sysDiagLink" style="display:none" href="#">下载排障包</a>
+        <button class="ghost" id="sysUpdateBtn">检查更新</button>
+        <span class="sys-tpl" id="sysUpdateState"></span>
+      </div>
+      <div id="sysMsg" class="adv-msg"></div>
+    </section>
+  </div><!-- /viewConfig -->
+</main>
+
+<div id="helpModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:99;align-items:center;justify-content:center;padding:20px">
+  <div style="background:#fff;border-radius:12px;max-width:760px;width:100%;max-height:84vh;overflow:auto;padding:22px 26px;box-shadow:0 20px 60px rgba(0,0,0,.25)">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <h3 id="help_title" style="margin:0">使用说明</h3>
+      <button class="ghost" id="helpClose">关闭</button>
+    </div>
+    <div id="helpBody"></div>
+  </div>
+</div>
+
+<div id="aboutModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:99;align-items:center;justify-content:center;padding:20px">
+  <div style="background:#fff;border-radius:12px;max-width:680px;width:100%;max-height:84vh;overflow:auto;padding:22px 26px;box-shadow:0 20px 60px rgba(0,0,0,.25)">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <h3 id="about_title" style="margin:0">关于本工具</h3>
+      <button class="ghost" id="aboutClose">关闭</button>
+    </div>
+    <div id="aboutBody"></div>
+  </div>
+</div>
+
+<!-- 配置变更确认（保存前 diff） -->
+<div id="diffModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:99;align-items:center;justify-content:center;padding:20px">
+  <div style="background:#fff;border-radius:12px;max-width:720px;width:100%;max-height:84vh;overflow:auto;padding:22px 26px;box-shadow:0 20px 60px rgba(0,0,0,.25)">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+      <h3 id="diffTitle" style="margin:0">确认配置变更</h3>
+      <button class="ghost" id="diffClose">取消</button>
+    </div>
+    <p class="sys-card-p" id="diffHint">下面是这次保存会带来的改动，确认无误后再保存。</p>
+    <div class="diff-list" id="diffBody"></div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px">
+      <button class="ghost" id="diffCancel">取消</button>
+      <button class="primary" id="diffOk">确认保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 口令验证 -->
+<div id="authModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:100;align-items:center;justify-content:center;padding:20px">
+  <div style="background:#fff;border-radius:12px;max-width:430px;width:100%;padding:22px 26px;box-shadow:0 20px 60px rgba(0,0,0,.25)">
+    <h3 id="authTitle" style="margin:0 0 6px">需要口令</h3>
+    <p class="sys-card-p" id="authHint">本工具已开启口令保护，请先输入口令后再操作。</p>
+    <input type="password" id="authPwd" autocomplete="current-password" style="width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:8px;font-size:14px">
+    <div id="authMsg" class="adv-msg"></div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:12px">
+      <button class="primary" id="authOk">进入</button>
+    </div>
+  </div>
+</div>
+
+<div id="welcomeModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:110;align-items:center;justify-content:center;padding:20px">
+  <div style="background:#fff;border-radius:12px;max-width:540px;width:100%;padding:24px 28px;box-shadow:0 20px 60px rgba(0,0,0,.25)">
+    <h3 id="wcTitle" style="margin:0 0 6px;font-size:17px"></h3>
+    <p id="wcDesc" style="margin:0;color:var(--muted);font-size:13px;line-height:1.7"></p>
+    <div id="wcLangLabel" style="margin:16px 0 8px;font-size:13px;font-weight:600"></div>
+    <div id="wcLangs" class="wc-langs"></div>
+    <div class="wc-tips">
+      <div id="wcTip1"></div>
+      <div id="wcTip2"></div>
+      <div id="wcTip3"></div>
+    </div>
+    <div id="wcMsg" class="adv-msg"></div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
+      <button class="primary" id="wcOk"></button>
+    </div>
+  </div>
+</div>
+
+<footer id="footer">本工具离线运行，数据不会上传任何服务器。</footer>
+
+<!--@SCRIPT-->
+</body>
+</html>

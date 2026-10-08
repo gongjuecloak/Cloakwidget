@@ -5,22 +5,26 @@ mes_conv/out/
 mes_conv/logs/
 mes_conv/backup/
 mes_conv/configs/
+_pkg/
 
 # 运行期生成的配置 / 状态（首次运行由程序自动写出，仓库里只保留内置默认值）
 mes_conv/orders.json
 mes_conv/tpl_baseline.json
 mes_conv/sys_settings.json
+mes_conv/welcomed
 
 # ============ 分享版里的副本 ============
 # 这三个文件由 build.sh 从 mes_conv/ 同步过去，是产物不是源码，不单独维护
 MES物料档案转换工具_分享版/*.exe
-MES物料档案转换工具_分享版/webui.html
+MES物料档案转换工具_分享版/webui/
 MES物料档案转换工具_分享版/mapping.json
 MES物料档案转换工具_分享版/orders.json
 MES物料档案转换工具_分享版/out/
 MES物料档案转换工具_分享版/logs/
 MES物料档案转换工具_分享版/backup/
 MES物料档案转换工具_分享版/configs/
+# 首次运行由程序自动写出 welcomed 标记，不是源码
+MES物料档案转换工具_分享版/welcomed
 
 # 分享用的打包产物（内含 exe，同样不入库）
 /MES物料档案转换工具_*.zip
@@ -48,8 +52,11 @@ _backup_webui_*.html
 *.bak_*
 
 # ============ 测试夹具：真实业务数据，一律不入库 ============
-# 本仓库公开，_fmttest/ 下的源档/产物含真实物料与订单数据（客户简称、品号、金额等）。
-# 只入库测试脚本（*.py），夹具请自行从 MES 导出目录放置后再跑。
+# 本仓库公开，夹具含真实物料与订单数据（客户简称、品号、金额等）。
+# 只保留目录本身，文件请自行从 MES 导出目录放置后再跑（见 _fmttest/README.md）。
+_fixtures/*
+!_fixtures/.gitkeep
+
 _fmttest/*.xls
 _fmttest/*.csv
 _fmttest/out_*.xlsx
@@ -57,34 +64,12 @@ _fmttest/out_*.xlsx
 # ============ 工作区本地笔记 ============
 .workbuddy/
 
-# ============ 一次性排查脚本（历史遗留，不入库） ============
-# 注意：都带前导 / —— 只忽略仓库根目录下这些同名脚本，
-# 别把 _fmttest/cmp.py 这类同名但有用的回归脚本一起误伤
-/probe3.py
-/probe4.py
-/probe5.py
-/probe6.py
-/probe_class.py
-/probe_num.py
-/probe_sheets.py
-/probe_unit.py
-/cmp.py
-/cmpfull.py
-/debug2.py
-/dictdump.py
-/distinct.py
-/fullhdr.py
-/refmap.py
-/refmap2.py
-/tpl_probe.py
-/dump_unit2.py
-/recon_unit.py
-/sync_unit_cfg.py
-/verify_exe.py
-/verify_v12.py
-/verify_v12b.py
-/verify_v13cmp.py
-/verify_render.py
-
-/xlsx_inspect.py
+# ============ 归档目录：早期排查脚本与历史截图（不入库） ============
+# 这些是早期的数据探查 / 旧版验证工具，已移入 _archive/ 留档。
+# 注意：不要用裸文件名规则（如 cmp.py），否则会误伤 _fmttest/cmp.py 这类仍在用的回归脚本。
+_archive/
 mes_conv/appicon_preview.png
+
+# ============ 自签名证书（机器相关，不入库） ============
+# sign.ps1 生成的公开证书，仅本机/本开发者相关；如需内部分发信任，单独传即可。
+签名证书.cer

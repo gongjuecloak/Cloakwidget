@@ -1,0 +1,133 @@
+name: Release
+
+# 推一个 v* 标签即触发：跑测试 → 构建 Windows exe（带版本资源）→ 建 Release 并上传 exe
+# 用法：本地改好版本号后
+#   git tag v1.7.0 && git push --tags
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: 'mes_conv/go.mod'
+      - name: go vet
+        working-directory: mes_conv
+        run: go vet ./...
+      - name: go test
+        working-directory: mes_conv
+        run: go test ./...
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: 'mes_conv/go.mod'
+
+      - name: 从 tag 推导版本号
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: 把版本号写回源码（version.go / versioninfo.json）
+        working-directory: mes_conv
+        run: |
+          V="${{ steps.ver.outputs.version }}"
+          python3 - <<PY
+          import re, sys
+          v = "${{ steps.ver.outputs.version }}"
+          parts = [int(x) for x in v.split(".")] + [0, 0, 0]
+          mj, mn, pa, bd = parts[0], parts[1], parts[2], parts[3]
+
+          # version.go: const appVersion = "x.y.z"
+          g = open("version.go", encoding="utf-8").read()
+          g = re.sub(r'(const appVersion = ")[^"]+(")', r'\g<1>%s\2' % v, g, count=1)
+          open("version.go", "w", encoding="utf-8").write(g)
+
+          # versioninfo.json: 同时更新数字段与字符串字段
+          s = open("versioninfo.json", encoding="utf-8").read()
+          s = re.sub(r'("FileVersion":\s*\{\s*"Major":\s*)\d+', r'\g<1>%d' % mj, s, count=1)
+          s = re.sub(r'("Minor":\s*)\d+', r'\g<1>%d' % mn, s, count=1)
+          s = re.sub(r'("Patch":\s*)\d+', r'\g<1>%d' % pa, s, count=1)
+          s = re.sub(r'("Build":\s*)\d+', r'\g<1>%d' % bd, s, count=1)
+          s = re.sub(r'("ProductVersion":\s*\{\s*"Major":\s*)\d+', r'\g<1>%d' % mj, s, count=1)
+          s = re.sub(r'("FileVersion":\s*")[^"]+(")', r'\g<1>%d.%d.%d.%d\2' % (mj, mn, pa, bd), s)
+          s = re.sub(r'("ProductVersion":\s*")[^"]+(")', r'\g<1>%d.%d.%d.%d\2' % (mj, mn, pa, bd), s)
+          open("versioninfo.json", "w", encoding="utf-8").write(s)
+          print("版本号已同步为", v)
+          PY
+
+      - name: 安装 goversioninfo（生成版本资源用）
+        run: go install github.com/josephspurrier/goversioninfo/cmd/goversioninfo@latest
+
+      - name: 生成版本资源 .syso
+        working-directory: mes_conv
+        run: |
+          if [ -x "$(go env GOPATH)/bin/goversioninfo" ]; then
+            "$(go env GOPATH)/bin/goversioninfo" -o resource_windows_amd64.syso versioninfo.json
+            echo "已生成 resource_windows_amd64.syso"
+          else
+            echo "goversioninfo 不可用，跳过版本资源（exe 将不带图标/版本信息）"
+          fi
+
+      - name: 构建 Windows exe
+        working-directory: mes_conv
+        env:
+          GOOS: windows
+          GOARCH: amd64
+          CGO_ENABLED: "0"
+        run: |
+          BT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          go build -ldflags "-s -w -H=windowsgui -X main.buildTime=$BT" \
+            -o "MES-Converter-${{ github.ref_name }}.exe" .
+
+      - name: （可选）代码签名
+        # 仅当仓库配置了 CODESIGN_PFX 机密时才执行。
+        # 自签名证书对 SmartScreen 无效，这里面向的是 OV/EV 证书（PEM 或 PFX 的 base64）。
+        if: ${{ secrets.CODESIGN_PFX != '' }}
+        shell: pwsh
+        env:
+          PFX_B64: ${{ secrets.CODESIGN_PFX }}
+          PFX_PWD: ${{ secrets.CODESIGN_PASSWORD }}
+        run: |
+          $exe = "mes_conv/MES-Converter-${{ github.ref_name }}.exe"
+          $pfx = "$env:RUNNER_TEMP\cert.pfx"
+          [System.Convert]::FromBase64String($env:PFX_B64) | Set-Content -Path $pfx -AsByteStream
+          $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($pfx, $env:PFX_PWD)
+          Set-AuthenticodeSignature -FilePath $exe -Certificate $cert `
+            -TimestampServer "http://timestamp.digicert.com"
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: exe
+          path: mes_conv/MES-Converter-${{ github.ref_name }}.exe
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 下载构建产物
+        uses: actions/download-artifact@v4
+        with:
+          name: exe
+          path: ./dist
+      - name: 创建 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          # 用 ASCII 文件名（GitHub 对非 ASCII 的 asset 名会静默改写，曾踩过坑）
+          files: dist/MES-Converter-${{ github.ref_name }}.exe
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

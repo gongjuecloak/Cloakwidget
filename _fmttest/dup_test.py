@@ -9,14 +9,16 @@ import sys, io, os, re, json, time, subprocess, urllib.request, uuid
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 import openpyxl
 
-HERE = r"C:/Users/Cloak_Zeng/WorkBuddy/2026-10-06-14-57-26"
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MES = os.path.join(HERE, "mes_conv")
-EXE = os.path.join(MES, "_newbuild.exe")
+EXE = os.path.join(MES, os.environ.get("MES_EXE", "_newbuild.exe"))
 PORT = int(os.environ.get("APP_PORT", "8763"))
 BASE = "http://127.0.0.1:%d" % PORT
 OUT = os.path.join(MES, "out")
 FT = os.path.join(HERE, "_fmttest")
-S = r"D:/User/Cloak_Zeng/Download"
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _fix  # noqa: E402
 
 PASS = FAIL = 0
 def check(name, ok, extra=""):
@@ -112,10 +114,9 @@ if not up:
     app.kill(); sys.exit(1)
 
 try:
-    tpl = rd(os.path.join(S, "物料档案导入模版 (3).xlsx"))
-    OS = r"D:/User/Cloak_Zeng/Code/python/project-001/code-file/015/文件"
-    order = rd(os.path.join(OS, "訂單資料.xlsx"))
-    work = rd(os.path.join(OS, "工單資料.xlsx"))
+    tpl = rd(_fix.find(_fix.SRC, _fix.TPL_NAMES))
+    order = rd(_fix.find(_fix.ORD, _fix.ORD_NAMES))
+    work = rd(_fix.find(_fix.ORD, _fix.WORK_NAMES))
 
     print("\n【1】物料档案：重复物料编码")
     r = post("/api/convert", {"lang": "zh"}, {

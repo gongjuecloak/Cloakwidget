@@ -2,26 +2,52 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
-// 这三种「.xls」在真实数据里都出现过（路径是用户机器上的样本，缺失就跳过）
-var realSamples = []struct {
+// 这三种「.xls」在真实数据里都出现过。
+// 样本目录由环境变量 MES_SAMPLE_DIR 提供（未设置或样本缺失则跳过），
+// 避免把本机绝对路径写进仓库。
+type realSample struct {
 	name string
-	path string
+	file string
 	want srcKind
-}{
-	{"BIFF 老格式", `D:/User/Cloak_Zeng/Doc/WXWork/1688857941777689/Cache/File/2026-09/物料档案.xls`, srcBiff},
-	{"xlsx 伪装成 .xls", `D:/User/Cloak_Zeng/Download/计量单位 (2).xls`, srcXlsx},
-	{"SpreadsheetML 2003", `D:/User/Cloak_Zeng/Doc/WXWork/1688857941777689/Cache/File/2026-08/採購單頭檔.xls`, srcXML2003},
+}
+
+var realSamples = []realSample{
+	{"BIFF 老格式", "物料档案.xls", srcBiff},
+	{"xlsx 伪装成 .xls", "计量单位 (2).xls", srcXlsx},
+	{"SpreadsheetML 2003", "採購單頭檔.xls", srcXML2003},
+}
+
+// path 返回样本的绝对路径；未配置样本目录或文件不存在时 ok=false。
+func (c realSample) path() (string, bool) {
+	dir := os.Getenv("MES_SAMPLE_DIR")
+	if dir == "" {
+		return "", false
+	}
+	p := filepath.Join(dir, c.file)
+	if _, err := os.Stat(p); err != nil {
+		return "", false
+	}
+	return p, true
 }
 
 func TestSniffSourceRealSamples(t *testing.T) {
+	if os.Getenv("MES_SAMPLE_DIR") == "" {
+		t.Skip("未设置 MES_SAMPLE_DIR，跳过真实样本嗅探")
+	}
 	for _, c := range realSamples {
-		raw, err := os.ReadFile(c.path)
-		if err != nil {
+		p, ok := c.path()
+		if !ok {
 			t.Logf("跳过（样本不存在）：%s", c.name)
+			continue
+		}
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			t.Logf("跳过（读取失败）：%s", c.name)
 			continue
 		}
 		if got := sniffSource(raw); got != c.want {
@@ -32,11 +58,12 @@ func TestSniffSourceRealSamples(t *testing.T) {
 
 func TestReadSourceGridRealSamples(t *testing.T) {
 	for _, c := range realSamples {
-		if _, err := os.Stat(c.path); err != nil {
+		p, ok := c.path()
+		if !ok {
 			t.Logf("跳过（样本不存在）：%s", c.name)
 			continue
 		}
-		rows, sheet, desc, _, err := readSourceGrid(c.path, 0)
+		rows, sheet, desc, _, err := readSourceGrid(p, 0)
 		if err != nil {
 			t.Errorf("%s: 读取失败 %v", c.name, err)
 			continue
