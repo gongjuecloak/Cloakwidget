@@ -813,81 +813,114 @@ def _activity_data(limit=250):
 # ---------------------------------------------------------------------------
 PAGE_CSS = """
 :root{
- --bg:#F5F6F8; --panel:#FFFFFF; --ink:#10131A; --muted:#707684;
- --line:#E7E9EE; --line2:#F0F2F5;
- --accent:#10131A; --link:#2F6BFF;
- --ok:#15A34A; --warn:#D9870B; --err:#E03A3A;
- --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
- --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --bg:#F6F7F9; --panel:#FFFFFF; --ink:#0E1117; --ink-2:#5B6472; --muted:#8A93A2;
+  --line:#ECEEF1; --line-2:#F3F4F6;
+  --side:#0E1117; --side-2:#15191F; --side-ink:#C7CDD6; --side-mut:#6B7280;
+  --accent:#2F6BFF; --accent-soft:rgba(47,107,255,.10);
+  --ok:#15A34A; --ok-soft:rgba(21,163,74,.12);
+  --warn:#D9870B; --warn-soft:rgba(217,135,11,.14);
+  --err:#E03A3A; --err-soft:rgba(224,58,58,.12);
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  --radius:14px; --shadow:0 1px 2px rgba(16,19,26,.04),0 6px 20px rgba(16,19,26,.05);
 }
 *{box-sizing:border-box}
 html,body{margin:0;padding:0}
-body{background:var(--bg);color:var(--ink);font:14px/1.6 var(--sans);-webkit-font-smoothing:antialiased}
-a{color:var(--link);text-decoration:none}
+body{background:var(--bg);color:var(--ink);font:14px/1.6 var(--sans);-webkit-font-smoothing:antialiased;font-feature-settings:"tnum"}
+a{color:var(--accent);text-decoration:none}
 a:hover{text-decoration:underline}
-.app{display:grid;grid-template-columns:252px 1fr;min-height:100vh}
-.side{background:var(--panel);border-right:1px solid var(--line);padding:22px 18px;display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
-.brand{display:flex;gap:11px;align-items:center;margin-bottom:26px}
-.logo{width:34px;height:34px;border-radius:9px;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-size:17px;flex:none}
-.b1{font-weight:700;font-size:13px;letter-spacing:.04em}
-.b2{font-size:11px;color:var(--muted);letter-spacing:.02em}
-nav{display:flex;flex-direction:column;gap:2px}
-.navitem{display:block;padding:9px 12px;border-radius:8px;color:var(--ink);font-size:13.5px;font-weight:500}
-.navitem:hover{background:var(--line2);text-decoration:none}
-.navitem.active{background:var(--ink);color:#fff}
-.side-foot{margin-top:auto;font-size:11px;color:var(--muted);letter-spacing:.08em}
-.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--ok);margin-right:6px;vertical-align:middle}
-.dot.ok{background:var(--ok)} .dot.warn{background:var(--warn)} .dot.err{background:var(--err)}
-.ver{margin-top:8px;font-family:var(--mono);font-size:10.5px;color:var(--muted)}
+.app{display:grid;grid-template-columns:248px 1fr;min-height:100vh}
+.side{background:linear-gradient(180deg,var(--side),var(--side-2));color:var(--side-ink);padding:24px 16px;display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
+.brand{display:flex;gap:12px;align-items:center;padding:6px 8px 22px}
+.logo{width:36px;height:36px;border-radius:10px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:18px;flex:none;box-shadow:0 4px 14px rgba(47,107,255,.4)}
+.b1{font-weight:700;font-size:13.5px;color:#fff;letter-spacing:.02em;line-height:1.3}
+.b2{font-size:10px;color:var(--side-mut);letter-spacing:.14em;text-transform:uppercase;margin-top:3px}
+.nav{display:flex;flex-direction:column;gap:4px;margin-top:4px}
+.navitem{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:10px;color:var(--side-ink);font-size:13.5px;font-weight:500;position:relative}
+.navitem:hover{background:rgba(255,255,255,.06);text-decoration:none;color:#fff}
+.navitem.active{background:rgba(47,107,255,.16);color:#fff}
+.navitem.active::before{content:"";position:absolute;left:0;top:9px;bottom:9px;width:3px;border-radius:0 3px 3px 0;background:var(--accent)}
+.nav-ico{width:18px;height:18px;flex:none;opacity:.85}
+.side-foot{margin-top:auto;font-size:11px;color:var(--side-mut);letter-spacing:.05em;display:flex;flex-direction:column;gap:7px}
+.side-foot .ver{font-family:var(--mono);font-size:10.5px}
+.runbadge{display:inline-flex;align-items:center;gap:7px}
 main{display:flex;flex-direction:column;min-width:0}
-.topbar{display:flex;align-items:center;justify-content:space-between;padding:16px 30px;border-bottom:1px solid var(--line);background:rgba(255,255,255,.65);backdrop-filter:blur(6px);position:sticky;top:0;z-index:5}
-.crumb{font-size:12px;font-weight:700;letter-spacing:.18em;color:var(--muted)}
-.topright{display:flex;align-items:center;gap:14px}
-.logout{font-size:12px;color:var(--muted);font-weight:600}
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:14px 32px;border-bottom:1px solid var(--line);background:rgba(255,255,255,.82);backdrop-filter:blur(8px);position:sticky;top:0;z-index:5}
+.crumb{font-size:11px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
+.topright{display:flex;align-items:center;gap:18px}
+.logout{font-size:12.5px;color:var(--ink-2);font-weight:600}
 .logout:hover{color:var(--ink)}
 .clock{font-family:var(--mono);font-size:12px;color:var(--muted)}
-.content{padding:30px;max-width:1180px;width:100%}
+.avatar{width:30px;height:30px;border-radius:50%;background:var(--accent-soft);color:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px}
+.content{padding:32px;max-width:1200px;width:100%}
 .hero{margin-bottom:26px}
-.hero .hstat{font-size:12px;font-weight:700;letter-spacing:.14em;color:var(--ok);margin-bottom:10px}
-h1.title{font-size:26px;font-weight:800;letter-spacing:-.01em;margin:0 0 6px}
-.lede{color:var(--muted);font-size:13.5px;margin:0;max-width:760px}
-.grid{display:grid;gap:16px}
-.stats{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 20px}
-.card h2{font-size:11px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin:0 0 14px}
-.stat .sv{font-family:var(--mono);font-size:24px;font-weight:700;letter-spacing:-.02em}
-.stat .sl{font-size:12px;color:var(--muted);margin-top:4px}
-.row{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px dashed var(--line)}
-.row:last-child{border-bottom:none}
-.row .k{color:var(--muted);font-size:13px}
+.hstat{display:inline-flex;align-items:center;gap:8px;font-size:11px;font-weight:700;letter-spacing:.08em;color:var(--ok);background:var(--ok-soft);padding:5px 12px;border-radius:999px;text-transform:uppercase}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3px var(--ok-soft)}
+.dot.ok{background:var(--ok)} .dot.err{background:var(--err)}
+h1.title{font-size:27px;font-weight:800;letter-spacing:-.02em;margin:14px 0 6px}
+.lede{color:var(--ink-2);font-size:13.5px;margin:0;max-width:680px;line-height:1.7}
+.grid{display:grid;gap:18px}
+.stats{grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:20px;box-shadow:var(--shadow)}
+.card h2{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:0 0 16px}
+.stat .sv{font-family:var(--mono);font-size:27px;font-weight:700;letter-spacing:-.02em;line-height:1}
+.stat .sl{font-size:12px;color:var(--muted);margin-top:8px}
+.row{display:flex;justify-content:space-between;gap:12px;padding:11px 0;border-bottom:1px solid var(--line-2)}
+.row:last-child{border-bottom:none;padding-bottom:0}
+.row .k{color:var(--ink-2);font-size:13px}
 .row .v{font-family:var(--mono);font-size:13px;font-weight:600;text-align:right;word-break:break-all}
-.badge{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:700;font-family:var(--mono)}
-.badge.ok{background:rgba(21,163,74,.12);color:var(--ok)}
-.badge.warn{background:rgba(217,135,11,.14);color:var(--warn)}
-.badge.err{background:rgba(224,58,58,.12);color:var(--err)}
-.badge.mut{background:var(--line2);color:var(--muted)}
+.badge{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:700;font-family:var(--mono)}
+.badge.ok{background:var(--ok-soft);color:var(--ok)}
+.badge.warn{background:var(--warn-soft);color:var(--warn)}
+.badge.err{background:var(--err-soft);color:var(--err)}
+.badge.mut{background:var(--line-2);color:var(--muted)}
 table{width:100%;border-collapse:collapse;font-size:13px}
-th{text-align:left;color:var(--muted);font-size:11px;letter-spacing:.08em;text-transform:uppercase;font-weight:700;padding:10px 12px;border-bottom:1px solid var(--line)}
-td{padding:11px 12px;border-bottom:1px solid var(--line2);vertical-align:middle}
+th{text-align:left;color:var(--muted);font-size:11px;letter-spacing:.05em;text-transform:uppercase;font-weight:700;padding:13px 14px;border-bottom:1px solid var(--line);background:var(--line-2)}
+td{padding:13px 14px;border-bottom:1px solid var(--line-2);vertical-align:middle}
 td.mono,th.mono{font-family:var(--mono)}
-tr:hover td{background:var(--line2)}
-.tag{font-family:var(--mono);font-size:11px;background:var(--line2);padding:2px 7px;border-radius:6px;color:var(--muted)}
-.section-title{font-size:13px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:28px 0 12px}
-.two{grid-template-columns:1.4fr 1fr}
-@media(max-width:860px){.app{grid-template-columns:1fr}.side{position:static;height:auto;flex-direction:row;flex-wrap:wrap;align-items:center;gap:12px}.side nav{flex-direction:row;flex-wrap:wrap}.side-foot{margin:0 0 0 auto}.two{grid-template-columns:1fr}}
-.rf{display:inline-flex;gap:6px;align-items:center}
-.rf input{border:1px solid var(--line);border-radius:7px;padding:5px 9px;font-size:12px;font-family:var(--mono)}
-.rf button{border:1px solid var(--ink);background:var(--ink);color:#fff;border-radius:7px;padding:5px 12px;font-size:12px;cursor:pointer}
-.empty{color:var(--muted);font-size:13px;padding:30px;text-align:center}
-.act{display:grid;grid-template-columns:88px 1fr;gap:14px;padding:11px 4px;border-bottom:1px solid var(--line2);font-size:13px}
-.act .t{font-family:var(--mono);color:var(--muted);font-size:12px}
+tr:hover td{background:var(--line-2)}
+.tag{font-family:var(--mono);font-size:11px;background:var(--line-2);padding:3px 8px;border-radius:6px;color:var(--ink-2)}
+.section-title{font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:30px 0 14px;display:flex;align-items:center;gap:10px}
+.section-title::after{content:"";flex:1;height:1px;background:var(--line)}
+.two{grid-template-columns:1.5fr 1fr}
+@media(max-width:880px){.app{grid-template-columns:1fr}.side{position:static;height:auto;flex-direction:row;flex-wrap:wrap;align-items:center;gap:10px}.nav{flex-direction:row;flex-wrap:wrap;margin:0}.side-foot{margin:0 0 0 auto}.two{grid-template-columns:1fr}.topbar{padding:12px 18px}.content{padding:20px}}
+.rf{display:inline-flex;gap:8px;align-items:center}
+.rf input{border:1px solid var(--line);border-radius:8px;padding:7px 11px;font-size:12.5px;font-family:var(--mono);outline:none}
+.rf input:focus{border-color:var(--accent)}
+.rf button{border:none;background:var(--accent);color:#fff;border-radius:8px;padding:8px 16px;font-size:12.5px;font-weight:600;cursor:pointer}
+.empty{color:var(--muted);font-size:13px;padding:40px;text-align:center;background:var(--line-2);border-radius:var(--radius)}
+.act{display:grid;grid-template-columns:120px 1fr;gap:16px;padding:13px 4px;border-bottom:1px solid var(--line-2);font-size:13px}
+.act:last-child{border-bottom:none}
+.act .t{font-family:var(--mono);color:var(--muted);font-size:11.5px;white-space:nowrap}
 .act .m b{font-family:var(--mono);font-weight:700}
-.sha{font-family:var(--mono);font-size:11px;color:var(--muted);word-break:break-all;display:block;margin-top:2px}
+.sha{font-family:var(--mono);font-size:11px;color:var(--muted);word-break:break-all;display:block;margin-top:4px;background:var(--line-2);padding:5px 9px;border-radius:7px}
 """
 
 PAGE_JS = """
 function tick(){var d=new Date();var p=function(x){return String(x).padStart(2,'0')};var e=document.getElementById('clock');if(e)e.textContent=p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());}
 tick();setInterval(tick,1000);
+(function(){
+  function formatBytes(n){if(n==null)return '—';var u=['B','KB','MB','GB','TB'],i=0;while(n>=1024&&i<u.length-1){n/=1024;i++;}return (i===0?Math.round(n):n.toFixed(1))+' '+u[i];}
+  function fmtTime(ts){if(!ts)return '—';var d=new Date(ts*1000);var p=function(x){return String(x).padStart(2,'0')};return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate())+' '+p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());}
+  function set(id,v){var e=document.getElementById(id);if(e)e.textContent=v;}
+  function poll(){
+    fetch('/api/v1/overview',{credentials:'same-origin'}).then(function(r){return r.ok?r.json():null;}).then(function(d){
+      if(!d)return;
+      if(d.latest_release)set('ov-latest-version',d.latest_release.version);
+      set('ov-latest-version2',d.latest_release?d.latest_release.version:'—');
+      set('ov-apps',d.applications);
+      set('ov-total',d.activity.total);
+      set('ov-total-act',d.activity.total);
+      set('ov-cache',formatBytes(d.cache_bytes));
+      set('ov-cache2',formatBytes(d.cache_bytes));
+      set('ov-lastsync',fmtTime(d.last_sync));
+      set('ov-today',d.activity.today);
+      set('ov-week',d.activity.week);
+      var up=document.getElementById('ov-upstream');if(up)up.className='dot'+(d.upstream_online?' ok':' err');
+    }).catch(function(){});
+  }
+  setInterval(poll,15000);
+})();
 """
 
 PAGE_SHELL = """<!doctype html>
@@ -895,7 +928,7 @@ PAGE_SHELL = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>__TITLE__ · Cloak Update Mirror</title>
+<title>__TITLE__ · Cloak 更新镜像</title>
 <style>__CSS__</style>
 </head>
 <body>
@@ -903,20 +936,21 @@ PAGE_SHELL = """<!doctype html>
   <aside class="side">
     <div class="brand">
       <div class="logo">&#9672;</div>
-      <div><div class="b1">Cloak 更新镜像</div><div class="b2">CLOAK UPDATE MIRROR · 私有发布中枢</div></div>
+      <div><div class="b1">Cloak 更新镜像</div><div class="b2">Update Mirror</div></div>
     </div>
-    <nav>__NAV__</nav>
+    <nav class="nav">__NAV__</nav>
     <div class="side-foot">
-      <span class="dot ok"></span> 运行中
-      <div class="ver">__SERVER_VERSION__</div>
+      <span class="runbadge"><span class="dot"></span> 运行中</span>
+      <span class="ver">__SERVER_VERSION__</span>
     </div>
   </aside>
   <main>
     <div class="topbar">
       <div class="crumb">__CRUMB__</div>
       <div class="topright">
-        <a href="/logout" class="logout">退出</a>
         <div class="clock" id="clock">--:--:--</div>
+        <div class="avatar" id="avatar">A</div>
+        <a href="/logout" class="logout">退出</a>
       </div>
     </div>
     <div class="content">__BODY__</div>
@@ -927,13 +961,22 @@ PAGE_SHELL = """<!doctype html>
 </html>"""
 
 
+_ICONS = {
+  "overview": '<svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>',
+  "releases": '<svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7l9-4 9 4v10l-9 4-9-4z"/><path d="M3 7l9 4 9-4M12 11v10"/></svg>',
+  "assets": '<svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>',
+  "activity": '<svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>',
+  "system": '<svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3.2"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.5 5.5l2 2M16.5 16.5l2 2M18.5 5.5l-2 2M7.5 16.5l-2 2"/></svg>'
+}
+
+
 def _nav(active):
-    items = [("overview", "01 · 概览"), ("releases", "02 · 发布"),
-             ("assets", "03 · 资产"), ("activity", "04 · 活动"), ("system", "05 · 系统")]
+    items = [("overview", "概览"), ("releases", "发布"),
+             ("assets", "资产"), ("activity", "活动"), ("system", "系统")]
     out = []
     for k, label in items:
         cls = " navitem active" if k == active else " navitem"
-        out.append('<a class="{}" href="/{}">{}</a>'.format(cls, k, label))
+        out.append('<a class="{}" href="/{}">{}{}</a>'.format(cls, k, _ICONS.get(k, ""), label))
     return "\n".join(out)
 
 
@@ -965,17 +1008,15 @@ def _status_badge(status):
 # ---- 页面构造 ----
 def _overview_html():
     d = _overview_data()
-    st = gather_status()
     latest = d["latest_release"]
     if latest:
         lat = ('<div class="card"><h2>最新发布</h2>'
-               '<div class="row"><span class="k">版本</span><span class="v">{}</span></div>'
+               '<div class="row"><span class="k">版本</span><span class="v" id="ov-latest-version">{}</span></div>'
                '<div class="row"><span class="k">应用</span><span class="v">{}</span></div>'
                '<div class="row"><span class="k">渠道</span><span class="v">{}</span></div>'
                '<div class="row"><span class="k">发布于</span><span class="v">{}</span></div>'
-               '<div style="margin-top:14px">'
-               '{} {} {} {}'
-               '</div></div>').format(
+               '<div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap">'
+               '{} {} {} {}</div></div>').format(
             _esc(latest["version"]), _esc(latest["app"]), _channel_badge(latest["channel"]),
             _fmt_dt(latest["published_at"]),
             _badge("GitHub · 在线", "ok"), _badge("镜像 · 就绪", "ok"),
@@ -984,34 +1025,32 @@ def _overview_html():
         lat = ('<div class="card"><h2>最新发布</h2>'
                '<div class="empty">尚未从 GitHub 同步到发布数据，请稍候或手动刷新。</div></div>')
     sync = ('<div class="card"><h2>同步</h2>'
-            '<div class="row"><span class="k">上次成功同步</span><span class="v">{}</span></div>'
+            '<div class="row"><span class="k">上次成功同步</span><span class="v" id="ov-lastsync">{}</span></div>'
             '<div class="row"><span class="k">上游</span><span class="v">github.com/{}</span></div>'
-            '<div class="row"><span class="k">缓存</span><span class="v">{}</span></div>'
+            '<div class="row"><span class="k">缓存</span><span class="v" id="ov-cache">{}</span></div>'
             '<div class="row"><span class="k">间隔</span><span class="v">{}s</span></div></div>').format(
         _fmt_time(d["last_sync"]), _esc(APPS[DEFAULT_APP_ID].repo) if DEFAULT_APP_ID in APPS else "—",
         _fmt_bytes(d["cache_bytes"]), SYNC_INTERVAL)
-    act = ('<div class="card"><h2>活动</h2>'
-           '<div class="grid stats" style="grid-template-columns:repeat(3,1fr)">'
-           '<div><div class="stat"><div class="sv">{}</div><div class="sl">今日</div></div></div>'
-           '<div><div class="stat"><div class="sv">{}</div><div class="sl">近 7 天</div></div></div>'
-           '<div><div class="stat"><div class="sv">{}</div><div class="sl">累计下载</div></div></div>'
-           '</div></div>').format(d["activity"]["today"], d["activity"]["week"], d["activity"]["total"])
     stats = ('<div class="grid stats">'
-             '<div class="card stat"><div class="sv">{}</div><div class="sl">最新发布</div></div>'
-             '<div class="card stat"><div class="sv">{}</div><div class="sl">应用数</div></div>'
-             '<div class="card stat"><div class="sv">{}</div><div class="sl">累计下载</div></div>'
-             '<div class="card stat"><div class="sv">{}</div><div class="sl">缓存大小</div></div>'
+             '<div class="card stat"><div class="sv" id="ov-latest-version2">{}</div><div class="sl">最新版本</div></div>'
+             '<div class="card stat"><div class="sv" id="ov-apps">{}</div><div class="sl">应用数</div></div>'
+             '<div class="card stat"><div class="sv" id="ov-total">{}</div><div class="sl">累计下载</div></div>'
+             '<div class="card stat"><div class="sv" id="ov-cache2">{}</div><div class="sl">缓存大小</div></div>'
              '</div>').format(
         _esc(latest["version"]) if latest else "—", d["applications"],
         d["activity"]["total"], _fmt_bytes(d["cache_bytes"]))
+    act = ('<div class="card"><h2>活动</h2>'
+           '<div class="grid stats" style="grid-template-columns:repeat(3,1fr)">'
+           '<div class="stat"><div class="sv" id="ov-today">{}</div><div class="sl">今日下载</div></div>'
+           '<div class="stat"><div class="sv" id="ov-week">{}</div><div class="sl">近 7 天</div></div>'
+           '<div class="stat"><div class="sv" id="ov-total-act">{}</div><div class="sl">累计下载</div></div>'
+           '</div></div>').format(d["activity"]["today"], d["activity"]["week"], d["activity"]["total"])
     hero = ('<div class="hero">'
-            '<div class="hstat"><span class="dot ok"></span> 运行正常</div>'
+            '<div class="hstat"><span class="dot" id="ov-upstream"></span> 运行正常</div>'
             '<h1 class="title">Cloak 更新镜像</h1>'
             '<p class="lede">Cloak 应用的私有发布与更新基础设施。GitHub Releases 是源头 —— '
-            '镜像负责同步、缓存、校验、分发与审计。</p>'
-            '</div>')
-    return hero + '<meta http-equiv="refresh" content="30">' + stats + \
-        '<div class="grid two" style="margin-top:16px">' + lat + sync + '</div>' + act
+            '镜像负责同步、缓存、校验、分发与审计。</p></div>')
+    return hero + stats + '<div class="grid two" style="margin-top:18px">' + lat + sync + '</div>' + act
 
 
 def _releases_html():
@@ -1249,6 +1288,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _console_dispatch(self, segs):
         kind = segs[0]
+        if kind == "overview":
+            return self._console("overview", _overview_html())
         if kind == "releases":
             if len(segs) >= 3:
                 return self._console("releases", _release_detail_html(segs[1], segs[2]),
@@ -1317,7 +1358,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._console_guarded("overview", _overview_html())
         if segs[0] == "status":
             return self._console_guarded("overview", _overview_html(), crumb="概览")
-        if segs[0] in ("releases", "assets", "activity", "system"):
+        if segs[0] in ("overview", "releases", "assets", "activity", "system"):
             if not _get_session(self):
                 self._send_redirect("/login")
                 return
@@ -1510,18 +1551,19 @@ def _login_html(error=False):
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>登录 · Cloak 更新镜像</title>
 <style>
-:root{--bg:#F5F6F8;--panel:#fff;--ink:#10131A;--muted:#707684;--line:#E7E9EE;--link:#2F6BFF}
+:root{--bg:#F6F7F9;--panel:#fff;--ink:#0E1117;--muted:#8A93A2;--line:#ECEEF1;--accent:#2F6BFF}
 *{box-sizing:border-box}html,body{margin:0;height:100%}
 body{background:var(--bg);color:var(--ink);font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;display:flex;align-items:center;justify-content:center}
-.wrap{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:34px 36px;width:360px;box-shadow:0 8px 30px rgba(16,19,26,.06)}
-.logo{width:38px;height:38px;border-radius:10px;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-size:19px;margin-bottom:16px}
-h1{font-size:19px;margin:0 0 4px;font-weight:800}
-.sub{color:var(--muted);font-size:13px;margin:0 0 22px}
-.err{color:#E03A3A;font-size:12.5px;margin:0 0 12px}
-label{display:block;font-size:12px;color:var(--muted);margin:14px 0 6px;font-weight:600}
-input{width:100%;border:1px solid var(--line);border-radius:9px;padding:10px 12px;font-size:14px;font-family:ui-monospace,Menlo,Consolas,monospace}
-button{width:100%;margin-top:20px;border:none;background:var(--ink);color:#fff;border-radius:9px;padding:11px;font-size:14px;font-weight:700;cursor:pointer}
-button:hover{opacity:.92}
+.wrap{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:40px 38px;width:380px;box-shadow:0 10px 40px rgba(16,19,26,.08)}
+.logo{width:42px;height:42px;border-radius:12px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:20px;margin-bottom:18px;box-shadow:0 6px 18px rgba(47,107,255,.35)}
+h1{font-size:20px;margin:0 0 4px;font-weight:800}
+.sub{color:var(--muted);font-size:13px;margin:0 0 24px}
+.err{color:#E03A3A;font-size:12.5px;margin:0 0 14px;background:rgba(224,58,58,.08);padding:8px 12px;border-radius:8px}
+label{display:block;font-size:12px;color:var(--muted);margin:16px 0 7px;font-weight:600;letter-spacing:.02em}
+input{width:100%;border:1px solid var(--line);border-radius:10px;padding:11px 13px;font-size:14px;font-family:ui-monospace,Menlo,Consolas,monospace;outline:none;transition:border-color .15s}
+input:focus{border-color:var(--accent)}
+button{width:100%;margin-top:22px;border:none;background:var(--accent);color:#fff;border-radius:10px;padding:12px;font-size:14px;font-weight:700;cursor:pointer;transition:filter .15s}
+button:hover{filter:brightness(1.06)}
 </style>
 </head>
 <body>
