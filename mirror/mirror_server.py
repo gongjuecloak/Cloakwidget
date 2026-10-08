@@ -987,7 +987,7 @@ def _release_detail_html(app, version):
             vrf = _badge("—", "mut")
         rows.append(
             '<tr><td class="mono">{}</td><td class="mono">{}</td>'
-            '<td>{} {}</td><td class="mono">{}</td></tr>'
+            '<td>{} {}</td></tr>'
             '<tr><td colspan="4"><span class="sha">SHA256 {}</span></td></tr>'.format(
                 _esc(a["name"]), _fmt_bytes(a["size"]), cache_b, vrf,
                 sha if sha else "—"))
