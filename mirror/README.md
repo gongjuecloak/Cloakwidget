@@ -49,6 +49,11 @@ Mirror 不再只是「给某工具下载 EXE 的中转站」，而是所有自�
 
 `/status` 作为兼容入口，同样进入控制台 Overview。
 
+> **控制台需登录**：概览 / 发布 / 资产 / 活动 / 系统 等页面及对应 `/api/v1/*` 接口默认**不公开**，
+> 未登录访问会跳转到 `/login`。请用 `.env` 中的 `MIRROR_CONSOLE_USER` / `MIRROR_CONSOLE_PASSWORD`
+> 登录；未设置密码时服务启动会随机生成（重启失效）。客户端更新协议（`/{app}/version.json`、资产下载、
+> enroll、admin 刷新、healthz）的鉴权方式不变，不受控制台登录影响。
+
 > **Clients** 分区（客户端登记表 + 版本分布 + 更新状态）计划在 v1.2 接入；当前已预留
 > `clients` 数据表与 `POST /api/v1/client/checkin` 上报端点，客户端主动上报即可点亮。
 
@@ -120,6 +125,10 @@ cd /opt/mes-mirror
 | `MIRROR_ACCESS_TOKEN` | 空 | 客户端 enroll 密钥；不设则需 `MIRROR_ENROLL_OPEN=true` |
 | `MIRROR_ENROLL_OPEN` | `false` | 是否开放注册（true 风险高） |
 | `MIRROR_SYNC_INTERVAL` | `300` | 后台自动同步周期（秒），把发布元数据写入 SQLite 供控制台展示 |
+| `MIRROR_CONSOLE_USER` | `admin` | 控制台登录用户名 |
+| `MIRROR_CONSOLE_PASSWORD` | 空（随机生成） | 控制台登录密码；**建议设置强密码**，留空则启动随机生成（重启失效） |
+| `MIRROR_SESSION_TTL` | `28800` | 登录会话有效期（秒）= 8 小时 |
+| `MIRROR_SECURE_COOKIE` | `0` | 设为 `1` 时给会话 Cookie 加 `Secure` 标记（HTTPS 前置部署建议开启） |
 
 ---
 

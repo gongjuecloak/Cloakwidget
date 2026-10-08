@@ -14,33 +14,39 @@ Cloak Update Mirror · 私有应用发布与更新中枢（轻量版，纯标准
   activities 活动日志（下载/同步/客户端签到/服务事件）
   clients    客户端登记表（v1.2 Client Management 预览，已预留）
 
-客户端请求协议（保持不变，向后兼容）：
-  GET /                                        -> 控制台 Overview（HTML）
-  GET /healthz                                 -> 健康检查 {"ok":true}
-  GET /{app_id}/version.json                    -> 该应用 latest release 的 manifest
-  GET /{app_id}/{asset}                         -> 对应资产（首次拉取后落盘缓存）
-  GET /status  /api/status                      -> 状态入口（/status 现为控制台兼容入口）
-  GET /releases /assets /activity /system       -> 控制台各页面
-  GET /api/v1/overview|releases|assets|activity -> JSON API（供前端/外部消费）
-  POST /api/v1/client/checkin                   -> 客户端主动上报（新增，不改动既有更新协议）
-  POST /admin/refresh  (+ ?app=)                -> 强制刷新（需 MIRROR_ADMIN_TOKEN）
+控制台（v1.0）：中文界面，需账号密码登录（`/` 即 Overview）。
+  客户端请求协议（保持不变，向后兼容）：
+    GET /                                        -> 控制台 Overview（HTML，需登录）
+    GET /login  /logout                          -> 登录 / 退出（不受控制台鉴权保护）
+    GET /healthz                                 -> 健康检查 {"ok":true}（开放）
+    GET /{app_id}/version.json                    -> 该应用 latest release 的 manifest（令牌鉴权）
+    GET /{app_id}/{asset}                         -> 对应资产（首次拉取后落盘缓存，令牌鉴权）
+    GET /releases /assets /activity /system       -> 控制台各页面（需登录）
+    GET /api/v1/overview|releases|assets|activity -> JSON API（需登录）
+    POST /api/v1/client/checkin                   -> 客户端主动上报（新增，不改动既有更新协议）
+    POST /admin/refresh  (+ ?app=)                -> 强制刷新（需 MIRROR_ADMIN_TOKEN）
 
-安全（沿用既有设计）：
+安全（沿用并增强）：
+  - 控制台全部页面与 JSON API 需账号密码会话登录（Cookie + 服务端会话表）
   - 拉取资产需令牌；令牌一次性旋转（X-Next-Token），泄露面低
   - 管理员刷新用独立令牌（X-Admin-Token / ?admin_token=），与拉取令牌隔离
   - enroll 默认关闭（需密钥）；日志对令牌脱敏并轮转
   - GitHub 不可达时回退磁盘缓存并打 X-Cache: stale，绝不无谓 502
 
 配置（环境变量，建议 .env + docker compose env_file 注入）：
-  MIRROR_APPS_JSON      应用注册表路径（默认 ./apps.json）
-  MIRROR_DEFAULT_APP    默认应用 id（根路径 /version.json 落到它）
-  MIRROR_PORT           监听端口（默认 8080）
-  MIRROR_CACHE          缓存根目录（默认 /data/cache，SQLite 库也在此）
-  MIRROR_GITHUB_TOKEN   GitHub Token（可选，提升 API 速率上限）
-  MIRROR_ADMIN_TOKEN    管理员令牌（POST /admin/refresh 必须，留空则永远 401）
-  MIRROR_ACCESS_TOKEN   客户端 enroll 密钥（可选）
-  MIRROR_ENROLL_OPEN    是否开放注册（默认 false）
-  MIRROR_SYNC_INTERVAL  后台自动同步周期秒（默认 300）
+  MIRROR_APPS_JSON       应用注册表路径（默认 ./apps.json）
+  MIRROR_DEFAULT_APP     默认应用 id（根路径 /version.json 落到它）
+  MIRROR_PORT            监听端口（默认 8080）
+  MIRROR_CACHE           缓存根目录（默认 /data/cache，SQLite 库也在此）
+  MIRROR_GITHUB_TOKEN    GitHub Token（可选，提升 API 速率上限）
+  MIRROR_ADMIN_TOKEN     管理员令牌（POST /admin/refresh 必须，留空则永远 401）
+  MIRROR_ACCESS_TOKEN    客户端 enroll 密钥（可选）
+  MIRROR_ENROLL_OPEN     是否开放注册（默认 false）
+  MIRROR_SYNC_INTERVAL   后台自动同步周期秒（默认 300）
+  MIRROR_CONSOLE_USER    控制台登录用户名（默认 admin）
+  MIRROR_CONSOLE_PASSWORD 控制台登录密码（强烈建议设置；留空则启动时随机生成并写日志）
+  MIRROR_SESSION_TTL     会话有效期秒（默认 28800 = 8 小时）
+  MIRROR_SECURE_COOKIE    是否给会话 Cookie 加 Secure 标记（HTTPS 下设 1）
 
 依赖：仅 Python 标准库（含 sqlite3）。
 """
@@ -49,6 +55,7 @@ import re
 import sys
 import json
 import time
+import hmac
 import shutil
 import hashlib
 import sqlite3
@@ -72,8 +79,17 @@ APPS_JSON_PATH = os.environ.get("MIRROR_APPS_JSON",
 DEFAULT_APP_ID = os.environ.get("MIRROR_DEFAULT_APP", "")
 CACHE_TTL = 60  # 最新发布元数据的内存缓存秒数
 SYNC_INTERVAL = int(os.environ.get("MIRROR_SYNC_INTERVAL", "300"))
+
+# ---- 控制台登录配置 ----
+CONSOLE_USER = os.environ.get("MIRROR_CONSOLE_USER", "admin")
+CONSOLE_PASSWORD = os.environ.get("MIRROR_CONSOLE_PASSWORD", "")
+SESSION_TTL = int(os.environ.get("MIRROR_SESSION_TTL", "28800"))
+SECURE_COOKIE = os.environ.get("MIRROR_SECURE_COOKIE", "0") == "1"
+SESSIONS = {}  # sid -> {"user":..., "exp":...}
+_session_lock = threading.Lock()
+
 START_TIME = time.time()
-SERVER_VERSION = "Cloak-Mirror/1.0.0"
+SERVER_VERSION = "Cloak-Mirror/1.1.0"
 
 _log_file = os.path.join(CACHE_DIR, "mirror.log")
 
@@ -103,6 +119,42 @@ def _redact(s):
 
 def _safe(name):
     return re.sub(r"[^A-Za-z0-9._-]", "_", name)[:64]
+
+
+# ---------------------------------------------------------------------------
+# 控制台会话（账号密码登录）
+# ---------------------------------------------------------------------------
+def _make_session(user):
+    sid = uuid.uuid4().hex
+    with _session_lock:
+        SESSIONS[sid] = {"user": user, "exp": time.time() + SESSION_TTL}
+    return sid
+
+
+def _get_session(handler):
+    cookie = handler.headers.get("Cookie", "")
+    sid = None
+    for part in cookie.split(";"):
+        part = part.strip()
+        if part.startswith("mirror_sid="):
+            sid = part[len("mirror_sid="):]
+    if not sid:
+        return None
+    with _session_lock:
+        s = SESSIONS.get(sid)
+        if not s:
+            return None
+        if s["exp"] < time.time():
+            SESSIONS.pop(sid, None)
+            return None
+    return sid
+
+
+def _session_cookie(sid):
+    c = "mirror_sid={}; HttpOnly; Path=/; Max-Age={}".format(sid, SESSION_TTL)
+    if SECURE_COOKIE:
+        c += "; Secure"
+    return c
 
 
 # ---------------------------------------------------------------------------
@@ -389,7 +441,7 @@ class App:
         return summary
 
 
-UA = "Cloak-Mirror/1.0 (+https://github.com/gongjuecloak/Cloakwidget)"
+UA = "Cloak-Mirror/1.1 (+https://github.com/gongjuecloak/Cloakwidget)"
 APPS = {}
 APP_ORDER = []
 
@@ -484,7 +536,7 @@ def _record_download(app_id, name, handler, status, bytes_sent):
     try:
         db_exec("INSERT INTO downloads(app,asset,client_id,ip,status,bytes,created_at) "
                 "VALUES(?,?,?,?,?,?,?)", (app_id, name, None, ip, status, bytes_sent, int(time.time())))
-        add_activity("download", "Downloaded {}".format(name), app=app_id, client_id=None)
+        add_activity("download", "下载了 {}".format(name), app=app_id, client_id=None)
     except Exception:
         pass
 
@@ -562,7 +614,7 @@ def _sync_app(app):
                              os.path.exists(app.asset_cache_path(nm)))
     except Exception as e:
         log.warning("[sync] 列表获取失败 %s: %s", app.app_id, e)
-    add_activity("sync", "Synced {}".format(app.app_id), app=app.app_id)
+    add_activity("sync", "已同步 {}".format(app.app_id), app=app.app_id)
 
 
 def _sync_all():
@@ -757,7 +809,7 @@ def _activity_data(limit=250):
 
 
 # ---------------------------------------------------------------------------
-# 控制台 UI（极简 / 工程感 / 大留白 / 数字化排版）
+# 控制台 UI（中文 · 极简 / 工程感 / 大留白 / 数字化排版）
 # ---------------------------------------------------------------------------
 PAGE_CSS = """
 :root{
@@ -790,6 +842,9 @@ nav{display:flex;flex-direction:column;gap:2px}
 main{display:flex;flex-direction:column;min-width:0}
 .topbar{display:flex;align-items:center;justify-content:space-between;padding:16px 30px;border-bottom:1px solid var(--line);background:rgba(255,255,255,.65);backdrop-filter:blur(6px);position:sticky;top:0;z-index:5}
 .crumb{font-size:12px;font-weight:700;letter-spacing:.18em;color:var(--muted)}
+.topright{display:flex;align-items:center;gap:14px}
+.logout{font-size:12px;color:var(--muted);font-weight:600}
+.logout:hover{color:var(--ink)}
 .clock{font-family:var(--mono);font-size:12px;color:var(--muted)}
 .content{padding:30px;max-width:1180px;width:100%}
 .hero{margin-bottom:26px}
@@ -848,18 +903,21 @@ PAGE_SHELL = """<!doctype html>
   <aside class="side">
     <div class="brand">
       <div class="logo">&#9672;</div>
-      <div><div class="b1">CLOAK UPDATE MIRROR</div><div class="b2">private release infrastructure</div></div>
+      <div><div class="b1">Cloak 更新镜像</div><div class="b2">CLOAK UPDATE MIRROR · 私有发布中枢</div></div>
     </div>
     <nav>__NAV__</nav>
     <div class="side-foot">
-      <span class="dot ok"></span> OPERATIONAL
+      <span class="dot ok"></span> 运行中
       <div class="ver">__SERVER_VERSION__</div>
     </div>
   </aside>
   <main>
     <div class="topbar">
       <div class="crumb">__CRUMB__</div>
-      <div class="clock" id="clock">--:--:--</div>
+      <div class="topright">
+        <a href="/logout" class="logout">退出</a>
+        <div class="clock" id="clock">--:--:--</div>
+      </div>
     </div>
     <div class="content">__BODY__</div>
   </main>
@@ -870,13 +928,18 @@ PAGE_SHELL = """<!doctype html>
 
 
 def _nav(active):
-    items = [("overview", "01 · Overview"), ("releases", "02 · Releases"),
-             ("assets", "03 · Assets"), ("activity", "04 · Activity"), ("system", "05 · System")]
+    items = [("overview", "01 · 概览"), ("releases", "02 · 发布"),
+             ("assets", "03 · 资产"), ("activity", "04 · 活动"), ("system", "05 · 系统")]
     out = []
     for k, label in items:
         cls = " navitem active" if k == active else " navitem"
         out.append('<a class="{}" href="/{}">{}</a>'.format(cls, k, label))
     return "\n".join(out)
+
+
+_CRUMB_CN = {"overview": "概览", "releases": "发布", "assets": "资产", "activity": "活动", "system": "系统"}
+_STATUS_CN = {"PUBLISHED": "已发布", "VERIFIED": "已校验", "CACHED": "已缓存",
+              "SYNCED": "已同步", "DISCOVERED": "已发现", "FAILED": "失败"}
 
 
 def _badge(text, kind="ok"):
@@ -885,17 +948,18 @@ def _badge(text, kind="ok"):
 
 def _channel_badge(channel):
     if channel == "prerelease":
-        return _badge("PRERELEASE", "warn")
-    return _badge("STABLE", "ok")
+        return _badge("预发布", "warn")
+    return _badge("稳定版", "ok")
 
 
 def _status_badge(status):
     s = (status or "").upper()
+    cn = _STATUS_CN.get(s, s or "未知")
     if s in ("PUBLISHED", "VERIFIED", "CACHED", "SYNCED", "DISCOVERED"):
-        return _badge(s, "ok")
-    if s in ("FAILED",):
-        return _badge(s, "err")
-    return _badge(s or "UNKNOWN", "mut")
+        return _badge(cn, "ok")
+    if s == "FAILED":
+        return _badge(cn, "err")
+    return _badge(cn, "mut")
 
 
 # ---- 页面构造 ----
@@ -904,47 +968,47 @@ def _overview_html():
     st = gather_status()
     latest = d["latest_release"]
     if latest:
-        lat = ('<div class="card"><h2>Latest Release</h2>'
-               '<div class="row"><span class="k">Version</span><span class="v">{}</span></div>'
-               '<div class="row"><span class="k">Application</span><span class="v">{}</span></div>'
-               '<div class="row"><span class="k">Channel</span><span class="v">{}</span></div>'
-               '<div class="row"><span class="k">Released</span><span class="v">{}</span></div>'
+        lat = ('<div class="card"><h2>最新发布</h2>'
+               '<div class="row"><span class="k">版本</span><span class="v">{}</span></div>'
+               '<div class="row"><span class="k">应用</span><span class="v">{}</span></div>'
+               '<div class="row"><span class="k">渠道</span><span class="v">{}</span></div>'
+               '<div class="row"><span class="k">发布于</span><span class="v">{}</span></div>'
                '<div style="margin-top:14px">'
                '{} {} {} {}'
                '</div></div>').format(
             _esc(latest["version"]), _esc(latest["app"]), _channel_badge(latest["channel"]),
             _fmt_dt(latest["published_at"]),
-            _badge("GitHub · Online", "ok"), _badge("Mirror · Ready", "ok"),
-            _badge("Assets · Ready", "ok"), _badge("Update · Ready", "ok"))
+            _badge("GitHub · 在线", "ok"), _badge("镜像 · 就绪", "ok"),
+            _badge("资产 · 就绪", "ok"), _badge("更新 · 就绪", "ok"))
     else:
-        lat = ('<div class="card"><h2>Latest Release</h2>'
+        lat = ('<div class="card"><h2>最新发布</h2>'
                '<div class="empty">尚未从 GitHub 同步到发布数据，请稍候或手动刷新。</div></div>')
-    sync = ('<div class="card"><h2>Sync</h2>'
-            '<div class="row"><span class="k">Last successful sync</span><span class="v">{}</span></div>'
-            '<div class="row"><span class="k">Upstream</span><span class="v">github.com/{}</span></div>'
-            '<div class="row"><span class="k">Cache</span><span class="v">{}</span></div>'
-            '<div class="row"><span class="k">Interval</span><span class="v">{}s</span></div></div>').format(
+    sync = ('<div class="card"><h2>同步</h2>'
+            '<div class="row"><span class="k">上次成功同步</span><span class="v">{}</span></div>'
+            '<div class="row"><span class="k">上游</span><span class="v">github.com/{}</span></div>'
+            '<div class="row"><span class="k">缓存</span><span class="v">{}</span></div>'
+            '<div class="row"><span class="k">间隔</span><span class="v">{}s</span></div></div>').format(
         _fmt_time(d["last_sync"]), _esc(APPS[DEFAULT_APP_ID].repo) if DEFAULT_APP_ID in APPS else "—",
         _fmt_bytes(d["cache_bytes"]), SYNC_INTERVAL)
-    act = ('<div class="card"><h2>Activity</h2>'
+    act = ('<div class="card"><h2>活动</h2>'
            '<div class="grid stats" style="grid-template-columns:repeat(3,1fr)">'
-           '<div><div class="stat"><div class="sv">{}</div><div class="sl">Today</div></div></div>'
-           '<div><div class="stat"><div class="sv">{}</div><div class="sl">7 days</div></div></div>'
-           '<div><div class="stat"><div class="sv">{}</div><div class="sl">Total downloads</div></div></div>'
+           '<div><div class="stat"><div class="sv">{}</div><div class="sl">今日</div></div></div>'
+           '<div><div class="stat"><div class="sv">{}</div><div class="sl">近 7 天</div></div></div>'
+           '<div><div class="stat"><div class="sv">{}</div><div class="sl">累计下载</div></div></div>'
            '</div></div>').format(d["activity"]["today"], d["activity"]["week"], d["activity"]["total"])
     stats = ('<div class="grid stats">'
-             '<div class="card stat"><div class="sv">{}</div><div class="sl">Latest Release</div></div>'
-             '<div class="card stat"><div class="sv">{}</div><div class="sl">Applications</div></div>'
-             '<div class="card stat"><div class="sv">{}</div><div class="sl">Total Downloads</div></div>'
-             '<div class="card stat"><div class="sv">{}</div><div class="sl">Cache Size</div></div>'
+             '<div class="card stat"><div class="sv">{}</div><div class="sl">最新发布</div></div>'
+             '<div class="card stat"><div class="sv">{}</div><div class="sl">应用数</div></div>'
+             '<div class="card stat"><div class="sv">{}</div><div class="sl">累计下载</div></div>'
+             '<div class="card stat"><div class="sv">{}</div><div class="sl">缓存大小</div></div>'
              '</div>').format(
         _esc(latest["version"]) if latest else "—", d["applications"],
         d["activity"]["total"], _fmt_bytes(d["cache_bytes"]))
     hero = ('<div class="hero">'
-            '<div class="hstat"><span class="dot ok"></span> OPERATIONAL</div>'
-            '<h1 class="title">CLOAK UPDATE MIRROR</h1>'
-            '<p class="lede">Private update infrastructure for Cloak applications. '
-            'GitHub Releases is the source — Mirror handles sync, cache, verify, distribute, audit.</p>'
+            '<div class="hstat"><span class="dot ok"></span> 运行正常</div>'
+            '<h1 class="title">Cloak 更新镜像</h1>'
+            '<p class="lede">Cloak 应用的私有发布与更新基础设施。GitHub Releases 是源头 —— '
+            '镜像负责同步、缓存、校验、分发与审计。</p>'
             '</div>')
     return hero + '<meta http-equiv="refresh" content="30">' + stats + \
         '<div class="grid two" style="margin-top:16px">' + lat + sync + '</div>' + act
@@ -958,7 +1022,7 @@ def _releases_html():
     for r in rows:
         cached = r["cached_assets"]
         total = r["assets"]
-        cache_badge = _badge("Cached {}/{}".format(cached, total), "ok" if cached == total else "warn")
+        cache_badge = _badge("已缓存 {}/{}".format(cached, total), "ok" if cached == total else "warn")
         body.append(
             '<tr><td class="mono"><a href="/releases/{}/{}">{}</a></td>'
             '<td>{}</td><td>{}</td><td class="mono">{}</td><td>{}</td><td>{}</td></tr>'.format(
@@ -966,8 +1030,8 @@ def _releases_html():
                 _esc(r["app"]), _channel_badge(r["channel"]),
                 _fmt_dt(r["published_at"]), cache_badge, _status_badge(r["status"])))
     return ('<table><thead><tr>'
-            '<th class="mono">Version</th><th>Application</th><th>Channel</th>'
-            '<th class="mono">Released</th><th>Cache</th><th>Status</th>'
+            '<th class="mono">版本</th><th>应用</th><th>渠道</th>'
+            '<th class="mono">发布于</th><th>缓存</th><th>状态</th>'
             '</tr></thead><tbody>{}</tbody></table>').format("".join(body))
 
 
@@ -979,11 +1043,11 @@ def _release_detail_html(app, version):
     for a in d["assets"]:
         if a["cached"]:
             sha = _esc((a["sha256"] or "")[:16]) + ("…" if a["sha256"] else "")
-            cache_b = _badge("Cached", "ok")
-            vrf = _badge("Verified", "ok") if a["sha256"] else _badge("No SHA", "mut")
+            cache_b = _badge("已缓存", "ok")
+            vrf = _badge("已校验", "ok") if a["sha256"] else _badge("无 SHA", "mut")
         else:
             sha = ""
-            cache_b = _badge("Missing", "warn")
+            cache_b = _badge("缺失", "warn")
             vrf = _badge("—", "mut")
         rows.append(
             '<tr><td class="mono">{}</td><td class="mono">{}</td>'
@@ -992,14 +1056,14 @@ def _release_detail_html(app, version):
                 _esc(a["name"]), _fmt_bytes(a["size"]), cache_b, vrf,
                 sha if sha else "—"))
     return ('<div class="card"><h2>{}</h2>'
-            '<div class="row"><span class="k">Application</span><span class="v">{}</span></div>'
-            '<div class="row"><span class="k">Channel</span><span class="v">{}</span></div>'
-            '<div class="row"><span class="k">Tag</span><span class="v">{}</span></div>'
-            '<div class="row"><span class="k">Published</span><span class="v">{}</span></div>'
-            '<div class="row"><span class="k">Status</span><span class="v">{}</span></div></div>'
-            '<div class="section-title">Assets</div>'
-            '<table><thead><tr><th class="mono">Name</th><th class="mono">Size</th>'
-            '<th>Cache / Verify</th><th class="mono">SHA256</th></tr></thead>'
+            '<div class="row"><span class="k">应用</span><span class="v">{}</span></div>'
+            '<div class="row"><span class="k">渠道</span><span class="v">{}</span></div>'
+            '<div class="row"><span class="k">标签</span><span class="v">{}</span></div>'
+            '<div class="row"><span class="k">发布时间</span><span class="v">{}</span></div>'
+            '<div class="row"><span class="k">状态</span><span class="v">{}</span></div></div>'
+            '<div class="section-title">资产</div>'
+            '<table><thead><tr><th class="mono">名称</th><th class="mono">大小</th>'
+            '<th>缓存 / 校验</th><th class="mono">SHA256</th></tr></thead>'
             '<tbody>{}</tbody></table>').format(
         _esc(d["version"]), _esc(d["app"]), _channel_badge(d["channel"]),
         _esc(d["tag"] or ""), _fmt_dt(d["published_at"]), _status_badge(d["status"]),
@@ -1012,20 +1076,20 @@ def _assets_html():
         return '<div class="empty">暂无缓存资产。</div>'
     body = []
     for r in rows:
-        cb = _badge("Cached", "ok") if r["cached"] else _badge("Missing", "warn")
+        cb = _badge("已缓存", "ok") if r["cached"] else _badge("缺失", "warn")
         body.append(
             '<tr><td class="mono">{}</td><td>{}</td><td class="mono">{}</td>'
             '<td class="mono">{}</td><td>{}</td><td class="mono">{}</td></tr>'.format(
                 _esc(r["name"]), _esc(r["app"]), _esc(r["version"]),
                 _fmt_bytes(r["size"]), cb, _fmt_time(r["cached_at"])))
-    refresh = ('<div class="section-title">Actions</div>'
+    refresh = ('<div class="section-title">操作</div>'
                '<form class="rf" method="post" action="/admin/refresh?app={}">'
-               '<input type="text" name="admin_token" placeholder="admin token" autocomplete="off">'
-               '<button type="submit">Refresh</button></form>'
-               '<p class="lede" style="margin-top:10px">Verify 列展示文件的实时 SHA256（服务端计算），'
+               '<input type="text" name="admin_token" placeholder="管理员令牌" autocomplete="off">'
+               '<button type="submit">刷新</button></form>'
+               '<p class="lede" style="margin-top:10px">缓存列展示文件的实时 SHA256（服务端计算），'
                '可在资产清单页查看。刷新需管理员令牌。</p>').format(_esc(DEFAULT_APP_ID))
-    return ('<table><thead><tr><th class="mono">Name</th><th>App</th><th class="mono">Version</th>'
-            '<th class="mono">Size</th><th>Cache</th><th class="mono">Cached At</th></tr></thead>'
+    return ('<table><thead><tr><th class="mono">名称</th><th>应用</th><th class="mono">版本</th>'
+            '<th class="mono">大小</th><th>缓存</th><th class="mono">缓存时间</th></tr></thead>'
             '<tbody>{}</tbody></table>').format("".join(body)) + refresh
 
 
@@ -1050,32 +1114,32 @@ def _system_html():
     disk = st.get("disk")
     _, s = db_query("SELECT MAX(synced_at) FROM releases")
     last_sync = s[0][0] if s and s[0][0] else 0
-    gh = _badge("Online", "ok") if (last_sync and (int(time.time()) - last_sync) < SYNC_INTERVAL * 2 + 120) \
-        else _badge("Unknown", "warn")
-    admin_on = _badge("Enabled", "ok") if ADMIN_TOKEN else _badge("Disabled", "err")
+    gh = _badge("在线", "ok") if (last_sync and (int(time.time()) - last_sync) < SYNC_INTERVAL * 2 + 120) \
+        else _badge("未知", "warn")
+    admin_on = _badge("已启用", "ok") if ADMIN_TOKEN else _badge("已禁用", "err")
     enroll = _badge(_enroll_mode(), "mut")
-    disk_html = ("<div class=\"row\"><span class=\"k\">Total</span><span class=\"v\">{}</span></div>"
-                 "<div class=\"row\"><span class=\"k\">Used</span><span class=\"v\">{}</span></div>"
-                 "<div class=\"row\"><span class=\"k\">Free</span><span class=\"v\">{}</span></div>").format(
+    disk_html = ("<div class=\"row\"><span class=\"k\">总量</span><span class=\"v\">{}</span></div>"
+                 "<div class=\"row\"><span class=\"k\">已用</span><span class=\"v\">{}</span></div>"
+                 "<div class=\"row\"><span class=\"k\">可用</span><span class=\"v\">{}</span></div>").format(
         _fmt_bytes(disk["total"]), _fmt_bytes(disk["used"]), _fmt_bytes(disk["free"])) if disk else \
         '<div class="empty">无法读取磁盘信息</div>'
     return ('<div class="grid two">'
-            '<div class="card"><h2>Service</h2>'
-            '<div class="row"><span class="k">Version</span><span class="v">{}</span></div>'
-            '<div class="row"><span class="k">Uptime</span><span class="v">{}</span></div>'
+            '<div class="card"><h2>服务</h2>'
+            '<div class="row"><span class="k">版本</span><span class="v">{}</span></div>'
+            '<div class="row"><span class="k">运行时长</span><span class="v">{}</span></div>'
             '<div class="row"><span class="k">Python</span><span class="v">{}</span></div>'
-            '<div class="row"><span class="k">Port</span><span class="v">{}</span></div>'
-            '<div class="row"><span class="k">Applications</span><span class="v">{}</span></div></div>'
-            '<div class="card"><h2>Storage</h2>{}</div></div>'
+            '<div class="row"><span class="k">端口</span><span class="v">{}</span></div>'
+            '<div class="row"><span class="k">应用数</span><span class="v">{}</span></div></div>'
+            '<div class="card"><h2>存储</h2>{}</div></div>'
             '<div class="grid two" style="margin-top:16px">'
-            '<div class="card"><h2>Upstream</h2>'
+            '<div class="card"><h2>上游</h2>'
             '<div class="row"><span class="k">GitHub</span><span class="v">{}</span></div>'
-            '<div class="row"><span class="k">Last sync</span><span class="v">{}</span></div>'
-            '<div class="row"><span class="k">Sync interval</span><span class="v">{}s</span></div></div>'
-            '<div class="card"><h2>Security</h2>'
-            '<div class="row"><span class="k">Registered tokens</span><span class="v">{}</span></div>'
-            '<div class="row"><span class="k">Enrollment</span><span class="v">{}</span></div>'
-            '<div class="row"><span class="k">Admin refresh</span><span class="v">{}</span></div></div>'
+            '<div class="row"><span class="k">上次同步</span><span class="v">{}</span></div>'
+            '<div class="row"><span class="k">同步间隔</span><span class="v">{}s</span></div></div>'
+            '<div class="card"><h2>安全</h2>'
+            '<div class="row"><span class="k">已注册令牌</span><span class="v">{}</span></div>'
+            '<div class="row"><span class="k">注册策略</span><span class="v">{}</span></div>'
+            '<div class="row"><span class="k">管理员刷新</span><span class="v">{}</span></div></div>'
             '</div>').format(
         SERVER_VERSION, _fmt_uptime(st["uptime_sec"]), _esc(sys.version.split()[0]),
         st["port"], st["app_count"], disk_html, gh, _fmt_time(last_sync), SYNC_INTERVAL,
@@ -1086,7 +1150,7 @@ def _system_html():
 # HTTP Handler
 # ---------------------------------------------------------------------------
 class Handler(BaseHTTPRequestHandler):
-    server_version = "Cloak-Mirror/1.0"
+    server_version = "Cloak-Mirror/1.1"
     protocol_version = "HTTP/1.1"
 
     def log_message(self, *args):
@@ -1110,6 +1174,9 @@ class Handler(BaseHTTPRequestHandler):
         body = json.dumps(obj, ensure_ascii=False, indent=2).encode("utf-8")
         self._send(code, body, "application/json; charset=utf-8")
 
+    def _send_redirect(self, loc):
+        self._send(302, b"", "text/html", {"Location": loc})
+
     def do_HEAD(self):
         self.do_GET()
 
@@ -1131,23 +1198,61 @@ class Handler(BaseHTTPRequestHandler):
             pass
         return {}
 
+    # ---- 登录 / 退出 ----
+    def _handle_login_get(self):
+        self._send(200, _login_html().encode("utf-8"), "text/html; charset=utf-8")
+        self._access_log(200, "login-page")
+
+    def _handle_login_post(self):
+        form = self._post_form()
+        user = (form.get("username", [None])[0] or "").strip()
+        pwd = form.get("password", [None])[0] or ""
+        if user == CONSOLE_USER and CONSOLE_PASSWORD and hmac.compare_digest(pwd, CONSOLE_PASSWORD):
+            sid = _make_session(user)
+            log.info("[auth] 登录成功 user=%s ip=%s", user, _client_ip(self))
+            self._send(302, b"", "text/html",
+                       {"Location": "/", "Set-Cookie": _session_cookie(sid)})
+            return
+        log.warning("[auth] 登录失败 user=%s ip=%s", user, _client_ip(self))
+        self._send(200, _login_html(error=True).encode("utf-8"), "text/html; charset=utf-8")
+
+    def _handle_logout(self):
+        cookie = self.headers.get("Cookie", "")
+        sid = None
+        for part in cookie.split(";"):
+            part = part.strip()
+            if part.startswith("mirror_sid="):
+                sid = part[len("mirror_sid="):]
+        if sid:
+            with _session_lock:
+                SESSIONS.pop(sid, None)
+        self._send_redirect("/login")
+
+    # ---- 控制台渲染（需登录） ----
     def _console(self, active, body, crumb=None):
-        html = (PAGE_SHELL.replace("__TITLE__", "Cloak Update Mirror")
+        crumb = crumb or _CRUMB_CN.get(active, active)
+        html = (PAGE_SHELL.replace("__TITLE__", "Cloak 更新镜像")
                 .replace("__CSS__", PAGE_CSS)
                 .replace("__NAV__", _nav(active))
-                .replace("__CRUMB__", (crumb or active).upper())
+                .replace("__CRUMB__", crumb)
                 .replace("__BODY__", body)
                 .replace("__SERVER_VERSION__", SERVER_VERSION)
                 .replace("__JS__", PAGE_JS))
         self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
         self._access_log(200, "console:" + active)
 
+    def _console_guarded(self, active, body, crumb=None):
+        if not _get_session(self):
+            self._send_redirect("/login")
+            return
+        self._console(active, body, crumb)
+
     def _console_dispatch(self, segs):
         kind = segs[0]
         if kind == "releases":
             if len(segs) >= 3:
                 return self._console("releases", _release_detail_html(segs[1], segs[2]),
-                                     crumb="RELEASES / " + segs[2])
+                                     crumb="发布 / " + segs[2])
             return self._console("releases", _releases_html())
         if kind == "assets":
             return self._console("assets", _assets_html())
@@ -1158,6 +1263,10 @@ class Handler(BaseHTTPRequestHandler):
         return self._console("overview", _overview_html())
 
     def _api_dispatch(self, rest):
+        if not _get_session(self):
+            self._send(401, b'{"error":"unauthorized"}\n', "application/json")
+            self._access_log(401, "api-auth-fail")
+            return
         if not rest or rest[0] == "status":
             self._send_json(gather_status())
             return
@@ -1198,12 +1307,20 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         raw = self.path.split("?", 1)[0].lstrip("/")
         segs = raw.split("/") if raw else []
-        # 控制台（v1.0）
+        # 登录 / 退出（不受控制台鉴权保护）
+        if segs and segs[0] == "login":
+            return self._handle_login_get()
+        if segs and segs[0] == "logout":
+            return self._handle_logout()
+        # 控制台（v1.0）—— 需登录
         if not segs or segs[0] == "":
-            return self._console("overview", _overview_html())
+            return self._console_guarded("overview", _overview_html())
         if segs[0] == "status":
-            return self._console("overview", _overview_html())
+            return self._console_guarded("overview", _overview_html(), crumb="概览")
         if segs[0] in ("releases", "assets", "activity", "system"):
+            if not _get_session(self):
+                self._send_redirect("/login")
+                return
             return self._console_dispatch(segs)
         if segs[0] == "api":
             return self._api_dispatch(segs[1:])
@@ -1214,7 +1331,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, b'{"ok":true}\n', "application/json")
                 self._access_log(200, "healthz")
                 return
-            return self._console("overview", _overview_html())
+            return self._console_guarded("overview", _overview_html())
         if target == "ADMIN":
             self._send(404, b'{"error":"use POST for admin"}\n', "application/json")
             return
@@ -1316,6 +1433,9 @@ class Handler(BaseHTTPRequestHandler):
         raw = self.path.split("?", 1)[0].lstrip("/")
         segs = raw.split("/") if raw else []
         q = parse_qs(urlparse(self.path).query)
+        # 控制台登录提交
+        if segs and segs[0] == "login":
+            return self._handle_login_post()
         # 客户端签到（新增，v1.2 预览；不改动既有更新协议）
         if segs and segs[0] == "api" and len(segs) >= 4 and segs[1] == "v1" \
                 and segs[2] == "client" and segs[3] == "checkin":
@@ -1374,17 +1494,63 @@ class Handler(BaseHTTPRequestHandler):
         host = data.get("hostname") or cid
         try:
             upsert_client(cid, app, ver, chan, host, osname)
-            add_activity("checkin", "{} checked in v{}".format(cid, ver),
+            add_activity("checkin", "{} 已签到 v{}".format(cid, ver),
                          app=app, version=ver, client_id=cid)
         except Exception as e:
             log.warning("[checkin] 写入失败: %s", e)
         self._send_json({"ok": True, "client_id": cid, "server_time": int(time.time())})
 
 
+def _login_html(error=False):
+    err = '<p class="err">用户名或密码错误</p>' if error else ''
+    return """<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>登录 · Cloak 更新镜像</title>
+<style>
+:root{--bg:#F5F6F8;--panel:#fff;--ink:#10131A;--muted:#707684;--line:#E7E9EE;--link:#2F6BFF}
+*{box-sizing:border-box}html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--ink);font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;display:flex;align-items:center;justify-content:center}
+.wrap{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:34px 36px;width:360px;box-shadow:0 8px 30px rgba(16,19,26,.06)}
+.logo{width:38px;height:38px;border-radius:10px;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-size:19px;margin-bottom:16px}
+h1{font-size:19px;margin:0 0 4px;font-weight:800}
+.sub{color:var(--muted);font-size:13px;margin:0 0 22px}
+.err{color:#E03A3A;font-size:12.5px;margin:0 0 12px}
+label{display:block;font-size:12px;color:var(--muted);margin:14px 0 6px;font-weight:600}
+input{width:100%;border:1px solid var(--line);border-radius:9px;padding:10px 12px;font-size:14px;font-family:ui-monospace,Menlo,Consolas,monospace}
+button{width:100%;margin-top:20px;border:none;background:var(--ink);color:#fff;border-radius:9px;padding:11px;font-size:14px;font-weight:700;cursor:pointer}
+button:hover{opacity:.92}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="logo">&#9672;</div>
+  <h1>Cloak 更新镜像</h1>
+  <p class="sub">控制台登录</p>
+  __ERR__
+  <form method="post" action="/login">
+    <label>用户名</label>
+    <input name="username" autocomplete="username" autofocus>
+    <label>密码</label>
+    <input name="password" type="password" autocomplete="current-password">
+    <button type="submit">登录</button>
+  </form>
+</div>
+</body>
+</html>""".replace("__ERR__", err)
+
+
 def main():
+    global CONSOLE_PASSWORD
     os.makedirs(CACHE_DIR, exist_ok=True)
     _db_init()
     _load_tokens()
+    if not CONSOLE_PASSWORD:
+        CONSOLE_PASSWORD = uuid.uuid4().hex[:16]
+        log.warning("⚠️ 未设置 MIRROR_CONSOLE_PASSWORD，已自动生成随机密码（重启失效，请尽快在 .env 中固定）：%s",
+                    CONSOLE_PASSWORD)
     for aid in APP_ORDER:
         log.info("app %s -> repo %s", aid, APPS[aid].repo)
     threading.Thread(target=_sync_worker, daemon=True).start()
@@ -1394,6 +1560,8 @@ def main():
              _enroll_mode(), len(_valid_tokens),
              "set" if GITHUB_TOKEN else "none", "set" if ADMIN_TOKEN else "NONE(refresh disabled)",
              SYNC_INTERVAL)
+    log.info("console_auth user=%s password=%s secure_cookie=%s",
+             CONSOLE_USER, "set" if CONSOLE_PASSWORD else "NONE", SECURE_COOKIE)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

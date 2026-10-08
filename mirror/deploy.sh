@@ -28,6 +28,20 @@ if ! grep -qE '^MIRROR_ADMIN_TOKEN=.+' .env; then
   echo "建议设置： openssl rand -hex 24  ->  写入 MIRROR_ADMIN_TOKEN="
 fi
 
+# 2.5) 控制台登录密码：若未设置则随机生成并写入 .env，避免控制台无密码裸奔
+if ! grep -qE '^MIRROR_CONSOLE_PASSWORD=.+' .env; then
+  GEN=$(openssl rand -base64 15 2>/dev/null | tr -dc 'A-Za-z0-9' | head -c 20)
+  if [ -n "$GEN" ]; then
+    printf 'MIRROR_CONSOLE_PASSWORD=%s\n' "$GEN" >> .env
+    echo "已为控制台自动生成登录密码（请妥善保存，可改 .env 固定）： $GEN"
+  else
+    echo "警告：未能生成控制台密码，控制台将以随机密码启动（重启后失效）。"
+  fi
+fi
+
+# 2.6) 默认开启 Secure Cookie（HTTPS 前置场景）
+grep -qE '^MIRROR_SECURE_COOKIE=' .env || printf 'MIRROR_SECURE_COOKIE=1\n' >> .env
+
 # 3) 构建并拉起（--build 确保代码更新生效）
 docker compose up -d --build
 
