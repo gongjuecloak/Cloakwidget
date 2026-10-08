@@ -1,0 +1,10 @@
+{
+  "mes-converter": {
+    "repo": "gongjuecloak/Cloakwidget",
+    "pubkey": "89ymVon//tfWP9d+KzKZxg3oCBUT+w31nUqZN5LBML0="
+  },
+  "another-tool": {
+    "repo": "gongjuecloak/AnotherTool",
+    "pubkey": "可选：该应用更新清单的 Ed25519 公钥（base64 32 字节）；客户端侧验签用，服务端仅转发"
+  }
+}

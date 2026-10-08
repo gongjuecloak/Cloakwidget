@@ -1,7 +1,17 @@
 # MES 转换工具 · 更新镜像服务
-# 用法（在服务器上）：
+#
+# 部署（在服务器上）：
+#   ./deploy.sh
+# 或手动：
+#   cp .env.example .env      # 编辑 .env，至少填 MIRROR_ADMIN_TOKEN
 #   docker compose up -d --build
-# 容器监听 18080（宿主）→ 8080（容器），nginx 反代到 127.0.0.1:18080。
+#
+# 容器监听 18080（宿主）→ 8080（容器）；由反向代理（宝塔/Cloudflare）暴露到公网。
+#
+# 说明：本服务所有敏感配置（令牌）改由 env_file 从 .env 注入。
+# 这比在 environment 里写 ${VAR} 更可靠——某些 docker compose 版本会静默丢弃
+# 未成功代入的插值变量，导致令牌“配了却没生效”。用 env_file 可确保 .env 里的
+# 每个变量都原样进入容器环境。
 services:
   mes-mirror:
     build: .
@@ -12,11 +22,21 @@ services:
       - "18080:8080"
     volumes:
       - ./data:/data/cache
+      # 多应用注册表：apps.json 列出每个 app_id -> GitHub 仓库。
+      # 不存在时服务端回退到内置默认应用（mes-converter -> gongjuecloak/Cloakwidget），老客户端照常可用。
+      - ./apps.json:/app/apps.json:ro
+    # 安全默认值（非敏感），保证即使 .env 缺失也能起服务
     environment:
-      - MIRROR_REPO=gongjuecloak/Cloakwidget
       - MIRROR_PORT=8080
       - MIRROR_CACHE=/data/cache
-      # 以下为可选安全/控制变量；未设置时：GitHub 匿名（有速率上限）、enroll 开放注册、refresh 需令牌
-      - MIRROR_GITHUB_TOKEN=${MIRROR_GITHUB_TOKEN}
-      - MIRROR_ACCESS_TOKEN=${MIRROR_ACCESS_TOKEN}
-      - MIRROR_ADMIN_TOKEN=${MIRROR_ADMIN_TOKEN}
+      - MIRROR_APPS_JSON=/app/apps.json
+    # 敏感/可选配置全部来自 .env（务必 gitignore，切勿提交）
+    env_file:
+      - .env
+    healthcheck:
+      # 容器内无 curl，用 python 直连探活；失败时容器标记为 unhealthy
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request,sys; urllib.request.urlopen('http://127.0.0.1:8080/healthz'); sys.exit(0)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

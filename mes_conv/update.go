@@ -50,6 +50,17 @@ const releaseRepo = "gongjuecloak/Cloakwidget"
 // 若仍想用子路径或内网地址，可用环境变量 MES_UPDATE_MIRROR 覆盖。
 var updateMirrorBase = "https://x.lzplus.top"
 
+// mirrorAppPath 本应用在镜像上的命名空间（通用更新平台按 app_id 隔离多应用）。
+// 新客户端走 /mes-converter/version.json；镜像同时保留根路径默认应用兜底（老客户端兼容）。
+// 要让另一个工具也用这个镜像自助更新，只需把它的 app_id 配进镜像 apps.json，
+// 并在该工具里复制下面这组 per-app 旋钮（releaseRepo / updateMirrorBase / mirrorAppPath / manifestPubKeyB64）。
+const mirrorAppPath = "/mes-converter"
+
+// mirrorAppBase 镜像上「本应用」的基址：基址 + 命名空间。
+func mirrorAppBase() string {
+	return strings.TrimRight(updateMirrorBase, "/") + mirrorAppPath
+}
+
 // manifestPubKeyB64 Ed25519 公钥（base64，32 字节 raw）。CI 用对应私钥签 version.json，
 // 客户端据此验签，建立供应链信任根。私钥存于仓库 secret MES_SIGN_PRIVATE_KEY，勿入库。
 const manifestPubKeyB64 = "89ymVon//tfWP9d+KzKZxg3oCBUT+w31nUqZN5LBML0="
@@ -355,9 +366,9 @@ func resolveUpdate() (*updateManifest, string) {
 	githubOK := src != srcMirror
 
 	if mirrorOK {
-		if m, err := fetchManifest(updateMirrorBase + "/version.json"); err == nil &&
+		if m, err := fetchManifest(mirrorAppBase() + "/version.json"); err == nil &&
 			versionLess(appVersion, m.Version) {
-			return m, updateMirrorBase
+			return m, mirrorAppBase()
 		}
 		if src == srcMirror {
 			return nil, "" // 只用镜像：镜像没有新版 / 不可达，就不更新了
@@ -479,14 +490,14 @@ func sha256File(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// applyUpdateFromManifest 下载 exe 并就地替换当前 exe。返回最终 exe 路径（文件名可能已被规范化）。
-// 用「改名旧 exe → 移动新 exe 落位」的方式，绕开「不能覆盖正在运行的 exe」的限制。
+// applyUpdateFromManifest 下载 exe 并就地替换当前 exe。返回最终 exe 路径。
+// 目标文件名一律以清单 m.Exe.Name 为准（通用：每个应用自定自己的 exe 名，不再硬编码前缀）。
+// 用「并存式替换」绕开「不能覆盖正在运行的 exe」的限制：
+//   - 版本化文件名（新名 != 运行中 exe）：新版本落成新文件名，旧文件留到下次启动由 cleanupOldExe 删除；
+//   - 稳定文件名（新名 == 运行中 exe）：先把运行中 exe 改名 .old，再把新文件落到原名，最后重启新进程。
+//
 // 关键：下载完先校验 SHA256 与清单一致，不一致立即放弃，绝不替换。
-// 替换成功后，把文件名里可能带着的旧版本号去掉（如 MES-Converter-v1.8.0.exe → MES-Converter.exe），
-// 避免「文件名显示 1.8.0、实际跑的是 1.9.0」的误导。
-// pendingUpdateFile 记录「上次更新时把新 exe 落到了哪个新文件名」。
-// 旧 exe 当时正在运行，Windows 不允许删除它；等下次启动（此时旧进程已退出）
-// 由 cleanupOldExe 清理，避免目录里堆一堆旧版本。
+// pendingUpdateFile 记录「上次更新遗留、需在下次启动时清理的旧文件名」。
 func pendingUpdateFile() string { return filepath.Join(exeDir(), "pending_update.txt") }
 
 // cleanupOldExe 清理上一轮更新遗留的旧 exe。
@@ -534,16 +545,19 @@ func readAllAndClose(f *os.File) []byte {
 func applyUpdateFromManifest(m *updateManifest, base string) (string, error) {
 	var dlURL string
 	if base != "" {
-		dlURL = base + "/" + m.Exe.Name
+		dlURL = strings.TrimRight(base, "/") + "/" + m.Exe.Name
 	} else {
 		dlURL = m.Exe.URL
 	}
-	exe, err := os.Executable()
+	cur, err := os.Executable()
 	if err != nil {
 		return "", err
 	}
-	exe = filepath.Clean(exe)
-	tmp := exe + ".new"
+	cur = filepath.Clean(cur)
+	dir := exeDir()
+
+	// 临时文件：隐藏、唯一，绝不与原文件名冲突（避免"同名锁文件"类问题）。
+	tmp := filepath.Join(dir, "."+strings.TrimSuffix(m.Exe.Name, ".exe")+".part")
 	_ = os.Remove(tmp)
 	if err := downloadFile(dlURL, tmp, m.Exe.Size); err != nil {
 		_ = os.Remove(tmp)
@@ -560,35 +574,47 @@ func applyUpdateFromManifest(m *updateManifest, base string) (string, error) {
 		return "", errors.New("更新包校验失败（SHA256 不匹配），已放弃更新以保证安全")
 	}
 
-	// ---- 落位策略（不再重命名 / 删除当前 exe）----
-	//
-	// Windows 不允许删除或覆盖正在运行的 exe；重命名虽有时可行，但会被杀软 /
-	// 资源管理器 / 其他持有句柄的程序锁住（报 Access is denied），现场机器上
-	// 极易触发。因此改成最稳的「并存式替换」：
-	//
-	//	新版本落位成MES-Converter-v1.10.0.exe（全新文件名，绝不覆盖运行中的 exe）
-	//	→ 写 pending_update.txt 记下「下次要删的旧文件」
-	//	→ 本次运行继续用旧 exe（功能不受影响）
-	//	→ 下次启动时由 cleanupOldExe() 删除旧文件
-	//
-	// 代价是短期间目录里有两个 exe；对「稳定优先」的工厂场景远比更新失败划算。
-	newName := "MES-Converter-" + m.Version + ".exe"
-	newPath := filepath.Join(exeDir(), newName)
-	if sameFile(newPath, exe) {
-		// 已经是这个版本的文件名，无需处理
-		return exe, nil
+	// 目标文件名一律以清单为准（通用：每个应用自定自己的 exe 名，不再硬编码前缀）。
+	target := filepath.Join(dir, m.Exe.Name)
+
+	if sameFile(target, cur) {
+		// —— 就地更新：目标文件名与当前运行的 exe 完全相同（稳定文件名场景）——
+		// Windows 允许重命名正在运行的 exe（仅禁止删除），故先把它挪到 .old，
+		// 再把新文件落到原名，最后重启新进程；旧的 .old 下次启动清理。
+		backup := target + ".old"
+		_ = os.Remove(backup)
+		if rerr := os.Rename(cur, backup); rerr != nil {
+			// 极端情况（被占用 / 特殊路径解析异常）无法挪动运行时 exe：
+			// 退回「下次启动再替换」，本次不破坏当前进程，提示用户重启即可生效。
+			_ = os.Remove(tmp)
+			return "", fmt.Errorf("无法就地替换正在运行的程序（%v）；请关闭程序后重新启动以完成更新", rerr)
+		}
+		if err := moveFile(tmp, target); err != nil {
+			_ = os.Rename(backup, cur) // 落位失败：把 .old 还原，避免程序缺失
+			_ = os.Remove(tmp)
+			return "", fmt.Errorf("新版本落位失败：%w", err)
+		}
+		_ = os.WriteFile(pendingUpdateFile(), []byte(filepath.Base(backup)), 0644)
+		appLog("新版本已就位（就地替换）：%s（重启后生效）", m.Exe.Name)
+		return target, nil
 	}
-	_ = os.Remove(newPath) // 上一次更新若留下同名残留
-	if err := moveFile(tmp, newPath); err != nil {
+
+	// —— 版本化文件名（新文件名 != 运行中的 exe）：并存式替换，最稳 ——
+	// 绝不动运行中 exe；新版本落成新文件名，旧文件留到下次启动由 cleanupOldExe 删除。
+	if _, err := os.Stat(target); err == nil {
+		_ = os.Remove(target) // 上一次更新若留下同名残留
+	}
+	if err := moveFile(tmp, target); err != nil {
 		_ = os.Remove(tmp)
 		return "", fmt.Errorf("新版本落位失败：%w", err)
 	}
-	// 记下「下次启动删掉当前这个旧 exe」
-	if curName := filepath.Base(exe); curName != "" && curName != newName {
+	if curName := filepath.Base(cur); curName != "" && curName != filepath.Base(target) {
 		_ = os.WriteFile(pendingUpdateFile(), []byte(curName), 0644)
-		appLog("新版本已就位：%s（下次启动生效，并自动清理旧文件 %s）", newName, curName)
+		appLog("新版本已就位：%s（下次启动生效，并自动清理旧文件 %s）", m.Exe.Name, curName)
+	} else {
+		_ = os.Remove(pendingUpdateFile())
 	}
-	return newPath, nil
+	return target, nil
 }
 
 // sameFile 判断两个路径是否指向同一个文件（不存在时按字符串比较）
