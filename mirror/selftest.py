@@ -32,6 +32,13 @@ import mirror_server as m  # noqa: E402
 
 m._db_init()
 
+# 预置若干活动，确保 _activity_html 的渲染循环（含 .format 占位符）被真实执行，
+# 否则空数据时提前返回、漏掉只在有数据时触发的格式化错误。
+for _t, _m in [("download", "下载了资产 X"), ("sync", "已同步仓库"),
+               ("checkin", "客户端签到"), ("publish", "已发布 v1.10.4"),
+               ("verify", "资产校验通过"), ("security", "登录失败告警")]:
+    m.add_activity(_t, _m, app="mes-converter", version="v1.10.4")
+
 PAGES = [
     ("_overview_html", lambda: m._overview_html()),
     ("_releases_html", lambda: m._releases_html(None)),

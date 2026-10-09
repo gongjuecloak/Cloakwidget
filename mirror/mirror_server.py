@@ -64,7 +64,7 @@ import logging
 import threading
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, quote
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from logging.handlers import RotatingFileHandler
 
@@ -286,6 +286,7 @@ _MIGRATIONS = (
     ("assets", "verified_at", "INTEGER"),
     ("assets", "state", "TEXT DEFAULT 'discovered'"),
     ("releases", "manifest_cached", "INTEGER DEFAULT 0"),
+    ("releases", "published", "INTEGER DEFAULT 1"),
 )
 
 
@@ -327,17 +328,17 @@ def db_query(sql, params=()):
     return cols, rows
 
 
-def upsert_release(app, version, channel, tag, name, published_at, prerelease, status="published"):
+def upsert_release(app, version, channel, tag, name, published_at, prerelease, status="published", published=1):
     with _db_lock:
         _db_conn.execute(
-            "INSERT INTO releases(app,version,channel,tag,name,published_at,prerelease,synced_at,status) "
-            "VALUES(?,?,?,?,?,?,?,?,?) "
+            "INSERT INTO releases(app,version,channel,tag,name,published_at,prerelease,synced_at,status,published) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(app,version) DO UPDATE SET "
             "channel=excluded.channel,tag=excluded.tag,name=excluded.name,"
             "published_at=excluded.published_at,prerelease=excluded.prerelease,"
             "synced_at=excluded.synced_at,status=excluded.status",
             (app, version, channel, tag, name, published_at, 1 if prerelease else 0,
-             int(time.time()), status))
+             int(time.time()), status, published))
         _db_conn.commit()
 
 
@@ -439,6 +440,7 @@ class App:
         self.cache_dir = os.path.join(CACHE_DIR, _safe(app_id))
         self.latest_api = "https://api.github.com/repos/{}/releases/latest".format(repo)
         self.list_api = "https://api.github.com/repos/{}/releases?per_page=20".format(repo)
+        self.release_tag_api = "https://api.github.com/repos/{}/releases/tags/{{tag}}".format(repo)
         self._cache = {"ts": 0.0, "data": None, "stale": False}
         os.makedirs(self.cache_dir, exist_ok=True)
 
@@ -471,19 +473,37 @@ class App:
         return h
 
     def get_release_meta(self, channel=None):
-        """返回 (release_dict, stale_bool)。优先内存缓存；未命中打 GitHub；失败回退磁盘。
-        指定 channel 时从发布列表里挑该渠道的最新版。"""
+        """返回 (release_dict, stale_bool)。
+        非 stable 渠道：从发布列表挑该渠道最新版。
+        stable / 无 channel：以数据库里 published=1 的最新版为准（撤回即生效）；
+        无已发布记录时回退 GitHub /releases/latest（保持旧行为）。"""
         channel = _normalize_channel(channel) if channel else None
         if channel and channel != "stable":
             rel = self._latest_for_channel(channel)
             if rel:
                 return rel, False
+        try:
+            chosen = self._latest_published_release()
+        except Exception:
+            chosen = None
+        if chosen:
+            now = time.time()
+            if self._cache.get("tag") == chosen and self._cache.get("data") \
+               and now - self._cache["ts"] < CACHE_TTL:
+                return self._cache["data"], self._cache["stale"]
+            data = self._fetch_release_by_tag(chosen)
+            if data:
+                self._cache.update(ts=now, data=data, stale=False, tag=chosen)
+                self._persist_release(data)
+                return data, False
+        # 兜底：GitHub /releases/latest
         now = time.time()
-        if self._cache["data"] and now - self._cache["ts"] < CACHE_TTL:
+        if self._cache.get("data") and self._cache.get("tag") is None \
+           and now - self._cache["ts"] < CACHE_TTL:
             return self._cache["data"], self._cache["stale"]
         try:
             data = _http_get_json(self.latest_api, self._gh_headers())
-            self._cache.update(ts=now, data=data, stale=False)
+            self._cache.update(ts=now, data=data, stale=False, tag=None)
             self._persist_release(data)
             return data, False
         except Exception:
@@ -494,6 +514,26 @@ class App:
                 return data, True
             except Exception:
                 return None, True
+
+    def _latest_published_release(self):
+        """返回该应用 stable 渠道、已发布(published=1)的最新发布 tag；无则返回 None。"""
+        _, rows = db_query(
+            "SELECT tag FROM releases WHERE app=? AND channel='stable' AND published=1 "
+            "ORDER BY published_at DESC LIMIT 1", (self.app_id,))
+        if rows and rows[0][0]:
+            return rows[0][0]
+        return None
+
+    def _fetch_release_by_tag(self, tag):
+        """按 tag 拉取指定发布；失败回退磁盘缓存的 release.cache.json。"""
+        try:
+            return _http_get_json(self.release_tag_api.format(tag=quote(str(tag))), self._gh_headers())
+        except Exception:
+            try:
+                with open(self.release_cache_file, encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                return None
 
     def _latest_for_channel(self, channel):
         """从发布列表里挑指定渠道的最新一版；找不到则回退 stable。"""
@@ -793,6 +833,8 @@ def _release_stage(app_id, version):
     total = len(rows)
     cached = sum(1 for r in rows if r[1])
     verified = sum(1 for r in rows if r[2])
+    _, pr = db_query("SELECT published FROM releases WHERE app=? AND version=?", (app_id, version))
+    published_flag = pr[0][0] if pr else 1
     if total == 0:
         stage = "discovered"
     elif cached < total:
@@ -800,7 +842,7 @@ def _release_stage(app_id, version):
     elif verified < total:
         stage = "cached"
     else:
-        stage = "published" if _manifest_cached(app_id, version) else "verified"
+        stage = "published" if (_manifest_cached(app_id, version) and published_flag) else "verified"
     steps = [
         {"key": "discovered", "label": "已发现", "done": True},
         {"key": "cached", "label": "已缓存", "done": cached == total and total > 0,
@@ -811,7 +853,8 @@ def _release_stage(app_id, version):
     ]
     return {"stage": stage, "label": STAGE_CN.get(stage, stage),
             "current": _stage_index(stage), "steps": steps,
-            "assets_total": total, "assets_cached": cached, "assets_verified": verified}
+            "assets_total": total, "assets_cached": cached, "assets_verified": verified,
+            "published": bool(published_flag)}
 
 
 def _manifest_cached(app_id, version):
@@ -853,6 +896,11 @@ def _sync_app(app):
                              os.path.exists(app.asset_cache_path(nm)))
     except Exception as e:
         log.warning("[sync] 列表获取失败 %s: %s", app.app_id, e)
+    # 自动管线：缓存最新版资产 + 校验 + 标记发布（满足「自动也行」）
+    try:
+        _auto_publish_latest(app)
+    except Exception as e:
+        log.warning("[sync] 自动发布管线异常 %s: %s", app.app_id, e)
     add_activity("sync", "已同步 {}".format(app.app_id), app=app.app_id)
 
 
@@ -1099,7 +1147,13 @@ def _releases_html(channel=None):
                 _esc(r["app"]), _esc(r["version"]), _esc(r["version"]),
                 _esc(r["app"]), _channel_badge(r["channel"]),
                 _fmt_dt(r["published_at"]), vb))
-    return nav + ('<table><thead><tr>'
+    hint = ('<div class="card" style="margin-bottom:18px">'
+            '<div class="row"><span class="k">渠道</span><span class="v">'
+            'stable 仅服务数据库里「已发布」的最新版；beta/dev 按 tag 关键词'
+            '（beta/alpha/rc/nightly/dev）或 prerelease 标记识别</span></div>'
+            '<div class="row"><span class="k">发布</span><span class="v">'
+            '进入某版本详情可「发布 / 撤回 / 立即校验」；同步后最新版会自动发布</span></div></div>')
+    return nav + hint + ('<table><thead><tr>'
                   '<th class="mono">版本</th><th>应用</th><th>渠道</th>'
                   '<th class="mono">发布于</th><th>资产状态</th>'
                   '</tr></thead><tbody>{}</tbody></table>').format("".join(body))
@@ -1107,7 +1161,7 @@ def _releases_html(channel=None):
 
 def _release_detail_data(app, ver):
     _, rows = db_query(
-        "SELECT app,version,channel,tag,published_at,status FROM releases WHERE app=? AND version=?",
+        "SELECT app,version,channel,tag,published_at,status,published FROM releases WHERE app=? AND version=?",
         (app, ver))
     if not rows:
         return None
@@ -1121,7 +1175,7 @@ def _release_detail_data(app, ver):
             sha = _sha256_file(appo.asset_cache_path(a[0]))
         assets.append({"name": a[0], "size": a[1], "cached": bool(a[2]), "sha256": sha})
     return {"app": r[0], "version": r[1], "channel": r[2], "tag": r[3],
-            "published_at": r[4], "status": r[5], "assets": assets}
+            "published_at": r[4], "status": r[5], "published": bool(r[6]), "assets": assets}
 
 
 def _assets_data():
@@ -1202,26 +1256,38 @@ def _download_rank(limit=20, days=None):
         "ORDER BY COUNT(*) DESC LIMIT ?".format(where), params + (limit,))
     _, by_status = db_query(
         "SELECT status,COUNT(*) FROM downloads {} GROUP BY status".format(where), params)
+    _, by_client = db_query(
+        "SELECT client_id,COUNT(*),SUM(bytes) FROM downloads {} GROUP BY client_id "
+        "ORDER BY COUNT(*) DESC LIMIT ?".format(where), params + (limit,))
     max_app = max([r[1] for r in by_app], default=0) or 1
     max_asset = max([r[2] for r in by_asset], default=0) or 1
+    max_client = max([r[1] for r in by_client], default=0) or 1
     return {
         "by_app": [{"app": r[0], "count": r[1], "bytes": r[2] or 0,
                     "pct": int(r[1] * 100 / max_app)} for r in by_app],
         "by_asset": [{"asset": r[0], "app": r[1], "count": r[2], "bytes": r[3] or 0,
                       "pct": int(r[2] * 100 / max_asset)} for r in by_asset],
+        "by_client": [{"client": (r[0] or "未知客户端"), "count": r[1], "bytes": r[2] or 0,
+                       "pct": int(r[1] * 100 / max_client)} for r in by_client],
         "by_status": [{"status": r[0], "count": r[1]} for r in by_status],
         "days": days,
     }
 
 
 # ---- 资产校验（#6）----
-def _verify_assets(app_id=None, deep=True):
+def _verify_assets(app_id=None, deep=True, version=None):
     """重算缓存文件 SHA256，与清单 sha256 比对。结果写入 asset_checks / assets.verified_at。"""
     q = "SELECT app,version,name,sha256,cached FROM assets"
+    clauses = []
     params = ()
     if app_id:
-        q += " WHERE app=?"
-        params = (app_id,)
+        clauses.append("app=?")
+        params = params + (app_id,)
+    if version:
+        clauses.append("version=?")
+        params = params + (version,)
+    if clauses:
+        q += " WHERE " + " AND ".join(clauses)
     _, rows = db_query(q, params)
     checked, ok, bad, missing = 0, 0, 0, 0
     details = []
@@ -1253,6 +1319,54 @@ def _verify_assets(app_id=None, deep=True):
                      app=app_id)
     return {"checked": checked, "verified": ok, "mismatch": bad, "missing": missing,
             "bad": details}
+
+
+def _cache_release_assets(app, rel):
+    """下载某 release 的全部资产到本地缓存（version.json 必下，其余按需）。"""
+    ver = rel.get("tag_name") or "unknown"
+    cached = 0
+    for a in rel.get("assets", []):
+        nm = a.get("name")
+        if not nm:
+            continue
+        dst = app.asset_cache_path(nm)
+        if os.path.exists(dst):
+            upsert_asset(app.app_id, ver, nm, a.get("size"), True)
+            cached += 1
+            continue
+        try:
+            body = _http_get_bytes(a["browser_download_url"], app._gh_headers({"Accept": "*/*"}))
+            with open(dst, "wb") as f:
+                f.write(body)
+            upsert_asset(app.app_id, ver, nm, len(body), True)
+            cached += 1
+        except Exception as e:
+            log.warning("[cache] %s/%s 下载失败: %s", app.app_id, nm, e)
+    return cached
+
+
+def _publish_release(app_id, version, publish=True):
+    """标记/取消标记某发布为「已发布」（撤回）。"""
+    with _db_lock:
+        _db_conn.execute("UPDATE releases SET published=? WHERE app=? AND version=?",
+                         (1 if publish else 0, app_id, version))
+        _db_conn.commit()
+    return {"app": app_id, "version": version, "published": bool(publish)}
+
+
+def _auto_publish_latest(app):
+    """自动管线：缓存最新版资产 + 校验 + 标记发布（满足「自动也行」）。"""
+    rel, _ = app.get_release_meta()
+    if not rel:
+        return
+    ver = rel.get("tag_name") or "unknown"
+    try:
+        _cache_release_assets(app, rel)
+        _verify_assets(app.app_id, version=ver)
+        _publish_release(app.app_id, ver, True)
+        add_activity("publish", "已自动发布 {} {}".format(app.app_id, ver), app=app.app_id, version=ver)
+    except Exception as e:
+        log.warning("[sync] 自动发布管线失败 %s: %s", app.app_id, e)
 
 
 # ---- 磁盘预警（#9）----
@@ -1397,11 +1511,29 @@ tr:hover td{background:var(--line-2)}
 .rf input{border:1px solid var(--line);border-radius:8px;padding:7px 11px;font-size:12.5px;font-family:var(--mono);outline:none}
 .rf input:focus{border-color:var(--accent)}
 .rf button{border:none;background:var(--accent);color:#fff;border-radius:8px;padding:8px 16px;font-size:12.5px;font-weight:600;cursor:pointer}
+.rf button.ghost{background:var(--panel);color:var(--err);border:1px solid var(--err-soft)}
+.rf button.ghost:hover{background:var(--err-soft)}
 .empty{color:var(--muted);font-size:13px;padding:40px;text-align:center;background:var(--line-2);border-radius:var(--radius)}
 .act{display:grid;grid-template-columns:120px 1fr;gap:16px;padding:13px 4px;border-bottom:1px solid var(--line-2);font-size:13px}
 .act:last-child{border-bottom:none}
 .act .t{font-family:var(--mono);color:var(--muted);font-size:11.5px;white-space:nowrap}
 .act .m b{font-family:var(--mono);font-weight:700}
+/* 活动流时间线 */
+.timeline{position:relative;margin-top:6px;padding-left:26px}
+.timeline::before{content:"";position:absolute;left:9px;top:4px;bottom:4px;width:2px;background:var(--line)}
+.tl{position:relative;padding:14px 0;border-bottom:1px solid var(--line-2)}
+.tl:last-child{border-bottom:none}
+.tl .node{position:absolute;left:-22px;top:16px;width:12px;height:12px;border-radius:50%;border:2px solid var(--panel);box-shadow:0 0 0 2px var(--line)}
+.tl .top{display:flex;align-items:center;gap:10px;margin-bottom:4px}
+.tl .time{font-family:var(--mono);font-size:11px;color:var(--muted);white-space:nowrap}
+.tl .msg{font-size:13.5px;line-height:1.55;color:var(--ink-2)}
+.tl .msg b{font-family:var(--mono);font-weight:700;color:var(--ink)}
+.tl.k-download .node{background:var(--accent)} .tl.k-download .badge{background:var(--accent-soft);color:var(--accent)}
+.tl.k-sync .node{background:var(--ok)} .tl.k-sync .badge{background:var(--ok-soft);color:var(--ok)}
+.tl.k-checkin .node{background:#7C5CFF} .tl.k-checkin .badge{background:rgba(124,92,255,.12);color:#7C5CFF}
+.tl.k-verify .node{background:var(--warn)} .tl.k-verify .badge{background:var(--warn-soft);color:var(--warn)}
+.tl.k-security .node,.tl.k-auth .node{background:var(--err)} .tl.k-security .badge,.tl.k-auth .badge{background:var(--err-soft);color:var(--err)}
+.tl.k-publish .node{background:var(--ok)} .tl.k-publish .badge{background:var(--ok-soft);color:var(--ok)}
 .sha{font-family:var(--mono);font-size:11px;color:var(--muted);word-break:break-all;display:block;margin-top:4px;background:var(--line-2);padding:5px 9px;border-radius:7px}
 /* 状态机进度 */
 .stages{display:flex;align-items:center;gap:0;margin:6px 0 2px;flex-wrap:wrap}
@@ -1432,6 +1564,16 @@ tr:hover td{background:var(--line-2)}
 .filters a{padding:6px 13px;border-radius:999px;border:1px solid var(--line);font-size:12.5px;color:var(--ink-2);background:var(--panel)}
 .filters a:hover{background:var(--line-2);text-decoration:none}
 .filters a.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+/* API 文档 */
+.api-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(440px,1fr));gap:14px}
+.api-card{border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;background:var(--panel)}
+.api-head{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.mth{font-family:var(--mono);font-size:11px;font-weight:700;padding:3px 9px;border-radius:6px;letter-spacing:.04em}
+.m-get{background:var(--ok-soft);color:var(--ok)} .m-post{background:rgba(124,92,255,.12);color:#7C5CFF}
+.api-path{font-family:var(--mono);font-size:13.5px;font-weight:600;color:var(--ink);word-break:break-all}
+.api-auth{margin-left:auto;font-size:11px;color:var(--muted);background:var(--line-2);padding:3px 9px;border-radius:999px;white-space:nowrap}
+.api-desc{font-size:13px;color:var(--ink-2);line-height:1.55;margin-bottom:10px}
+.api-ex{background:#0E1117;color:#E6EAF2;font-family:var(--mono);font-size:11.5px;padding:10px 12px;border-radius:8px;overflow-x:auto;margin:0}
 """
 
 PAGE_JS = """
@@ -1506,14 +1648,15 @@ _ICONS = {
   "clients": '<svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>',
   "downloads": '<svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v12M7 11l5 5 5-5"/><path d="M4 20h16"/></svg>',
   "activity": '<svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>',
-  "system": '<svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3.2"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.5 5.5l2 2M16.5 16.5l2 2M18.5 5.5l-2 2M7.5 16.5l-2 2"/></svg>'
+  "system": '<svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3.2"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.5 5.5l2 2M16.5 16.5l2 2M18.5 5.5l-2 2M7.5 16.5l-2 2"/></svg>',
+  "api": '<svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 4l-4 8 4 8M16 4l4 8-4 8M14 3l-4 18"/></svg>'
 }
 
 
 def _nav(active):
     items = [("overview", "概览"), ("releases", "发布"), ("assets", "资产"),
              ("clients", "客户端"), ("downloads", "下载排行"),
-             ("activity", "活动"), ("system", "系统")]
+             ("activity", "活动"), ("api", "API"), ("system", "系统")]
     out = []
     for k, label in items:
         cls = " navitem active" if k == active else " navitem"
@@ -1522,9 +1665,15 @@ def _nav(active):
 
 
 _CRUMB_CN = {"overview": "概览", "releases": "发布", "assets": "资产",
-             "clients": "客户端", "downloads": "下载排行", "activity": "活动", "system": "系统"}
+             "clients": "客户端", "downloads": "下载排行", "activity": "活动",
+             "api": "API", "system": "系统"}
 _STATUS_CN = {"PUBLISHED": "已发布", "VERIFIED": "已校验", "CACHED": "已缓存",
               "SYNCED": "已同步", "DISCOVERED": "已发现", "FAILED": "失败"}
+
+# 活动类型 -> 时间线徽标中文标签
+_TYPE_BADGE = {"download": "下载", "sync": "同步", "checkin": "签到", "verify": "校验",
+               "security": "安全", "auth": "登录", "publish": "发布", "prune": "清理",
+               "enroll": "注册"}
 
 
 def _badge(text, kind="ok"):
@@ -1616,20 +1765,45 @@ def _release_detail_html(app, version):
             '<tr><td colspan="4"><span class="sha">SHA256 {}</span></td></tr>'.format(
                 _esc(a["name"]), _fmt_bytes(a["size"]), cache_b, vrf,
                 sha if sha else "—"))
+    pub_badge = _badge("已发布", "ok") if d.get("published") else _badge("已撤回", "warn")
+    if d.get("published"):
+        pub_btn = ('<form class="rf" method="post" action="/admin/unpublish">'
+                   '<input type="hidden" name="app" value="{}">'
+                   '<input type="hidden" name="version" value="{}">'
+                   '<button type="submit" class="ghost">撤回发布</button></form>').format(
+            _esc(d["app"]), _esc(d["version"]))
+    else:
+        pub_btn = ('<form class="rf" method="post" action="/admin/publish">'
+                   '<input type="hidden" name="app" value="{}">'
+                   '<input type="hidden" name="version" value="{}">'
+                   '<button type="submit">发布</button></form>').format(
+            _esc(d["app"]), _esc(d["version"]))
+    ops = ('<div class="section-title">操作</div>'
+           '<div class="grid two">'
+           '<form class="rf" method="post" action="/admin/verify">'
+           '<input type="hidden" name="app" value="{}">'
+           '<input type="hidden" name="version" value="{}">'
+           '<button type="submit">立即校验</button></form>'
+           '{}</div>'
+           '<p class="lede" style="margin-top:12px">「发布」后客户端检查更新将看到该版本；'
+           '「撤回」会让镜像回退到上一个已发布版本（仅 stable 渠道生效）。'
+           '「立即校验」重算缓存文件 SHA256 并与清单比对。</p>').format(
+        _esc(d["app"]), _esc(d["version"]), pub_btn)
     return (_stages_html(app, version) +
             '<div class="card"><h2>{}</h2>'
             '<div class="row"><span class="k">应用</span><span class="v">{}</span></div>'
             '<div class="row"><span class="k">渠道</span><span class="v">{}</span></div>'
             '<div class="row"><span class="k">标签</span><span class="v">{}</span></div>'
             '<div class="row"><span class="k">发布时间</span><span class="v">{}</span></div>'
-            '<div class="row"><span class="k">状态</span><span class="v">{}</span></div></div>'
+            '<div class="row"><span class="k">状态</span><span class="v">{} {}</span></div></div>'
             '<div class="section-title">资产</div>'
             '<table><thead><tr><th class="mono">名称</th><th class="mono">大小</th>'
             '<th>缓存 / 校验</th><th class="mono">SHA256</th></tr></thead>'
-            '<tbody>{}</tbody></table>').format(
+            '<tbody>{}</tbody></table>'
+            '{}').format(
         _esc(d["version"]), _esc(d["app"]), _channel_badge(d["channel"]),
         _esc(d["tag"] or ""), _fmt_dt(d["published_at"]), _status_badge(d["status"]),
-        "".join(rows))
+        pub_badge, "".join(rows), ops)
 
 
 def _assets_html():
@@ -1752,10 +1926,13 @@ def _activity_html(kind=None):
             msg += ' <b>· {}</b>'.format(_esc(r["app"]))
         if r["version"]:
             msg += ' <b>{}</b>'.format(_esc(r["version"]))
-        body.append('<div class="act"><div class="t">{}</div><div class="m">'
-                    '<span class="tag">{}</span> {}</div></div>'.format(
-                        t, _esc(r["type"]), msg))
-    return head + nav + "".join(body)
+        body.append(
+            '<div class="tl k-{}"><span class="node"></span>'
+            '<div class="top"><span class="badge">{}</span>'
+            '<span class="time">{}</span></div>'
+            '<div class="msg">{}</div></div>'.format(
+                _esc(r["type"]), _TYPE_BADGE.get(r["type"], _esc(r["type"])), t, msg))
+    return head + nav + '<div class="timeline">' + "".join(body) + '</div>'
 
 
 def _downloads_html():
@@ -1763,15 +1940,60 @@ def _downloads_html():
     return ('<div class="grid two">'
             '<div class="card"><h2>按应用</h2>{}</div>'
             '<div class="card"><h2>按资产</h2>{}</div></div>'
+            '<div class="card"><h2>按客户端</h2>{}</div>'
             '<div class="section-title">响应状态分布</div>'
             '<div class="card">{}</div>').format(
         _rank_html([{"label": r["app"], "count": r["count"], "bytes": r["bytes"], "pct": r["pct"]}
                     for r in rank["by_app"]]),
         _rank_html([{"label": r["asset"], "count": r["count"], "bytes": r["bytes"], "pct": r["pct"]}
                     for r in rank["by_asset"]]),
+        _rank_html([{"label": r["client"], "count": r["count"], "bytes": r["bytes"], "pct": r["pct"]}
+                    for r in rank["by_client"]]),
         "".join('<div class="row"><span class="k">HTTP {}</span><span class="v">{} 次</span></div>'
                 .format(r["status"], r["count"]) for r in rank["by_status"])
         or '<div class="empty">暂无数据</div>')
+
+
+def _api_html():
+    base = "https://x.lzplus.top"
+    ep = []
+    def card(method, path, auth, desc, example):
+        ep.append(
+            '<div class="api-card">'
+            '<div class="api-head"><span class="mth m-{0}">{0}</span>'
+            '<code class="api-path">{1}</code>'
+            '<span class="api-auth">{2}</span></div>'
+            '<div class="api-desc">{3}</div>'
+            '<pre class="api-ex">$ curl -s {4}{1}</pre></div>'.format(
+                method.lower(), _esc(path), _esc(auth), _esc(desc), base))
+    card("GET", "/api/v1/overview", "会话登录", "概览统计：应用数、活动总数、缓存占用、上游状态。", "")
+    card("GET", "/api/v1/releases?channel=stable", "会话登录", "发布列表，可按渠道过滤（stable/beta/dev）。", "?channel=stable")
+    card("GET", "/api/v1/releases/{app}/{ver}", "会话登录", "单个发布详情，含资产清单与状态机阶段。", "/mes-converter/1.10.3")
+    card("GET", "/api/v1/assets", "会话登录", "全部缓存资产清单与校验状态。", "")
+    card("GET", "/api/v1/clients", "会话登录", "已签到客户端列表（版本/渠道/最近可见）。", "")
+    card("GET", "/api/v1/downloads?days=7", "会话登录", "下载排行（按应用/资产/客户端）。", "?days=7")
+    card("GET", "/api/v1/activity?type=download", "会话登录", "活动日志，按类型过滤。", "?type=download")
+    card("POST", "/api/v1/client/checkin", "客户端 Bearer", "客户端启动时上报本机信息（版本/渠道/主机名）。", "")
+    card("POST", "/admin/verify", "X-Admin-Token", "校验资产完整性（可带 app/version）。", "")
+    card("POST", "/admin/publish", "X-Admin-Token / 会话", "标记某发布为已发布（客户端可见）。", "")
+    card("POST", "/admin/unpublish", "X-Admin-Token / 会话", "撤回发布，客户端回退到上一已发布版本。", "")
+    card("POST", "/admin/prune", "X-Admin-Token", "清理旧版本缓存资产，保留最近 N 个。", "")
+    card("GET", "/{app}/version.json?channel=stable", "客户端 Bearer", "版本清单（version.json），客户端据此判断更新。", "")
+    card("GET", "/{app}/{asset}", "客户端 Bearer", "下载具体资产（exe 等），首次拉取后缓存。", "/mes-converter/MES-Converter-v1.10.3.exe")
+    channel_box = (
+        '<div class="section-title">渠道对照（stable / beta / dev）</div>'
+        '<div class="card">'
+        '<div class="row"><span class="k">客户端</span><span class="v">设环境变量 '
+        '<code>MES_UPDATE_CHANNEL=stable|beta|dev</code>（默认 stable）</span></div>'
+        '<div class="row"><span class="k">镜像推断</span><span class="v">按 release 的 tag / 名称关键词'
+        '（dev→nightly/edge/-dev；beta→beta/alpha/rc/prerelease）或 GitHub prerelease 标记判定渠道</span></div>'
+        '<div class="row"><span class="k">stable 生效</span><span class="v">仅服务数据库里 '
+        '<code>published=1</code> 的最新版；在发布明细页点「撤回」即让客户端回退到上一已发布版</span></div>'
+        '<div class="row"><span class="k">灰度建议</span><span class="v">先发 beta/dev 给测试机试跑，'
+        '稳定后再在 stable 渠道「发布」，生产工位机保持 stable</span></div></div>')
+    return ('<div class="section-title">REST API</div>'
+            '<div class="api-grid">{}</div>'
+            '{}').format("".join(ep), channel_box)
 
 
 def _system_html():
@@ -1985,6 +2207,8 @@ class Handler(BaseHTTPRequestHandler):
         if kind == "activity":
             t = q.get("type", [None])[0]
             return self._console("activity", _activity_html(t))
+        if kind == "api":
+            return self._console("api", _api_html())
         if kind == "system":
             return self._console("system", _system_html())
         return self._console("overview", _overview_html())
@@ -2065,6 +2289,13 @@ class Handler(BaseHTTPRequestHandler):
                 return
             return self._console_dispatch(segs, parse_qs(urlparse(self.path).query))
         if segs[0] == "api":
+            # /api 精确路径 -> 控制台 API 文档页（HTML，需登录）
+            if len(segs) == 1 or segs[1] == "":
+                if not _get_session(self):
+                    self._send_redirect("/login")
+                    return
+                return self._console("api", _api_html())
+            # /api/v1/... 或 /api/status -> JSON API
             return self._api_dispatch(segs[1:])
         # 既有客户端协议
         target, rel = self._resolve()
@@ -2187,7 +2418,7 @@ class Handler(BaseHTTPRequestHandler):
                or self.headers.get("X-Admin-Token"))
         # 全局刷新：可选 ?app=；无则刷新全部
         if (not segs or segs[0] == "admin") and (len(segs) <= 1 or segs[1] == "refresh"):
-            if not ADMIN_TOKEN or tok != ADMIN_TOKEN:
+            if not (_get_session(self) or (ADMIN_TOKEN and tok == ADMIN_TOKEN)):
                 self._send(401, b'{"error":"unauthorized"}\n', "application/json")
                 log.warning("[admin] refresh 拒绝（令牌不符）from=%s %s",
                             _client_ip(self), _redact(self.path))
@@ -2207,19 +2438,46 @@ class Handler(BaseHTTPRequestHandler):
             return
         # 资产完整性校验（#6）
         if (not segs or segs[0] == "admin") and (len(segs) <= 1 or segs[1] == "verify"):
-            if not ADMIN_TOKEN or tok != ADMIN_TOKEN:
+            if not (_get_session(self) or (ADMIN_TOKEN and tok == ADMIN_TOKEN)):
                 self._send(401, b'{"error":"unauthorized"}\n', "application/json")
                 return
-            target_app = (q.get("app", [None])[0] or "").strip() or None
+            target_app = (q.get("app", [None])[0] or form.get("app", [None])[0] or "").strip() or None
+            target_ver = (q.get("version", [None])[0] or form.get("version", [None])[0] or "").strip() or None
             try:
-                res = _verify_assets(target_app)
+                res = _verify_assets(target_app, version=target_ver)
+                if _get_session(self) and target_app and target_ver:
+                    self._send_redirect("/releases/{}/{}".format(target_app, target_ver))
+                    return
                 self._send_json(res)
             except Exception as e:
                 self._send(500, ("校验失败: " + str(e)).encode("utf-8"), "text/plain; charset=utf-8")
             return
+        # 发布 / 撤回（#2 手动控制）
+        if (not segs or segs[0] == "admin") and (len(segs) <= 1 or segs[1] in ("publish", "unpublish")):
+            if not (_get_session(self) or (ADMIN_TOKEN and tok == ADMIN_TOKEN)):
+                self._send(401, b'{"error":"unauthorized"}\n', "application/json")
+                return
+            target_app = (q.get("app", [None])[0] or form.get("app", [None])[0] or "").strip()
+            target_ver = (q.get("version", [None])[0] or form.get("version", [None])[0] or "").strip()
+            if not target_app or not target_ver:
+                self._send(400, b'{"error":"app and version required"}\n', "application/json")
+                return
+            publish = (segs[1] if len(segs) > 1 else q.get("action", ["publish"])[0]) != "unpublish"
+            try:
+                res = _publish_release(target_app, target_ver, publish)
+                add_activity("publish", "{} 发布状态 -> {}".format(
+                    target_app + " " + target_ver, "已发布" if publish else "已撤回"),
+                    app=target_app, version=target_ver)
+                if _get_session(self):
+                    self._send_redirect("/releases/{}/{}".format(target_app, target_ver))
+                    return
+                self._send_json(res)
+            except Exception as e:
+                self._send(500, ("操作失败: " + str(e)).encode("utf-8"), "text/plain; charset=utf-8")
+            return
         # 清理旧版本资产（#9）
         if (not segs or segs[0] == "admin") and (len(segs) <= 1 or segs[1] == "prune"):
-            if not ADMIN_TOKEN or tok != ADMIN_TOKEN:
+            if not (_get_session(self) or (ADMIN_TOKEN and tok == ADMIN_TOKEN)):
                 self._send(401, b'{"error":"unauthorized"}\n', "application/json")
                 return
             target_app = (q.get("app", [None])[0] or "").strip() or None

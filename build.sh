@@ -72,6 +72,25 @@ GOPROXY=https://goproxy.cn,direct go build \
 SIZE="$(stat -c%s "$EXE_NAME")"
 echo "  已生成 $EXE_NAME（$((SIZE/1048576)) MB，构建时间 $BT）"
 
+# ---------- 4.5 生成 version.json 更新清单 ----------
+# 从真实构建产物算 sha256/size，避免「清单哈希与 exe 不符」导致客户端反复提示升级。
+# 优先用显式 venv python，找不到再退回 python3 / python。
+step "生成 version.json 清单"
+ASSET_NAME="MES-Converter-v${VER}.exe"
+PYBIN=""
+for c in "${PYTHON:-}" "$HOME/.workbuddy/binaries/python/envs/default/Scripts/python.exe" python3 python; do
+  if command -v "$c" >/dev/null 2>&1; then PYBIN="$c"; break; fi
+done
+if [ -n "$PYBIN" ] && [ -f "$ROOT/gen_version.py" ]; then
+  if "$PYBIN" "$ROOT/gen_version.py" --exe "$MES/$EXE_NAME" --name "$ASSET_NAME" --ver "$VER" --out "$ROOT/version.json"; then
+    echo "  已生成 $ROOT/version.json（资产名 $ASSET_NAME）"
+  else
+    echo "  ! version.json 生成失败，跳过（不影响 exe）"
+  fi
+else
+  echo "  ! 未找到 python/gen_version.py，跳过 version.json 生成"
+fi
+
 # ---------- 5. 同步分享版 ----------
 step "同步分享版目录"
 mkdir -p "$SHARE"

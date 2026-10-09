@@ -88,3 +88,7 @@ mes_conv/appicon_preview.png
 # 防止把密钥误提交到公开仓库。
 .env
 mirror/.env
+
+# ============ 发布清单（构建产物，每次构建重新生成，不入库） ============
+version.json
+version.sig

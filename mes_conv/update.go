@@ -215,6 +215,26 @@ func versionLess(cur, latest string) bool {
 	return false
 }
 
+// runningExeSHA256 计算当前运行中的 exe 文件的 SHA256。
+// 用于「防误报升级」：若镜像清单描述的 exe 哈希与正在运行的文件完全一致，
+// 说明两者其实是同一个构建，即便版本号比对异常也绝不提示升级。
+func runningExeSHA256() string {
+	p, err := os.Executable()
+	if err != nil || p == "" {
+		return ""
+	}
+	f, err := os.Open(p)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
 type ghRelease struct {
 	TagName string `json:"tag_name"`
 	Name    string `json:"name"`
@@ -464,7 +484,13 @@ func resolveUpdate() (*updateManifest, string) {
 	if mirrorOK {
 		if m, err := fetchManifest(mirrorAppBase() + "/version.json?channel=" + url.QueryEscape(updateChannel())); err == nil &&
 			versionLess(appVersion, m.Version) {
-			return m, mirrorAppBase()
+			// 强校验：清单 exe 的 SHA256 与当前运行文件一致，说明实为同一构建，绝不提示升级
+			if m.Exe.SHA256 != "" && strings.EqualFold(m.Exe.SHA256, runningExeSHA256()) {
+				m = nil
+			}
+			if m != nil {
+				return m, mirrorAppBase()
+			}
 		}
 		if src == srcMirror {
 			return nil, "" // 只用镜像：镜像没有新版 / 不可达，就不更新了
@@ -477,6 +503,9 @@ func resolveUpdate() (*updateManifest, string) {
 				if strings.EqualFold(a.Name, "version.json") {
 					if m, e := fetchManifest(a.URL); e == nil &&
 						versionLess(appVersion, m.Version) {
+						if m.Exe.SHA256 != "" && strings.EqualFold(m.Exe.SHA256, runningExeSHA256()) {
+							continue
+						}
 						return m, "" // 用清单里的 GitHub 下载地址
 					}
 				}
