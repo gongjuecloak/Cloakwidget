@@ -88,8 +88,24 @@ SECURE_COOKIE = os.environ.get("MIRROR_SECURE_COOKIE", "0") == "1"
 SESSIONS = {}  # sid -> {"user":..., "exp":...}
 _session_lock = threading.Lock()
 
+# ---- 登录防爆破（#8）----
+LOGIN_MAX_FAILS = int(os.environ.get("MIRROR_LOGIN_MAX_FAILS", "5"))
+LOGIN_WINDOW = int(os.environ.get("MIRROR_LOGIN_WINDOW", "600"))      # 统计窗口秒
+LOGIN_LOCKOUT = int(os.environ.get("MIRROR_LOGIN_LOCKOUT", "900"))    # 锁定秒
+_fail_lock = threading.Lock()
+_login_fail = {}  # ip -> [失败时间戳...]
+_login_locked = {}  # ip -> 解锁时间戳
+
+# ---- 磁盘预警（#9）----
+DISK_WARN_BYTES = int(os.environ.get("MIRROR_DISK_WARN_BYTES", str(3 * 1024 ** 3)))   # 缓存超 3GB 告警
+DISK_CRIT_BYTES = int(os.environ.get("MIRROR_DISK_CRIT_BYTES", str(8 * 1024 ** 3)))  # 超 8GB 严重
+
+# ---- 渠道（#4）----
+CHANNELS = ("stable", "beta", "dev")
+DEFAULT_CHANNEL = os.environ.get("MIRROR_DEFAULT_CHANNEL", "stable")
+
 START_TIME = time.time()
-SERVER_VERSION = "Cloak-Mirror/1.1.0"
+SERVER_VERSION = "Cloak-Mirror/1.2.0"
 
 _log_file = os.path.join(CACHE_DIR, "mirror.log")
 
@@ -158,6 +174,49 @@ def _session_cookie(sid):
 
 
 # ---------------------------------------------------------------------------
+# 登录防爆破（#8）：内存计数 + SQLite 审计
+# ---------------------------------------------------------------------------
+def _login_status(ip):
+    """返回 (locked_bool, retry_after_sec)。"""
+    now = time.time()
+    with _fail_lock:
+        until = _login_locked.get(ip, 0)
+        if until > now:
+            return True, int(until - now)
+        if until:
+            _login_locked.pop(ip, None)
+        hits = [t for t in _login_fail.get(ip, []) if now - t < LOGIN_WINDOW]
+        _login_fail[ip] = hits
+        if len(hits) >= LOGIN_MAX_FAILS:
+            _login_locked[ip] = now + LOGIN_LOCKOUT
+            _login_fail[ip] = []
+            return True, LOGIN_LOCKOUT
+    return False, 0
+
+
+def _login_record(ip, ok):
+    with _fail_lock:
+        if ok:
+            _login_fail.pop(ip, None)
+            _login_locked.pop(ip, None)
+        else:
+            _login_fail.setdefault(ip, []).append(time.time())
+
+
+def _login_locked_ips():
+    now = time.time()
+    with _fail_lock:
+        return {ip: int(until - now) for ip, until in _login_locked.items() if until > now}
+
+
+def _login_fail_count(ip):
+    """窗口内当前累计失败次数。"""
+    now = time.time()
+    with _fail_lock:
+        return len([t for t in _login_fail.get(ip, []) if now - t < LOGIN_WINDOW])
+
+
+# ---------------------------------------------------------------------------
 # SQLite 存储
 # ---------------------------------------------------------------------------
 DB_PATH = os.path.join(CACHE_DIR, "mirror.db")
@@ -206,7 +265,39 @@ CREATE TABLE IF NOT EXISTS clients(
   app TEXT, version TEXT, channel TEXT,
   hostname TEXT, os TEXT, last_seen INTEGER, status TEXT
 );
+CREATE TABLE IF NOT EXISTS login_attempts(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ip TEXT, username TEXT, ok INTEGER, created_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS asset_checks(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  app TEXT, version TEXT, name TEXT,
+  expected TEXT, actual TEXT, size INTEGER,
+  result TEXT, checked_at INTEGER,
+  UNIQUE(app, version, name)
+);
+CREATE INDEX IF NOT EXISTS idx_dl_created ON downloads(created_at);
+CREATE INDEX IF NOT EXISTS idx_act_created ON activities(created_at);
+CREATE INDEX IF NOT EXISTS idx_login_created ON login_attempts(created_at);
 """
+
+# 幂等迁移：给既有表补列（SQLite 不支持 ADD COLUMN IF NOT EXISTS）
+_MIGRATIONS = (
+    ("assets", "verified_at", "INTEGER"),
+    ("assets", "state", "TEXT DEFAULT 'discovered'"),
+    ("releases", "manifest_cached", "INTEGER DEFAULT 0"),
+)
+
+
+def _migrate():
+    for table, col, decl in _MIGRATIONS:
+        try:
+            cols = [r[1] for r in _db_conn.execute("PRAGMA table_info({})".format(table))]
+            if col not in cols:
+                _db_conn.execute("ALTER TABLE {} ADD COLUMN {} {}".format(table, col, decl))
+        except Exception as e:
+            log.warning("[migrate] %s.%s 跳过: %s", table, col, e)
+    _db_conn.commit()
 
 
 def _db_init():
@@ -219,6 +310,7 @@ def _db_init():
         pass
     _db_conn.executescript(SCHEMA)
     _db_conn.commit()
+    _migrate()
 
 
 def db_exec(sql, params=()):
@@ -252,11 +344,33 @@ def upsert_release(app, version, channel, tag, name, published_at, prerelease, s
 def upsert_asset(app, version, name, size, cached):
     with _db_lock:
         _db_conn.execute(
-            "INSERT INTO assets(app,version,name,size,cached,cached_at) VALUES(?,?,?,?,?,?) "
+            "INSERT INTO assets(app,version,name,size,cached,cached_at,state) VALUES(?,?,?,?,?,?,?) "
             "ON CONFLICT(app,version,name) DO UPDATE SET size=excluded.size,"
             "cached=excluded.cached,cached_at=excluded.cached_at",
             (app, version, name, size, 1 if cached else 0,
-             int(time.time()) if cached else None))
+             int(time.time()) if cached else None,
+             "cached" if cached else "discovered"))
+        _db_conn.commit()
+
+
+def record_login_attempt(ip, username, ok):
+    with _db_lock:
+        _db_conn.execute(
+            "INSERT INTO login_attempts(ip,username,ok,created_at) VALUES(?,?,?,?)",
+            (ip, username, 1 if ok else 0, int(time.time())))
+        _db_conn.commit()
+
+
+def record_asset_check(app, version, name, expected, actual, size, result):
+    with _db_lock:
+        _db_conn.execute(
+            "INSERT INTO asset_checks(app,version,name,expected,actual,size,result,checked_at) "
+            "VALUES(?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(app,version,name) DO UPDATE SET expected=excluded.expected,"
+            "actual=excluded.actual,size=excluded.size,result=excluded.result,checked_at=excluded.checked_at",
+            (app, version, name, expected, actual, size, result, int(time.time())))
+        _db_conn.execute("UPDATE assets SET verified_at=?, state=? WHERE app=? AND version=? AND name=?",
+                         (int(time.time()), result, app, version, name))
         _db_conn.commit()
 
 
@@ -356,8 +470,14 @@ class App:
             h.update(extra)
         return h
 
-    def get_release_meta(self):
-        """返回 (release_dict, stale_bool)。优先内存缓存；未命中打 GitHub；失败回退磁盘。"""
+    def get_release_meta(self, channel=None):
+        """返回 (release_dict, stale_bool)。优先内存缓存；未命中打 GitHub；失败回退磁盘。
+        指定 channel 时从发布列表里挑该渠道的最新版。"""
+        channel = _normalize_channel(channel) if channel else None
+        if channel and channel != "stable":
+            rel = self._latest_for_channel(channel)
+            if rel:
+                return rel, False
         now = time.time()
         if self._cache["data"] and now - self._cache["ts"] < CACHE_TTL:
             return self._cache["data"], self._cache["stale"]
@@ -374,6 +494,19 @@ class App:
                 return data, True
             except Exception:
                 return None, True
+
+    def _latest_for_channel(self, channel):
+        """从发布列表里挑指定渠道的最新一版；找不到则回退 stable。"""
+        try:
+            lst = self.get_releases_list(per_page=30)
+        except Exception:
+            return None
+        cands = [r for r in (lst or [])
+                 if not r.get("draft") and _channel_of(r) == channel]
+        if not cands and channel != "stable":
+            cands = [r for r in (lst or [])
+                     if not r.get("draft") and _channel_of(r) == "stable"]
+        return cands[0] if cands else None
 
     def _persist_release(self, rel):
         try:
@@ -541,12 +674,25 @@ def _record_download(app_id, name, handler, status, bytes_sent):
         pass
 
 
-def _auth_token(handler):
+def _req_channel(handler):
+    """从请求中取 channel 参数（?channel=beta / X-Update-Channel 头）。"""
     q = parse_qs(urlparse(handler.path).query)
-    t = q.get("token", [None])[0]
-    if not t:
-        t = handler.headers.get("X-Access-Token")
-    return t
+    c = q.get("channel", [None])[0] or handler.headers.get("X-Update-Channel")
+    return _normalize_channel(c) if c else None
+
+
+def _auth_token(handler):
+    """取访问令牌。优先级：Authorization: Bearer > X-Access-Token > ?token=（向后兼容）。"""
+    authz = handler.headers.get("Authorization", "")
+    if authz[:7].lower() == "bearer ":
+        t = authz[7:].strip()
+        if t:
+            return t
+    t = handler.headers.get("X-Access-Token")
+    if t:
+        return t.strip()
+    q = parse_qs(urlparse(handler.path).query)
+    return q.get("token", [None])[0]
 
 
 def _check_auth(handler):
@@ -583,6 +729,99 @@ def _enroll_mode():
 
 
 # ---------------------------------------------------------------------------
+# 渠道（#4）：stable / beta / dev
+# ---------------------------------------------------------------------------
+_CHANNEL_LABEL = {"stable": "稳定版", "beta": "测试版", "dev": "开发版",
+                  "prerelease": "预发布", "unknown": "未知"}
+
+
+def _channel_label(c):
+    return _CHANNEL_LABEL.get(c or "unknown", c or "未知")
+
+
+def _channel_of(rel):
+    """从 GitHub release 推断渠道。优先看 tag 后缀，其次看 prerelease 标记。"""
+    tag = str((rel or {}).get("tag_name") or "").lower()
+    name = str((rel or {}).get("name") or "").lower()
+    hay = tag + " " + name
+    # 优先 dev 关键词（nightly/edge 等强指向开发版）
+    for kw in ("nightly", "edge", "-dev", ".dev", "dev-"):
+        if kw in hay:
+            return "dev"
+    for kw in ("beta", "alpha", "rc", "preview", "pre-release", "prerelease"):
+        if kw in hay:
+            return "beta"
+    if (rel or {}).get("prerelease"):
+        return "beta"
+    if (rel or {}).get("draft"):
+        return "dev"
+    return "stable"
+
+
+def _normalize_channel(c):
+    c = (c or "").strip().lower()
+    if c in CHANNELS:
+        return c
+    if c in ("prerelease", "preview"):
+        return "beta"
+    if c in ("alpha", "rc", "test", "testing"):
+        return "beta"
+    if c in ("nightly", "edge", "main", "trunk"):
+        return "dev"
+    return DEFAULT_CHANNEL if DEFAULT_CHANNEL in CHANNELS else "stable"
+
+
+# ---------------------------------------------------------------------------
+# 发布状态机（#5）
+# ---------------------------------------------------------------------------
+STAGES = ("discovered", "cached", "verified", "published")
+STAGE_CN = {"discovered": "已发现", "cached": "已缓存",
+            "verified": "已校验", "published": "已发布", "failed": "失败"}
+
+
+def _stage_index(state):
+    try:
+        return STAGES.index(state)
+    except ValueError:
+        return 0
+
+
+def _release_stage(app_id, version):
+    """计算该发布的状态机阶段与每阶段完成情况。"""
+    _, rows = db_query(
+        "SELECT name,cached,verified_at FROM assets WHERE app=? AND version=?", (app_id, version))
+    total = len(rows)
+    cached = sum(1 for r in rows if r[1])
+    verified = sum(1 for r in rows if r[2])
+    if total == 0:
+        stage = "discovered"
+    elif cached < total:
+        stage = "cached" if cached > 0 else "discovered"
+    elif verified < total:
+        stage = "cached"
+    else:
+        stage = "published" if _manifest_cached(app_id, version) else "verified"
+    steps = [
+        {"key": "discovered", "label": "已发现", "done": True},
+        {"key": "cached", "label": "已缓存", "done": cached == total and total > 0,
+         "detail": "{}/{}".format(cached, total)},
+        {"key": "verified", "label": "已校验", "done": verified == total and total > 0,
+         "detail": "{}/{}".format(verified, total)},
+        {"key": "published", "label": "已发布", "done": stage == "published"},
+    ]
+    return {"stage": stage, "label": STAGE_CN.get(stage, stage),
+            "current": _stage_index(stage), "steps": steps,
+            "assets_total": total, "assets_cached": cached, "assets_verified": verified}
+
+
+def _manifest_cached(app_id, version):
+    app = APPS.get(app_id)
+    if not app:
+        return False
+    return os.path.exists(app.asset_cache_path("version.json"))
+
+
+# ---------------------------------------------------------------------------
 # 同步 Worker（后台自动同步 + 写入 SQLite）
 # ---------------------------------------------------------------------------
 def _sync_app(app):
@@ -590,7 +829,7 @@ def _sync_app(app):
     if rel:
         ver = rel.get("tag_name") or "unknown"
         pre = bool(rel.get("prerelease"))
-        chan = "prerelease" if pre else "stable"
+        chan = _channel_of(rel)
         upsert_release(app.app_id, ver, chan, rel.get("tag_name"), rel.get("name"),
                       rel.get("published_at"), pre)
         for a in rel.get("assets", []):
@@ -603,9 +842,9 @@ def _sync_app(app):
         for r in lst or []:
             v = r.get("tag_name") or "unknown"
             pre = bool(r.get("prerelease"))
-            chan = "prerelease" if pre else "stable"
+            chan = _channel_of(r)
             upsert_release(app.app_id, v, chan, r.get("tag_name"), r.get("name"),
-                          r.get("published_at"), pre)
+                           r.get("published_at"), pre)
             for a in r.get("assets", []):
                 nm = a.get("name")
                 if not nm:
@@ -726,6 +965,64 @@ def _esc(s):
 
 
 # ---------------------------------------------------------------------------
+# 公共 UI 组件
+# ---------------------------------------------------------------------------
+def _disk_alert_html():
+    d = _disk_alert()
+    if d["level"] == "ok":
+        return ""
+    cls = "crit" if d["level"] == "crit" else "warn"
+    return ('<div class="alert {}"><span class="dot"></span><span>{}</span></div>'
+            .format(cls, _esc(d["message"])))
+
+
+def _stages_html(app_id, version):
+    st = _release_stage(app_id, version)
+    cur = st["current"]
+    parts = []
+    for i, s in enumerate(st["steps"]):
+        cls = "stage done" if s["done"] else ("stage now" if i == cur else "stage")
+        detail = ' <span style="color:var(--muted)">{}</span>'.format(_esc(s["detail"])) \
+            if s.get("detail") else ""
+        parts.append('<div class="{}"><span class="dot"></span><span>{}{}</span></div>'
+                     .format(cls, _esc(s["label"]), detail))
+        if i < len(st["steps"]) - 1:
+            parts.append('<div class="stage-sep{}"></div>'.format(" done" if s["done"] else ""))
+    return ('<div class="card"><h2>发布状态机</h2><div class="stages">{}</div>'
+            '<div class="row" style="margin-top:14px"><span class="k">当前阶段</span>'
+            '<span class="v">{}</span></div>'
+            '<div class="row"><span class="k">资产就绪</span><span class="v">'
+            '缓存 {}/{} · 校验 {}/{}</span></div></div>').format(
+        "".join(parts), _esc(st["label"]),
+        st["assets_cached"], st["assets_total"], st["assets_verified"], st["assets_total"])
+
+
+def _rank_html(data, limit=10):
+    if not data:
+        return '<div class="empty">暂无下载记录。</div>'
+    out = []
+    for r in data[:limit]:
+        out.append('<div><div class="rank-row"><div class="mono" style="word-break:break-all">{}</div>'
+                   '<div class="rank-n">{}</div><div class="rank-b">{}</div></div>'
+                   '<div class="bar"><i style="width:{}%"></i></div></div>'.format(
+                       _esc(r["label"]), r["count"], _fmt_bytes(r.get("bytes")), r["pct"]))
+    return "".join(out)
+
+
+def _ago(ts):
+    if not ts:
+        return "从未"
+    s = int(time.time()) - int(ts)
+    if s < 60:
+        return "{} 秒前".format(s)
+    if s < 3600:
+        return "{} 分钟前".format(s // 60)
+    if s < 86400:
+        return "{} 小时前".format(s // 3600)
+    return "{} 天前".format(s // 86400)
+
+
+# ---------------------------------------------------------------------------
 # 数据层（供控制台 / JSON API 共用）
 # ---------------------------------------------------------------------------
 def _overview_data():
@@ -755,17 +1052,57 @@ def _overview_data():
     }
 
 
-def _releases_data():
-    _, rows = db_query(
-        "SELECT app,version,channel,published_at,status,"
-        "(SELECT COUNT(*) FROM assets a WHERE a.app=releases.app AND a.version=releases.version),"
-        "(SELECT COUNT(*) FROM assets a WHERE a.app=releases.app AND a.version=releases.version AND a.cached=1) "
-        "FROM releases ORDER BY published_at DESC LIMIT 100")
+def _releases_data(channel=None):
+    q = ("SELECT app,version,channel,published_at,status,"
+         "(SELECT COUNT(*) FROM assets a WHERE a.app=releases.app AND a.version=releases.version),"
+         "(SELECT COUNT(*) FROM assets a WHERE a.app=releases.app AND a.version=releases.version AND a.cached=1),"
+         "(SELECT COUNT(*) FROM assets a WHERE a.app=releases.app AND a.version=releases.version "
+         " AND a.verified_at IS NOT NULL) "
+         "FROM releases")
+    params = ()
+    if channel and channel in CHANNELS:
+        q += " WHERE channel=?"
+        params = (channel,)
+    q += " ORDER BY published_at DESC LIMIT 100"
+    _, rows = db_query(q, params)
     out = []
     for r in rows:
         out.append({"app": r[0], "version": r[1], "channel": r[2], "published_at": r[3],
-                    "status": r[4], "assets": r[5], "cached_assets": r[6]})
+                    "status": r[4], "assets": r[5], "cached_assets": r[6],
+                    "verified_assets": r[7]})
     return out
+
+
+def _releases_html(channel=None):
+    rows = _releases_data(channel)
+    nav = '<div class="filters">' + "".join(
+        '<a class="{}" href="/releases{}">{}</a>'.format(
+            "on" if (channel or "all") == k else "", "" if k == "all" else "?channel=" + k, label)
+        for k, label in [("all", "全部渠道"), ("stable", "稳定版"),
+                         ("beta", "测试版"), ("dev", "开发版")]) + '</div>'
+    if not rows:
+        return nav + '<div class="empty">暂无发布记录。</div>'
+    body = []
+    for r in rows:
+        cached = r["cached_assets"]
+        total = r["assets"]
+        verified = r["verified_assets"]
+        if total and verified == total:
+            vb = _badge("已校验 {}/{}".format(verified, total), "ok")
+        elif total and cached == total:
+            vb = _badge("待校验", "warn")
+        else:
+            vb = _badge("缓存 {}/{}".format(cached, total), "warn" if cached else "mut")
+        body.append(
+            '<tr><td class="mono"><a href="/releases/{}/{}">{}</a></td>'
+            '<td>{}</td><td>{}</td><td class="mono">{}</td><td>{}</td></tr>'.format(
+                _esc(r["app"]), _esc(r["version"]), _esc(r["version"]),
+                _esc(r["app"]), _channel_badge(r["channel"]),
+                _fmt_dt(r["published_at"]), vb))
+    return nav + ('<table><thead><tr>'
+                  '<th class="mono">版本</th><th>应用</th><th>渠道</th>'
+                  '<th class="mono">发布于</th><th>资产状态</th>'
+                  '</tr></thead><tbody>{}</tbody></table>').format("".join(body))
 
 
 def _release_detail_data(app, ver):
@@ -789,11 +1126,12 @@ def _release_detail_data(app, ver):
 
 def _assets_data():
     _, rows = db_query(
-        "SELECT app,version,name,size,cached,cached_at FROM assets ORDER BY cached_at DESC, name LIMIT 300")
+        "SELECT app,version,name,size,cached,cached_at,verified_at FROM assets "
+        "ORDER BY cached_at DESC, name LIMIT 300")
     out = []
     for r in rows:
         out.append({"app": r[0], "version": r[1], "name": r[2], "size": r[3],
-                    "cached": bool(r[4]), "cached_at": r[5]})
+                    "cached": bool(r[4]), "cached_at": r[5], "verified_at": r[6]})
     return out
 
 
@@ -806,6 +1144,177 @@ def _activity_data(limit=250):
         out.append({"type": r[0], "client_id": r[1], "app": r[2],
                     "version": r[3], "message": r[4], "created_at": r[5]})
     return out
+
+
+# ---- 客户端（#1）----
+def _clients_data():
+    now = int(time.time())
+    _, rows = db_query(
+        "SELECT client_id,app,version,channel,hostname,os,last_seen FROM clients "
+        "ORDER BY last_seen DESC LIMIT 500")
+    out = []
+    _, rel_rows = db_query(
+        "SELECT app,version FROM releases WHERE channel='stable' ORDER BY published_at DESC")
+    latest = {}
+    for rr in rel_rows:
+        latest.setdefault(rr[0], rr[1])
+    for r in rows:
+        cid = r[0]
+        rel_ver = latest.get(r[1])
+        out.append({
+            "client_id": cid, "app": r[1], "version": r[2], "channel": r[3],
+            "hostname": r[4], "os": r[5], "last_seen": r[6],
+            "seen_ago": now - r[6] if r[6] else None,
+            "online": bool(r[6] and now - r[6] < 900),
+            "up_to_date": (rel_ver is None or r[2] == rel_ver),
+            "latest": rel_ver,
+        })
+    dist = {}
+    for c in out:
+        k = "{} {}".format(c["app"], c["version"])
+        dist[k] = dist.get(k, 0) + 1
+    return {"clients": out,
+            "total": len(out),
+            "online": sum(1 for c in out if c["online"]),
+            "outdated": sum(1 for c in out if not c["up_to_date"]),
+            "distribution": [{"label": k, "count": v}
+                             for k, v in sorted(dist.items(), key=lambda x: -x[1])]}
+
+
+def _client_by_app(app):
+    _, rows = db_query(
+        "SELECT app,MAX(version) FROM releases WHERE app=? GROUP BY app", (app,))
+    return rows[0][1] if rows else None
+
+
+# ---- 下载排行（#3）----
+def _download_rank(limit=20, days=None):
+    since = None
+    if days:
+        since = int(time.time()) - days * 86400
+    where = "WHERE created_at >= ?" if since else ""
+    params = (since,) if since else ()
+    _, by_app = db_query(
+        "SELECT app,COUNT(*),SUM(bytes) FROM downloads {} GROUP BY app "
+        "ORDER BY COUNT(*) DESC LIMIT ?".format(where), params + (limit,))
+    _, by_asset = db_query(
+        "SELECT asset,app,COUNT(*),SUM(bytes) FROM downloads {} GROUP BY asset,app "
+        "ORDER BY COUNT(*) DESC LIMIT ?".format(where), params + (limit,))
+    _, by_status = db_query(
+        "SELECT status,COUNT(*) FROM downloads {} GROUP BY status".format(where), params)
+    max_app = max([r[1] for r in by_app], default=0) or 1
+    max_asset = max([r[2] for r in by_asset], default=0) or 1
+    return {
+        "by_app": [{"app": r[0], "count": r[1], "bytes": r[2] or 0,
+                    "pct": int(r[1] * 100 / max_app)} for r in by_app],
+        "by_asset": [{"asset": r[0], "app": r[1], "count": r[2], "bytes": r[3] or 0,
+                      "pct": int(r[2] * 100 / max_asset)} for r in by_asset],
+        "by_status": [{"status": r[0], "count": r[1]} for r in by_status],
+        "days": days,
+    }
+
+
+# ---- 资产校验（#6）----
+def _verify_assets(app_id=None, deep=True):
+    """重算缓存文件 SHA256，与清单 sha256 比对。结果写入 asset_checks / assets.verified_at。"""
+    q = "SELECT app,version,name,sha256,cached FROM assets"
+    params = ()
+    if app_id:
+        q += " WHERE app=?"
+        params = (app_id,)
+    _, rows = db_query(q, params)
+    checked, ok, bad, missing = 0, 0, 0, 0
+    details = []
+    for r in rows:
+        aid, ver, name, expected, cached = r[0], r[1], r[2], r[3], r[4]
+        app = APPS.get(aid)
+        if not app:
+            continue
+        path = app.asset_cache_path(name)
+        if not os.path.exists(path):
+            missing += 1
+            record_asset_check(aid, ver, name, expected, None, None, "missing")
+            continue
+        if not expected:
+            continue  # 清单未提供 sha256，跳过
+        actual = _sha256_file(path)
+        checked += 1
+        if actual and actual.lower() == str(expected).lower():
+            ok += 1
+            record_asset_check(aid, ver, name, expected, actual,
+                               os.path.getsize(path), "verified")
+        else:
+            bad += 1
+            record_asset_check(aid, ver, name, expected, actual,
+                               os.path.getsize(path), "mismatch")
+            details.append({"app": aid, "version": ver, "name": name})
+    if checked or bad or missing:
+        add_activity("verify", "校验完成：{} 通过 / {} 不符 / {} 缺失".format(ok, bad, missing),
+                     app=app_id)
+    return {"checked": checked, "verified": ok, "mismatch": bad, "missing": missing,
+            "bad": details}
+
+
+# ---- 磁盘预警（#9）----
+def _disk_alert():
+    cache_bytes = _cache_total_bytes()
+    du = None
+    try:
+        du = shutil.disk_usage(CACHE_DIR)
+    except Exception:
+        pass
+    level = "ok"
+    msg = ""
+    if cache_bytes >= DISK_CRIT_BYTES:
+        level = "crit"
+        msg = "缓存占用 {} 已达严重阈值，建议立即清理历史版本".format(_fmt_bytes(cache_bytes))
+    elif cache_bytes >= DISK_WARN_BYTES:
+        level = "warn"
+        msg = "缓存占用 {} 已超过预警阈值 {}".format(_fmt_bytes(cache_bytes),
+                                                  _fmt_bytes(DISK_WARN_BYTES))
+    free_pct = None
+    if du and du.total:
+        free_pct = int(du.free * 100 / du.total)
+        if free_pct <= 10 and level == "ok":
+            level = "warn"
+            msg = "磁盘剩余空间仅 {}%，请清理缓存".format(free_pct)
+    disk = {"total": du.total, "used": du.used, "free": du.free} if du else None
+    return {"level": level, "message": msg, "cache_bytes": cache_bytes,
+            "warn_bytes": DISK_WARN_BYTES, "crit_bytes": DISK_CRIT_BYTES,
+            "disk": disk, "free_pct": free_pct}
+
+
+def _prune_assets(app_id=None, keep_versions=2):
+    """清理旧版本资产：每个应用保留最近 keep_versions 个版本的已缓存资产。"""
+    removed, freed = 0, 0
+    targets = [app_id] if app_id and app_id in APPS else list(APP_ORDER)
+    for aid in targets:
+        _, rels = db_query(
+            "SELECT version FROM releases WHERE app=? AND channel='stable' "
+            "ORDER BY published_at DESC", (aid,))
+        keep = set(r[0] for r in rels[:keep_versions])
+        app = APPS[aid]
+        _, assets = db_query("SELECT name,version,size,cached FROM assets WHERE app=?", (aid,))
+        for name, ver, size, cached in assets:
+            if ver in keep or not cached:
+                continue
+            path = app.asset_cache_path(name)
+            if os.path.exists(path):
+                try:
+                    sz = os.path.getsize(path)
+                    os.remove(path)
+                    freed += sz
+                    removed += 1
+                except OSError:
+                    pass
+            try:
+                db_exec("UPDATE assets SET cached=0, cached_at=NULL, state='discovered' "
+                        "WHERE app=? AND version=? AND name=?", (aid, ver, name))
+            except Exception:
+                pass
+    if removed:
+        add_activity("prune", "清理旧版本资产 {} 个，释放 {}".format(removed, _fmt_bytes(freed)))
+    return {"removed": removed, "freed": freed, "freed_human": _fmt_bytes(freed)}
 
 
 # ---------------------------------------------------------------------------
@@ -894,6 +1403,35 @@ tr:hover td{background:var(--line-2)}
 .act .t{font-family:var(--mono);color:var(--muted);font-size:11.5px;white-space:nowrap}
 .act .m b{font-family:var(--mono);font-weight:700}
 .sha{font-family:var(--mono);font-size:11px;color:var(--muted);word-break:break-all;display:block;margin-top:4px;background:var(--line-2);padding:5px 9px;border-radius:7px}
+/* 状态机进度 */
+.stages{display:flex;align-items:center;gap:0;margin:6px 0 2px;flex-wrap:wrap}
+.stage{display:flex;align-items:center;gap:8px}
+.stage .dot{width:10px;height:10px;box-shadow:none;background:var(--line)}
+.stage.done .dot{background:var(--ok)}
+.stage.now .dot{background:var(--accent);box-shadow:0 0 0 4px var(--accent-soft)}
+.stage span{font-size:12px;color:var(--muted);white-space:nowrap}
+.stage.done span,.stage.now span{color:var(--ink-2)}
+.stage-sep{width:26px;height:2px;background:var(--line);margin:0 8px}
+.stage-sep.done{background:var(--ok)}
+/* 排行条 */
+.rank-row{display:grid;grid-template-columns:1fr 70px 90px;gap:12px;align-items:center;padding:9px 0;border-bottom:1px solid var(--line-2)}
+.rank-row:last-child{border-bottom:none}
+.bar{height:7px;border-radius:4px;background:var(--line-2);overflow:hidden;margin-top:5px}
+.bar>i{display:block;height:100%;background:var(--accent);border-radius:4px}
+.rank-n{font-family:var(--mono);font-size:13px;font-weight:700;text-align:right}
+.rank-b{font-family:var(--mono);font-size:12px;color:var(--muted);text-align:right}
+/* 告警条 */
+.alert{display:flex;align-items:center;gap:10px;padding:12px 16px;border-radius:var(--radius);margin-bottom:18px;font-size:13px;border:1px solid}
+.alert.warn{background:var(--warn-soft);border-color:rgba(217,135,11,.3);color:#8A5A06}
+.alert.crit{background:var(--err-soft);border-color:rgba(224,58,58,.3);color:#9B1C1C}
+.alert .dot{box-shadow:none;flex:none}
+.alert.warn .dot{background:var(--warn)}
+.alert.crit .dot{background:var(--err)}
+/* 筛选条 */
+.filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+.filters a{padding:6px 13px;border-radius:999px;border:1px solid var(--line);font-size:12.5px;color:var(--ink-2);background:var(--panel)}
+.filters a:hover{background:var(--line-2);text-decoration:none}
+.filters a.on{background:var(--ink);color:#fff;border-color:var(--ink)}
 """
 
 PAGE_JS = """
@@ -965,14 +1503,17 @@ _ICONS = {
   "overview": '<svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>',
   "releases": '<svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7l9-4 9 4v10l-9 4-9-4z"/><path d="M3 7l9 4 9-4M12 11v10"/></svg>',
   "assets": '<svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 16V8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>',
+  "clients": '<svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>',
+  "downloads": '<svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v12M7 11l5 5 5-5"/><path d="M4 20h16"/></svg>',
   "activity": '<svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>',
   "system": '<svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3.2"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.5 5.5l2 2M16.5 16.5l2 2M18.5 5.5l-2 2M7.5 16.5l-2 2"/></svg>'
 }
 
 
 def _nav(active):
-    items = [("overview", "概览"), ("releases", "发布"),
-             ("assets", "资产"), ("activity", "活动"), ("system", "系统")]
+    items = [("overview", "概览"), ("releases", "发布"), ("assets", "资产"),
+             ("clients", "客户端"), ("downloads", "下载排行"),
+             ("activity", "活动"), ("system", "系统")]
     out = []
     for k, label in items:
         cls = " navitem active" if k == active else " navitem"
@@ -980,7 +1521,8 @@ def _nav(active):
     return "\n".join(out)
 
 
-_CRUMB_CN = {"overview": "概览", "releases": "发布", "assets": "资产", "activity": "活动", "system": "系统"}
+_CRUMB_CN = {"overview": "概览", "releases": "发布", "assets": "资产",
+             "clients": "客户端", "downloads": "下载排行", "activity": "活动", "system": "系统"}
 _STATUS_CN = {"PUBLISHED": "已发布", "VERIFIED": "已校验", "CACHED": "已缓存",
               "SYNCED": "已同步", "DISCOVERED": "已发现", "FAILED": "失败"}
 
@@ -990,9 +1532,9 @@ def _badge(text, kind="ok"):
 
 
 def _channel_badge(channel):
-    if channel == "prerelease":
-        return _badge("预发布", "warn")
-    return _badge("稳定版", "ok")
+    kinds = {"stable": "ok", "beta": "warn", "dev": "err",
+             "prerelease": "warn", "unknown": "mut"}
+    return _badge(_channel_label(channel), kinds.get(channel, "mut"))
 
 
 def _status_badge(status):
@@ -1050,28 +1592,8 @@ def _overview_html():
             '<h1 class="title">Cloak 更新镜像</h1>'
             '<p class="lede">Cloak 应用的私有发布与更新基础设施。GitHub Releases 是源头 —— '
             '镜像负责同步、缓存、校验、分发与审计。</p></div>')
-    return hero + stats + '<div class="grid two" style="margin-top:18px">' + lat + sync + '</div>' + act
-
-
-def _releases_html():
-    rows = _releases_data()
-    if not rows:
-        return '<div class="empty">暂无发布记录，请等待后台同步或手动刷新。</div>'
-    body = []
-    for r in rows:
-        cached = r["cached_assets"]
-        total = r["assets"]
-        cache_badge = _badge("已缓存 {}/{}".format(cached, total), "ok" if cached == total else "warn")
-        body.append(
-            '<tr><td class="mono"><a href="/releases/{}/{}">{}</a></td>'
-            '<td>{}</td><td>{}</td><td class="mono">{}</td><td>{}</td><td>{}</td></tr>'.format(
-                _esc(r["app"]), _esc(r["version"]), _esc(r["version"]),
-                _esc(r["app"]), _channel_badge(r["channel"]),
-                _fmt_dt(r["published_at"]), cache_badge, _status_badge(r["status"])))
-    return ('<table><thead><tr>'
-            '<th class="mono">版本</th><th>应用</th><th>渠道</th>'
-            '<th class="mono">发布于</th><th>缓存</th><th>状态</th>'
-            '</tr></thead><tbody>{}</tbody></table>').format("".join(body))
+    return _disk_alert_html() + hero + stats + \
+        '<div class="grid two" style="margin-top:18px">' + lat + sync + '</div>' + act
 
 
 def _release_detail_html(app, version):
@@ -1094,7 +1616,8 @@ def _release_detail_html(app, version):
             '<tr><td colspan="4"><span class="sha">SHA256 {}</span></td></tr>'.format(
                 _esc(a["name"]), _fmt_bytes(a["size"]), cache_b, vrf,
                 sha if sha else "—"))
-    return ('<div class="card"><h2>{}</h2>'
+    return (_stages_html(app, version) +
+            '<div class="card"><h2>{}</h2>'
             '<div class="row"><span class="k">应用</span><span class="v">{}</span></div>'
             '<div class="row"><span class="k">渠道</span><span class="v">{}</span></div>'
             '<div class="row"><span class="k">标签</span><span class="v">{}</span></div>'
@@ -1111,31 +1634,116 @@ def _release_detail_html(app, version):
 
 def _assets_html():
     rows = _assets_data()
+    d = _disk_alert()
+    warn = ('<div class="alert {}"><span class="dot"></span><span>{}</span></div>'
+            .format("crit" if d["level"] == "crit" else "warn", _esc(d["message"]))
+            ) if d["level"] != "ok" else ""
+    checks = ""
+    try:
+        _, ck = db_query(
+            "SELECT app,version,name,result,checked_at FROM asset_checks "
+            "ORDER BY checked_at DESC LIMIT 20")
+        if ck:
+            checks = ('<div class="section-title">最近校验</div><table><thead><tr>'
+                      '<th class="mono">资产</th><th>应用</th><th class="mono">版本</th>'
+                      '<th>结果</th><th class="mono">校验时间</th></tr></thead><tbody>'
+                      + "".join('<tr><td class="mono">{}</td><td>{}</td><td class="mono">{}</td>'
+                                '<td>{}</td><td class="mono">{}</td></tr>'.format(
+                                    _esc(r[2]), _esc(r[0]), _esc(r[1]),
+                                    _badge({"verified": "通过", "mismatch": "不符",
+                                            "missing": "缺失"}.get(r[3], r[3]),
+                                           "ok" if r[3] == "verified" else "err"),
+                                    _fmt_time(r[4])) for r in ck)
+                      + '</tbody></table>')
+    except Exception:
+        pass
     if not rows:
-        return '<div class="empty">暂无缓存资产。</div>'
+        return warn + '<div class="empty">暂无缓存资产。</div>' + checks
     body = []
     for r in rows:
         cb = _badge("已缓存", "ok") if r["cached"] else _badge("缺失", "warn")
+        vb = _badge("已校验", "ok") if r.get("verified_at") else _badge("未校验", "mut")
         body.append(
             '<tr><td class="mono">{}</td><td>{}</td><td class="mono">{}</td>'
-            '<td class="mono">{}</td><td>{}</td><td class="mono">{}</td></tr>'.format(
+            '<td class="mono">{}</td><td>{}</td><td>{}</td><td class="mono">{}</td></tr>'.format(
                 _esc(r["name"]), _esc(r["app"]), _esc(r["version"]),
-                _fmt_bytes(r["size"]), cb, _fmt_time(r["cached_at"])))
-    refresh = ('<div class="section-title">操作</div>'
-               '<form class="rf" method="post" action="/admin/refresh?app={}">'
-               '<input type="text" name="admin_token" placeholder="管理员令牌" autocomplete="off">'
-               '<button type="submit">刷新</button></form>'
-               '<p class="lede" style="margin-top:10px">缓存列展示文件的实时 SHA256（服务端计算），'
-               '可在资产清单页查看。刷新需管理员令牌。</p>').format(_esc(DEFAULT_APP_ID))
-    return ('<table><thead><tr><th class="mono">名称</th><th>应用</th><th class="mono">版本</th>'
-            '<th class="mono">大小</th><th>缓存</th><th class="mono">缓存时间</th></tr></thead>'
-            '<tbody>{}</tbody></table>').format("".join(body)) + refresh
+                _fmt_bytes(r["size"]), cb, vb, _fmt_time(r["cached_at"])))
+    ops = ('<div class="section-title">操作</div>'
+           '<div class="grid two">'
+           '<form class="rf" method="post" action="/admin/verify">'
+           '<input type="text" name="admin_token" placeholder="管理员令牌" autocomplete="off">'
+           '<button type="submit">校验完整性</button></form>'
+           '<form class="rf" method="post" action="/admin/prune">'
+           '<input type="text" name="admin_token" placeholder="管理员令牌" autocomplete="off">'
+           '<input type="number" name="keep" value="2" min="1" max="10" style="width:80px">'
+           '<button type="submit">清理旧版本</button></form></div>'
+           '<p class="lede" style="margin-top:10px">「校验完整性」会重算缓存文件的 SHA256 '
+           '并与清单比对；「清理旧版本」保留最近 N 个稳定版，删除更早的已缓存资产。'
+           '当前缓存占用 {}（预警 {} / 严重 {}）。</p>').format(
+        _fmt_bytes(d["cache_bytes"]), _fmt_bytes(d["warn_bytes"]), _fmt_bytes(d["crit_bytes"]))
+    return warn + ('<table><thead><tr><th class="mono">名称</th><th>应用</th>'
+                   '<th class="mono">版本</th><th class="mono">大小</th><th>缓存</th>'
+                   '<th>校验</th><th class="mono">缓存时间</th></tr></thead>'
+                   '<tbody>{}</tbody></table>').format("".join(body)) + ops + checks
 
 
-def _activity_html():
-    rows = _activity_data(250)
+def _clients_html():
+    d = _clients_data()
+    head = ('<div class="grid stats">'
+            '<div class="card stat"><div class="sv">{}</div><div class="sl">已登记</div></div>'
+            '<div class="card stat"><div class="sv">{}</div><div class="sl">15 分钟内活跃</div></div>'
+            '<div class="card stat"><div class="sv">{}</div><div class="sl">版本落后</div></div>'
+            '<div class="card stat"><div class="sv">{}</div><div class="sl">应用数</div></div>'
+            '</div>').format(d["total"], d["online"], d["outdated"], len(APPS))
+    if not d["clients"]:
+        return head + '<div class="empty">尚无客户端登记。客户端启动时会自动向镜像签到上报。</div>'
+    rows = []
+    for c in d["clients"]:
+        if c["up_to_date"]:
+            st = _badge("已是最新", "ok")
+        else:
+            st = _badge("可更新至 " + str(c["latest"] or "—"), "warn")
+        on = _badge("在线", "ok") if c["online"] else _badge(_ago(c["last_seen"]), "mut")
+        rows.append(
+            '<tr><td class="mono">{}</td><td>{}</td><td class="mono">{}</td>'
+            '<td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>'.format(
+                _esc(c["client_id"]), _esc(c["hostname"] or "—"), _esc(c["version"]),
+                _esc(c["app"]), _channel_badge(c["channel"]), on, st))
+    dist = "".join('<span class="tag" style="margin-right:6px">{} × {}</span>'.format(
+        _esc(x["label"]), x["count"]) for x in d["distribution"])
+    return head + ('<div class="section-title">版本分布</div><div>{}</div>'
+                   '<div class="section-title">客户端列表</div>'
+                   '<table><thead><tr><th class="mono">客户端</th><th>主机名</th>'
+                   '<th class="mono">版本</th><th>应用</th><th>渠道</th><th>最近活动</th>'
+                   '<th>更新状态</th></tr></thead><tbody>{}</tbody></table>').format(
+        dist or '<span class="mut">—</span>', "".join(rows))
+
+
+_ACT_FILTERS = [("all", "全部"), ("download", "下载"), ("sync", "同步"),
+                ("checkin", "签到"), ("verify", "校验"), ("security", "安全"),
+                ("auth", "登录"), ("prune", "清理")]
+
+
+def _activity_html(kind=None):
+    kinds = dict(_ACT_FILTERS)
+    rows = _activity_data(300)
+    if kind and kind in kinds and kind != "all":
+        rows = [r for r in rows if r["type"] == kind]
+    nav = '<div class="filters">' + "".join(
+        '<a class="{}" href="/activity{}">{}</a>'.format(
+            "on" if (kind or "all") == k else "", "" if k == "all" else "?type=" + k, label)
+        for k, label in _ACT_FILTERS) + '</div>'
+    head = ('<div class="grid stats">'
+            '<div class="card stat"><div class="sv">{}</div><div class="sl">记录总数</div></div>'
+            '<div class="card stat"><div class="sv">{}</div><div class="sl">下载</div></div>'
+            '<div class="card stat"><div class="sv">{}</div><div class="sl">同步</div></div>'
+            '<div class="card stat"><div class="sv">{}</div><div class="sl">安全事件</div></div>'
+            '</div>').format(len(rows),
+                              sum(1 for r in rows if r["type"] == "download"),
+                              sum(1 for r in rows if r["type"] == "sync"),
+                              sum(1 for r in rows if r["type"] in ("security", "auth")))
     if not rows:
-        return '<div class="empty">暂无活动记录。</div>'
+        return head + nav + '<div class="empty">暂无活动记录。</div>'
     body = []
     for r in rows:
         t = _fmt_time(r["created_at"])
@@ -1144,25 +1752,62 @@ def _activity_html():
             msg += ' <b>· {}</b>'.format(_esc(r["app"]))
         if r["version"]:
             msg += ' <b>{}</b>'.format(_esc(r["version"]))
-        body.append('<div class="act"><div class="t">{}</div><div class="m">{}</div></div>'.format(t, msg))
-    return "".join(body)
+        body.append('<div class="act"><div class="t">{}</div><div class="m">'
+                    '<span class="tag">{}</span> {}</div></div>'.format(
+                        t, _esc(r["type"]), msg))
+    return head + nav + "".join(body)
+
+
+def _downloads_html():
+    rank = _download_rank(limit=15)
+    return ('<div class="grid two">'
+            '<div class="card"><h2>按应用</h2>{}</div>'
+            '<div class="card"><h2>按资产</h2>{}</div></div>'
+            '<div class="section-title">响应状态分布</div>'
+            '<div class="card">{}</div>').format(
+        _rank_html([{"label": r["app"], "count": r["count"], "bytes": r["bytes"], "pct": r["pct"]}
+                    for r in rank["by_app"]]),
+        _rank_html([{"label": r["asset"], "count": r["count"], "bytes": r["bytes"], "pct": r["pct"]}
+                    for r in rank["by_asset"]]),
+        "".join('<div class="row"><span class="k">HTTP {}</span><span class="v">{} 次</span></div>'
+                .format(r["status"], r["count"]) for r in rank["by_status"])
+        or '<div class="empty">暂无数据</div>')
 
 
 def _system_html():
     st = gather_status()
-    disk = st.get("disk")
     _, s = db_query("SELECT MAX(synced_at) FROM releases")
     last_sync = s[0][0] if s and s[0][0] else 0
     gh = _badge("在线", "ok") if (last_sync and (int(time.time()) - last_sync) < SYNC_INTERVAL * 2 + 120) \
         else _badge("未知", "warn")
     admin_on = _badge("已启用", "ok") if ADMIN_TOKEN else _badge("已禁用", "err")
     enroll = _badge(_enroll_mode(), "mut")
-    disk_html = ("<div class=\"row\"><span class=\"k\">总量</span><span class=\"v\">{}</span></div>"
+    disk_alert = _disk_alert()
+    du = disk_alert.get("disk") or {}
+    disk_html = ("<div class=\"row\"><span class=\"k\">缓存占用</span><span class=\"v\">{}</span></div>"
+                 "<div class=\"row\"><span class=\"k\">总量</span><span class=\"v\">{}</span></div>"
                  "<div class=\"row\"><span class=\"k\">已用</span><span class=\"v\">{}</span></div>"
-                 "<div class=\"row\"><span class=\"k\">可用</span><span class=\"v\">{}</span></div>").format(
-        _fmt_bytes(disk["total"]), _fmt_bytes(disk["used"]), _fmt_bytes(disk["free"])) if disk else \
+                 "<div class=\"row\"><span class=\"k\">可用</span><span class=\"v\">{}</span></div>"
+                 "<div class=\"row\"><span class=\"k\">预警阈值</span><span class=\"v\">{}</span></div>").format(
+        _fmt_bytes(disk_alert["cache_bytes"]), _fmt_bytes(du.get("total")), _fmt_bytes(du.get("used")),
+        _fmt_bytes(du.get("free")), _fmt_bytes(disk_alert["warn_bytes"])) if du else \
         '<div class="empty">无法读取磁盘信息</div>'
-    return ('<div class="grid two">'
+    _, chan_rows = db_query(
+        "SELECT channel,COUNT(*) FROM releases GROUP BY channel ORDER BY COUNT(*) DESC")
+    chan_html = "".join('<div class="row"><span class="k">{}</span><span class="v">{} 个发布</span></div>'
+                        .format(_channel_label(r[0]), r[1]) for r in chan_rows) \
+        or '<div class="empty">暂无数据</div>'
+    _, la = db_query(
+        "SELECT COUNT(*),SUM(CASE WHEN ok=0 THEN 1 ELSE 0 END) FROM login_attempts "
+        "WHERE created_at >= ?", (int(time.time()) - 86400,))
+    login_total = la[0][0] if la else 0
+    login_fail = la[0][1] if la and la[0][1] else 0
+    locked = _login_locked_ips()
+    lock_html = ('<div class="row"><span class="k">当前锁定 IP</span><span class="v">{} 个</span></div>'
+                 .format(len(locked))) if locked else \
+        '<div class="row"><span class="k">当前锁定 IP</span><span class="v">无</span></div>'
+    return _disk_alert_html() + (
+            '<div class="grid two">'
             '<div class="card"><h2>服务</h2>'
             '<div class="row"><span class="k">版本</span><span class="v">{}</span></div>'
             '<div class="row"><span class="k">运行时长</span><span class="v">{}</span></div>'
@@ -1178,11 +1823,14 @@ def _system_html():
             '<div class="card"><h2>安全</h2>'
             '<div class="row"><span class="k">已注册令牌</span><span class="v">{}</span></div>'
             '<div class="row"><span class="k">注册策略</span><span class="v">{}</span></div>'
-            '<div class="row"><span class="k">管理员刷新</span><span class="v">{}</span></div></div>'
-            '</div>').format(
+            '<div class="row"><span class="k">管理员刷新</span><span class="v">{}</span></div>'
+            '<div class="row"><span class="k">24h 登录尝试</span><span class="v">{} 次（失败 {}）</span></div>'
+            '{}</div></div>'
+            '<div class="card" style="margin-top:16px"><h2>渠道</h2>{}</div>').format(
         SERVER_VERSION, _fmt_uptime(st["uptime_sec"]), _esc(sys.version.split()[0]),
         st["port"], st["app_count"], disk_html, gh, _fmt_time(last_sync), SYNC_INTERVAL,
-        st["registered_tokens"], enroll, admin_on)
+        st["registered_tokens"], enroll, admin_on, login_total, login_fail,
+        lock_html, chan_html)
 
 
 # ---------------------------------------------------------------------------
@@ -1243,17 +1891,48 @@ class Handler(BaseHTTPRequestHandler):
         self._access_log(200, "login-page")
 
     def _handle_login_post(self):
+        ip = _client_ip(self)
+        locked, retry = _login_status(ip)
+        if locked:
+            log.warning("[auth] 登录被锁定 ip=%s retry=%ds", ip, retry)
+            try:
+                add_activity("security", "登录尝试被锁定（IP {}，{}s 后重试）".format(ip, retry))
+            except Exception:
+                pass
+            self._send(429, _login_html(error=True, note="尝试次数过多，请 {} 秒后再试".format(retry))
+                       .encode("utf-8"), "text/html; charset=utf-8",
+                       {"Retry-After": str(retry)})
+            self._access_log(429, "login-locked")
+            return
         form = self._post_form()
         user = (form.get("username", [None])[0] or "").strip()
         pwd = form.get("password", [None])[0] or ""
-        if user == CONSOLE_USER and CONSOLE_PASSWORD and hmac.compare_digest(pwd, CONSOLE_PASSWORD):
+        ok = bool(user == CONSOLE_USER and CONSOLE_PASSWORD
+                  and hmac.compare_digest(pwd, CONSOLE_PASSWORD))
+        _login_record(ip, ok)
+        try:
+            record_login_attempt(ip, user, ok)
+        except Exception:
+            pass
+        if ok:
             sid = _make_session(user)
-            log.info("[auth] 登录成功 user=%s ip=%s", user, _client_ip(self))
+            log.info("[auth] 登录成功 user=%s ip=%s", user, ip)
+            try:
+                add_activity("auth", "{} 登录控制台".format(user or ip))
+            except Exception:
+                pass
             self._send(302, b"", "text/html",
                        {"Location": "/", "Set-Cookie": _session_cookie(sid)})
             return
-        log.warning("[auth] 登录失败 user=%s ip=%s", user, _client_ip(self))
-        self._send(200, _login_html(error=True).encode("utf-8"), "text/html; charset=utf-8")
+        left = _login_fail_count(ip)
+        log.warning("[auth] 登录失败 user=%s ip=%s 剩余尝试=%s", user, ip, left)
+        try:
+            add_activity("security", "登录失败：用户名 {}（IP {}）".format(user or "-", ip))
+        except Exception:
+            pass
+        self._send(200, _login_html(error=True, note="还可尝试 {} 次".format(left) if left > 0 else None)
+                   .encode("utf-8"), "text/html; charset=utf-8")
+        self._access_log(401, "login-fail")
 
     def _handle_logout(self):
         cookie = self.headers.get("Cookie", "")
@@ -1286,7 +1965,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._console(active, body, crumb)
 
-    def _console_dispatch(self, segs):
+    def _console_dispatch(self, segs, q=None):
+        q = q or {}
         kind = segs[0]
         if kind == "overview":
             return self._console("overview", _overview_html())
@@ -1294,11 +1974,17 @@ class Handler(BaseHTTPRequestHandler):
             if len(segs) >= 3:
                 return self._console("releases", _release_detail_html(segs[1], segs[2]),
                                      crumb="发布 / " + segs[2])
-            return self._console("releases", _releases_html())
+            ch = q.get("channel", [None])[0]
+            return self._console("releases", _releases_html(ch))
         if kind == "assets":
             return self._console("assets", _assets_html())
+        if kind == "clients":
+            return self._console("clients", _clients_html())
+        if kind == "downloads":
+            return self._console("downloads", _downloads_html())
         if kind == "activity":
-            return self._console("activity", _activity_html())
+            t = q.get("type", [None])[0]
+            return self._console("activity", _activity_html(t))
         if kind == "system":
             return self._console("system", _system_html())
         return self._console("overview", _overview_html())
@@ -1312,23 +1998,37 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(gather_status())
             return
         if rest[0] == "v1":
-            self._api_v1(rest[1:])
+            self._api_v1(rest[1:], parse_qs(urlparse(self.path).query))
             return
         self._send_json({"error": "not found"}, 404)
 
-    def _api_v1(self, rest):
+    def _api_v1(self, rest, q=None):
+        q = q or {}
         if not rest or rest[0] == "overview":
-            self._send_json(_overview_data())
+            d = _overview_data()
+            d["disk_alert"] = _disk_alert()
+            self._send_json(d)
         elif rest[0] == "releases":
             if len(rest) >= 3:
                 d = _release_detail_data(rest[1], rest[2])
+                if d:
+                    d["state_machine"] = _release_stage(rest[1], rest[2])
                 self._send_json(d or {"error": "not found"}, 404 if not d else 200)
             else:
-                self._send_json(_releases_data())
+                self._send_json(_releases_data(q.get("channel", [None])[0]))
         elif rest[0] == "assets":
             self._send_json(_assets_data())
+        elif rest[0] == "clients":
+            self._send_json(_clients_data())
+        elif rest[0] == "downloads":
+            days = q.get("days", [None])[0]
+            self._send_json(_download_rank(days=int(days) if days and days.isdigit() else None))
         elif rest[0] == "activity":
-            self._send_json(_activity_data())
+            t = q.get("type", [None])[0]
+            rows = _activity_data(300)
+            if t and t != "all":
+                rows = [r for r in rows if r["type"] == t]
+            self._send_json(rows)
         else:
             self._send_json({"error": "unknown endpoint"}, 404)
 
@@ -1358,11 +2058,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._console_guarded("overview", _overview_html())
         if segs[0] == "status":
             return self._console_guarded("overview", _overview_html(), crumb="概览")
-        if segs[0] in ("overview", "releases", "assets", "activity", "system"):
+        if segs[0] in ("overview", "releases", "assets", "clients", "downloads",
+                        "activity", "system"):
             if not _get_session(self):
                 self._send_redirect("/login")
                 return
-            return self._console_dispatch(segs)
+            return self._console_dispatch(segs, parse_qs(urlparse(self.path).query))
         if segs[0] == "api":
             return self._api_dispatch(segs[1:])
         # 既有客户端协议
@@ -1390,7 +2091,7 @@ class Handler(BaseHTTPRequestHandler):
         extra = {"X-Next-Token": nxt} if nxt else {}
         app = target
         asset_name = rel
-        meta, stale = app.get_release_meta()
+        meta, stale = app.get_release_meta(_req_channel(self))
         if meta is None:
             self._send(502, '{"error":"GitHub 不可达且无缓存"}'.encode("utf-8"), "application/json")
             self._access_log(502, "no-upstream")
@@ -1504,6 +2205,34 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send(500, ("刷新失败: " + str(e)).encode("utf-8"), "text/plain; charset=utf-8")
             return
+        # 资产完整性校验（#6）
+        if (not segs or segs[0] == "admin") and (len(segs) <= 1 or segs[1] == "verify"):
+            if not ADMIN_TOKEN or tok != ADMIN_TOKEN:
+                self._send(401, b'{"error":"unauthorized"}\n', "application/json")
+                return
+            target_app = (q.get("app", [None])[0] or "").strip() or None
+            try:
+                res = _verify_assets(target_app)
+                self._send_json(res)
+            except Exception as e:
+                self._send(500, ("校验失败: " + str(e)).encode("utf-8"), "text/plain; charset=utf-8")
+            return
+        # 清理旧版本资产（#9）
+        if (not segs or segs[0] == "admin") and (len(segs) <= 1 or segs[1] == "prune"):
+            if not ADMIN_TOKEN or tok != ADMIN_TOKEN:
+                self._send(401, b'{"error":"unauthorized"}\n', "application/json")
+                return
+            target_app = (q.get("app", [None])[0] or "").strip() or None
+            keep = (form.get("keep", ["2"])[0] or "2")
+            try:
+                keep_n = max(1, min(10, int(keep)))
+            except ValueError:
+                keep_n = 2
+            try:
+                self._send_json(_prune_assets(target_app, keep_n))
+            except Exception as e:
+                self._send(500, ("清理失败: " + str(e)).encode("utf-8"), "text/plain; charset=utf-8")
+            return
         # 命名空间内刷新：/<app_id>/admin/refresh
         if len(segs) >= 2 and segs[0] in APPS and segs[1] == "admin":
             if not ADMIN_TOKEN or tok != ADMIN_TOKEN:
@@ -1542,8 +2271,10 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json({"ok": True, "client_id": cid, "server_time": int(time.time())})
 
 
-def _login_html(error=False):
+def _login_html(error=False, note=None):
     err = '<p class="err">用户名或密码错误</p>' if error else ''
+    if note:
+        err += '<p class="note">{}</p>'.format(_esc(note))
     return """<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -1559,6 +2290,7 @@ body{background:var(--bg);color:var(--ink);font:14px/1.6 -apple-system,BlinkMacS
 h1{font-size:20px;margin:0 0 4px;font-weight:800}
 .sub{color:var(--muted);font-size:13px;margin:0 0 24px}
 .err{color:#E03A3A;font-size:12.5px;margin:0 0 14px;background:rgba(224,58,58,.08);padding:8px 12px;border-radius:8px}
+.note{color:var(--muted);font-size:12.5px;margin:0 0 14px;background:var(--line);padding:8px 12px;border-radius:8px}
 label{display:block;font-size:12px;color:var(--muted);margin:16px 0 7px;font-weight:600;letter-spacing:.02em}
 input{width:100%;border:1px solid var(--line);border-radius:10px;padding:11px 13px;font-size:14px;font-family:ui-monospace,Menlo,Consolas,monospace;outline:none;transition:border-color .15s}
 input:focus{border-color:var(--accent)}

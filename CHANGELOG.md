@@ -2,6 +2,26 @@
 
 版本号在 `mes_conv/version.go`，本文件按版本倒序记录。
 
+## v1.10.3
+
+客户端（mes_conv）与镜像（mirror/）同步发版：客户端升级令牌与签到/渠道能力，镜像补齐 9 项控制台功能。
+
+### 客户端（mes_conv）
+- **令牌改用标准 `Authorization: Bearer` 头**，不再塞进 URL —— 避免令牌出现在访问日志、浏览器历史与 Referer 里。服务端仍兼容旧的 `?token=` 与 `X-Access-Token`，老客户端不受影响；本机若需临时退回旧模式设 `MES_MIRROR_BEARER=0`。
+- **启动 / 检查更新时向镜像签到上报**（`POST /api/v1/client/checkin`），上报客户端 ID、版本、渠道、系统、主机名；best-effort，失败静默不影响使用。客户端 ID 默认取 `主机名-用户名`，可用 `MES_CLIENT_ID` 显式指定。
+- **支持发布渠道**：`MES_UPDATE_CHANNEL=stable|beta|dev`（默认 `stable`），请求清单时带 `?channel=`。生产工位机保持 stable，测试机可设 beta 抢先体验预发布。
+
+### 镜像（mirror/）
+- **客户端管理页** `/clients`：已登记数、15 分钟内活跃数、版本落后数、版本分布，以及每台机器「已是最新 / 可更新至 X」。
+- **下载排行页** `/downloads`：按应用 / 按资产排行（带进度条）+ 响应状态分布，数据来自 `downloads` 表聚合。
+- **活动页做实**：可按类型筛选（下载 / 同步 / 签到 / 校验 / 安全 / 登录 / 清理），并按类型分组统计。
+- **Channel 渠道**：按 tag / release 名自动推断 `stable` / `beta` / `dev`；`version.json` 支持 `?channel=` 与 `X-Update-Channel` 头选版；控制台可按渠道筛选。
+- **发布状态机可视化**：`已发现 → 已缓存 → 已校验 → 已发布` 四段进度，按资产实际缓存与校验情况实时计算。
+- **资产完整性主动校验**：`POST /admin/verify` 重算缓存文件 SHA256 与清单比对，结果入库并在资产页展示（通过 / 不符 / 缺失）。
+- **磁盘预警与清理**：缓存占用或磁盘余量触发告警条；`POST /admin/prune`（`keep=N`）清理旧版本资产。
+- **登录防爆破**：同 IP 失败达阈值即锁定并返回 `429 Retry-After`；登录成功 / 失败写入 `login_attempts` 审计表。
+- **新增 `mirror/selftest.py`**：部署前逐个渲染所有页面并校验渠道推断，专治 `.format()` 占位符与实参不匹配这类只在运行期暴露的错误。
+
 ## v1.10.2
 
 ### 更新器改通用 + 健壮（修「rename ... .old: 找不到文件」类更新失败）

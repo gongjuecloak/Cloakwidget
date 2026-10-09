@@ -174,3 +174,95 @@ func TestNormalizeUpdateSource(t *testing.T) {
 		}
 	}
 }
+
+// TestUseBearerAuth 默认走 Authorization 头；MES_MIRROR_BEARER=0 时退回旧的 ?token= 形式。
+func TestUseBearerAuth(t *testing.T) {
+	t.Setenv("MES_MIRROR_BEARER", "")
+	if !useBearerAuth() {
+		t.Fatal("默认应使用 Bearer 头")
+	}
+	t.Setenv("MES_MIRROR_BEARER", "0")
+	if useBearerAuth() {
+		t.Fatal("MES_MIRROR_BEARER=0 时应退回旧模式")
+	}
+	t.Setenv("MES_MIRROR_BEARER", " 0 ")
+	if useBearerAuth() {
+		t.Fatal("带空格的 0 也应识别为关闭")
+	}
+}
+
+// TestMirrorURLWithTokenNotInURL Bearer 模式下令牌不应出现在 URL 里（避免进日志/历史）。
+func TestMirrorURLWithTokenNotInURL(t *testing.T) {
+	old := updateMirrorBase
+	updateMirrorBase = "https://mirror.example.com"
+	defer func() { updateMirrorBase = old }()
+
+	t.Setenv("MES_MIRROR_BEARER", "")
+	got := mirrorURLWith(mirrorAppBase()+"/version.json", "secrettoken", false)
+	if strings.Contains(got, "secrettoken") {
+		t.Fatalf("Bearer 模式令牌不应进 URL：%s", got)
+	}
+	if got != mirrorAppBase()+"/version.json" {
+		t.Fatalf("无附加参数时 URL 不应变化：%s", got)
+	}
+
+	// enroll 仍需带 enroll/secret 参数
+	en := mirrorURLWith(mirrorAppBase()+"/version.json", "secrettoken", true)
+	if !strings.Contains(en, "enroll=1") || !strings.Contains(en, "secret=") {
+		t.Fatalf("enroll 请求应带 enroll 与 secret：%s", en)
+	}
+	if strings.Contains(en, "secrettoken") {
+		t.Fatalf("enroll 时令牌也不应进 URL：%s", en)
+	}
+
+	// 旧模式：令牌以 ?token= 传（兼容老镜像）
+	t.Setenv("MES_MIRROR_BEARER", "0")
+	legacy := mirrorURLWith(mirrorAppBase()+"/version.json", "secrettoken", false)
+	if !strings.Contains(legacy, "token=secrettoken") {
+		t.Fatalf("旧模式应保留 token 参数：%s", legacy)
+	}
+
+	// 非镜像地址原样返回
+	if got := mirrorURLWith("https://github.com/a/b", "tok", false); got != "https://github.com/a/b" {
+		t.Fatalf("非镜像 URL 应原样返回：%s", got)
+	}
+}
+
+// TestUpdateChannel 渠道归一化：仅 beta/dev 被接受，其余一律 stable。
+func TestUpdateChannel(t *testing.T) {
+	cases := map[string]string{
+		"":           "stable",
+		"stable":     "stable",
+		"beta":       "beta",
+		"  BETA ":    "beta",
+		"dev":        "dev",
+		"DEV":        "dev",
+		"bogus":      "stable",
+		"prerelease": "stable",
+	}
+	for in, want := range cases {
+		t.Setenv("MES_UPDATE_CHANNEL", in)
+		if got := updateChannel(); got != want {
+			t.Fatalf("updateChannel(%q)=%q，期望 %q", in, got, want)
+		}
+	}
+}
+
+// TestMirrorAppID app_id 应由命名空间推导，与镜像 apps.json 的键一致。
+func TestMirrorAppID(t *testing.T) {
+	if got := mirrorAppID(); got != "mes-converter" {
+		t.Fatalf("mirrorAppID()=%q，期望 mes-converter", got)
+	}
+}
+
+// TestClientID 显式配置优先，否则用 主机名-用户名。
+func TestClientID(t *testing.T) {
+	t.Setenv("MES_CLIENT_ID", "MES-PC-001")
+	if got := clientID(); got != "MES-PC-001" {
+		t.Fatalf("显式配置应优先：%q", got)
+	}
+	t.Setenv("MES_CLIENT_ID", "  ")
+	if got := clientID(); strings.TrimSpace(got) == "" {
+		t.Fatal("空配置时应回退到主机名派生，不能为空")
+	}
+}

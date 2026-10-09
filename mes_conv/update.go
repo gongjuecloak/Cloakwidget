@@ -21,6 +21,7 @@ package main
 // ============================================================================
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
@@ -35,6 +36,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -59,6 +61,11 @@ const mirrorAppPath = "/mes-converter"
 // mirrorAppBase 镜像上「本应用」的基址：基址 + 命名空间。
 func mirrorAppBase() string {
 	return strings.TrimRight(updateMirrorBase, "/") + mirrorAppPath
+}
+
+// mirrorAppID 本应用在镜像上的 app_id（由命名空间推导，与镜像 apps.json 的键一致）。
+func mirrorAppID() string {
+	return strings.Trim(mirrorAppPath, "/")
 }
 
 // manifestPubKeyB64 Ed25519 公钥（base64，32 字节 raw）。CI 用对应私钥签 version.json，
@@ -135,23 +142,35 @@ func isMirrorURL(raw string) bool {
 }
 
 // mirrorURLWith 给镜像请求附加令牌 / enroll 参数；非镜像地址原样返回。
+// 令牌优先通过 Authorization: Bearer 头传递（见 fetchBytes），仅当
+// useBearerAuth 为 false 时才回退到旧的 ?token= 形式。
 func mirrorURLWith(raw, token string, enroll bool) string {
 	if !isMirrorURL(raw) {
 		return raw
 	}
 	q := url.Values{}
-	if token != "" {
+	// Bearer 模式下令牌不放进 URL
+	if token != "" && !useBearerAuth() {
 		q.Set("token", token)
 	}
 	if enroll {
 		q.Set("enroll", "1")
 		q.Set("secret", mirrorEnrollSecret())
 	}
+	if len(q) == 0 {
+		return raw
+	}
 	sep := "?"
 	if strings.Contains(raw, "?") {
 		sep = "&"
 	}
 	return raw + sep + q.Encode()
+}
+
+// useBearerAuth 默认走标准 Authorization 头；设 MES_MIRROR_BEARER=0 可退回旧的
+// ?token= 形式（仅用于兼容尚未升级的镜像服务）。
+func useBearerAuth() bool {
+	return strings.TrimSpace(os.Getenv("MES_MIRROR_BEARER")) != "0"
 }
 
 func captureNextToken(resp *http.Response) {
@@ -290,6 +309,14 @@ func fetchBytes(rawURL string, timeout time.Duration) ([]byte, int, error) {
 			return nil, 0, err
 		}
 		req.Header.Set("User-Agent", "MESConverter/"+appVersion)
+		if isMirrorURL(rawURL) {
+			// 令牌走标准 Authorization 头（不再塞进 URL，避免令牌进日志/浏览器历史）
+			if enroll {
+				req.Header.Set("X-Access-Token", token)
+			} else if token != "" {
+				req.Header.Set("Authorization", "Bearer "+token)
+			}
+		}
 		cli := &http.Client{Timeout: timeout}
 		resp, err := cli.Do(req)
 		if err != nil {
@@ -350,9 +377,78 @@ func fetchManifest(rawURL string) (*updateManifest, error) {
 	return &m, nil
 }
 
+// updateChannel 返回本机跟随的发布渠道：stable（默认）/ beta / dev。
+// 生产工位机保持 stable；测试机可设 MES_UPDATE_CHANNEL=beta 抢先体验预发布。
+func updateChannel() string {
+	c := strings.ToLower(strings.TrimSpace(os.Getenv("MES_UPDATE_CHANNEL")))
+	switch c {
+	case "beta", "dev":
+		return c
+	}
+	return "stable"
+}
+
+// clientID 生成本机标识：优先取显式配置，否则用 主机名-用户名 组合。
+func clientID() string {
+	if v := strings.TrimSpace(os.Getenv("MES_CLIENT_ID")); v != "" {
+		return v
+	}
+	host, err := os.Hostname()
+	if err != nil || strings.TrimSpace(host) == "" {
+		host = "unknown-host"
+	}
+	user := os.Getenv("USERNAME")
+	if user == "" {
+		user = os.Getenv("USER")
+	}
+	if user == "" {
+		return host
+	}
+	return host + "-" + user
+}
+
+// reportCheckin 向镜像登记本机（版本 / 渠道 / 主机名），让控制台能看到
+// 「现场到底有哪些机器、哪些还没更新」。best-effort：失败静默，绝不影响使用。
+func reportCheckin() {
+	base := strings.TrimRight(updateMirrorBase, "/")
+	if base == "" {
+		return
+	}
+	payload := map[string]string{
+		"client_id": clientID(),
+		"app":       mirrorAppID(),
+		"version":   appVersion,
+		"channel":   updateChannel(),
+		"os":        runtime.GOOS,
+		"hostname":  clientID(),
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	req, err := http.NewRequest(http.MethodPost,
+		base+"/api/v1/client/checkin", bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "MESConverter/"+appVersion)
+	if mirrorToken != "" {
+		req.Header.Set("Authorization", "Bearer "+mirrorToken)
+	}
+	cli := &http.Client{Timeout: 5 * time.Second}
+	resp, err := cli.Do(req)
+	if err != nil {
+		appLog("客户端签到上报失败（忽略）：%v", err)
+		return
+	}
+	defer resp.Body.Close()
+	captureNextToken(resp)
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+}
+
 // resolveUpdate 决定有没有新版本、从哪下。
 // 返回 (清单, 下载基址)；基址为空表示用清单里的 GitHub URL，非空表示用该基址 + "/" + exe.Name。
-//
 // 更新源由 sys_settings.json 的 update_source 决定（界面「系统设置 → 更新源」可改）：
 //   - auto   （默认）镜像优先；镜像不可达/无新版时回退 GitHub
 //   - github 只查 GitHub（适合能直连外网的机器）
@@ -366,7 +462,7 @@ func resolveUpdate() (*updateManifest, string) {
 	githubOK := src != srcMirror
 
 	if mirrorOK {
-		if m, err := fetchManifest(mirrorAppBase() + "/version.json"); err == nil &&
+		if m, err := fetchManifest(mirrorAppBase() + "/version.json?channel=" + url.QueryEscape(updateChannel())); err == nil &&
 			versionLess(appVersion, m.Version) {
 			return m, mirrorAppBase()
 		}
@@ -394,6 +490,9 @@ func resolveUpdate() (*updateManifest, string) {
 func handlerUpdate(w http.ResponseWriter, r *http.Request) {
 	lang := reqLang(r)
 	L := msgs(lang)
+
+	// 顺手向镜像登记本机，让控制台能看到现场机器的更新状态（best-effort）
+	go reportCheckin()
 
 	m, base := resolveUpdate()
 	latest := appVersion
@@ -684,6 +783,8 @@ func autoUpdateMarkChecked() {
 func autoUpdate() {
 	defer func() { _ = recover() }()
 	time.Sleep(3 * time.Second)
+	// 启动即向镜像登记本机（best-effort，失败不影响使用）
+	reportCheckin()
 	if autoUpdateCheckedRecently() {
 		return
 	}
