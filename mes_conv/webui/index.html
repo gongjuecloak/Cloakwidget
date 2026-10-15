@@ -377,6 +377,7 @@
     <div class="cfg-tabs" role="tablist" aria-label="配置模块">
       <button type="button" class="cfg-tab active" role="tab" id="cfgTabMat" data-tab="mat" aria-controls="cfgPaneMat" aria-selected="true">物料档案</button>
       <button type="button" class="cfg-tab" role="tab" id="cfgTabOrd" data-tab="ord" aria-controls="cfgPaneOrd" aria-selected="false">订单 / 工单</button>
+      <button type="button" class="cfg-tab" role="tab" id="cfgTabBom" data-tab="bom" aria-controls="cfgPaneBom" aria-selected="false">BOM / 用料表</button>
       <button type="button" class="cfg-tab" role="tab" id="cfgTabSys" data-tab="sys" aria-controls="cfgPaneSys" aria-selected="false">系统</button>
     </div>
 
@@ -491,7 +492,45 @@
       <div id="ordAliasWrap"></div>
     </section>
 
-    <!-- ---------- 面板三：系统 ---------- -->
+    <!-- ---------- 面板三：BOM / 用料表配置 ---------- -->
+    <section class="advanced" id="cfgPaneBom" style="display:none" role="tabpanel" aria-labelledby="cfgTabBom">
+      <p class="muted" id="bom_cfg_desc">BOM 模块的源列映射、固定值与单位别名。源列可填源表表头名（优先匹配，不依赖列序）或列号（如 A / J），留空用内置列位。</p>
+
+      <div class="adv-actions">
+        <button id="bomCfgReloadBtn" class="ghost">载入当前配置</button>
+        <button id="bomCfgSaveBtn" class="ghost">保存配置</button>
+      </div>
+      <div id="bomAdvMsg" class="adv-msg"></div>
+
+      <div class="block-title"><span id="bom_block_sheet">工作表名</span>
+        <small id="bom_block_sheet_hint">源表在 ERP 导出文件里的名字，以及输出模板里两张表的名字</small></div>
+      <div class="pc-line" id="bomSheetWrap"></div>
+
+      <div class="block-title"><span id="bom_block_cols">源列映射</span>
+        <small id="bom_block_cols_hint">每行 = 一个角色从源表的哪一列取值。填表头名或列号，留空用内置列位</small></div>
+      <table id="bomColTable">
+        <thead><tr><th id="bom_th_role" style="width:32%">角色</th><th id="bom_th_value">源列</th></tr></thead>
+        <tbody></tbody>
+      </table>
+
+      <div class="block-title"><span id="bom_block_master">主表固定值</span>
+        <small id="bom_block_master_hint">BOM主表每行这些列直接写固定值</small></div>
+      <div id="bomMasterWrap"></div>
+
+      <div class="block-title"><span id="bom_block_detail">明细固定值</span>
+        <small id="bom_block_detail_hint">BOM明细每行这些列直接写固定值</small></div>
+      <div id="bomDetailWrap"></div>
+
+      <div class="block-title"><span id="bom_block_alias">单位别名</span>
+        <small id="bom_block_alias_hint">源单位 → 归一后的单位名（忽略大小写），优先于单位映射表。例如 PCSQ → PCS</small></div>
+      <div id="bomAliasWrap"></div>
+      <button class="mini-btn" id="bomAliasAddBtn">+ 添加别名</button>
+
+      <div class="block-title"><span id="bom_block_opts">默认选项</span></div>
+      <div class="pc-line"><label class="chk"><input type="checkbox" id="bomCfgBasediv"><span id="bom_cfg_basediv">转换页「基础用量按組成用量÷底數归一化」的默认勾选状态</span></label></div>
+    </section>
+
+    <!-- ---------- 面板四：系统 ---------- -->
     <section class="advanced" id="cfgPaneSys" style="display:none" role="tabpanel" aria-labelledby="cfgTabSys">
       <p class="muted" id="sys_desc">程序自身的运行方式：谁能访问、开机是否自动启动、MES 模板有没有变、出问题怎么取证。与字段映射无关；涉及监听的改动需要重启程序。</p>
 

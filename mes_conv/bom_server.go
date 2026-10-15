@@ -54,6 +54,7 @@ var bomI18n = map[string]bomMsg{
 		"b_progress":         "已写入 %d 行明细…",
 		"b_rule_div":         "組成用量÷底數",
 		"b_rule_raw":         "組成用量原值",
+		"b_warn_col_fallback": "⚠ 角色 %s 的源列「%s」没找到，已回退默认列位",
 	},
 	"zht": {
 		"b_start":            "開始處理 BOM 資料…",
@@ -84,6 +85,7 @@ var bomI18n = map[string]bomMsg{
 		"b_progress":         "已寫入 %d 行明細…",
 		"b_rule_div":         "組成用量÷底數",
 		"b_rule_raw":         "組成用量原值",
+		"b_warn_col_fallback": "⚠ 角色 %s 的源欄「%s」沒找到，已回退預設欄位",
 	},
 	"vi": {
 		"b_start":            "Bắt đầu xử lý dữ liệu BOM…",
@@ -114,6 +116,7 @@ var bomI18n = map[string]bomMsg{
 		"b_progress":         "Đã ghi %d dòng chi tiết…",
 		"b_rule_div":         "組成用量÷底數",
 		"b_rule_raw":         "Giá trị 組成用量 gốc",
+		"b_warn_col_fallback": "⚠ Không tìm thấy cột nguồn「%s」của vai trò %s, đã dùng vị trí cột mặc định",
 	},
 	"en": {
 		"b_start":            "Starting BOM conversion…",
@@ -144,6 +147,7 @@ var bomI18n = map[string]bomMsg{
 		"b_progress":         "%d detail rows written…",
 		"b_rule_div":         "usage ÷ base",
 		"b_rule_raw":         "usage as-is",
+		"b_warn_col_fallback": "⚠ Column「%s」for role %s not found, fell back to default position",
 	},
 }
 
@@ -211,8 +215,22 @@ func handlerBomConvert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	basediv := r.FormValue("basediv") == "1" || r.FormValue("basediv") == "true"
-	opt := BomOptions{Basediv: basediv}
+	// 配置：磁盘上的 bom_mapping.json（无则用内置默认并落盘）。
+	// 工作表名、源列位、固定值、单位别名都从配置来。
+	bc := ensureBomConfig()
+
+	// basediv：表单带了就按表单，没带用配置默认
+	basediv := bc.Basediv
+	if v := r.FormValue("basediv"); v != "" {
+		basediv = v == "1" || v == "true"
+	}
+	opt := BomOptions{
+		Basediv:     basediv,
+		SrcSheet:    bc.SrcSheet,
+		MasterSheet: bc.MasterSheet,
+		DetailSheet: bc.DetailSheet,
+		Cfg:         bc,
+	}
 
 	// 输出目录：exe 同级的 out/，文件名带时间戳且保证唯一
 	outDir := filepath.Join(exeDir(), "out")

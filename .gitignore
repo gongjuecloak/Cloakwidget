@@ -18,6 +18,7 @@ _pkg/
 
 # 运行期生成的配置 / 状态（首次运行由程序自动写出，仓库里只保留内置默认值）
 mes_conv/orders.json
+mes_conv/bom_mapping.json
 mes_conv/tpl_baseline.json
 mes_conv/sys_settings.json
 mes_conv/welcomed
@@ -28,6 +29,7 @@ MES物料档案转换工具_分享版/*.exe
 MES物料档案转换工具_分享版/webui/
 MES物料档案转换工具_分享版/mapping.json
 MES物料档案转换工具_分享版/orders.json
+MES物料档案转换工具_分享版/bom_mapping.json
 MES物料档案转换工具_分享版/out/
 MES物料档案转换工具_分享版/logs/
 MES物料档案转换工具_分享版/backup/

@@ -991,6 +991,9 @@ function showModule(name){
     if(!ordCfgLoaded) loadOrdersCfg();
     loadOrdersHistory();
   }
+  if(name==="bom"){
+    if(!bomCfgLoaded) loadBomCfg();
+  }
   if(name==="config"){
     showCfgTab(cfgTab,true);
   }
@@ -999,9 +1002,11 @@ function showModule(name){
 // ---------- 配置中心：两个模块的配置集中在这里维护 ----------
 let cfgTab="mat";
 function showCfgTab(which,keepScroll){
-  cfgTab = (which==="ord"||which==="sys") ? which : "mat";
+  cfgTab = (which==="ord"||which==="sys"||which==="bom") ? which : "mat";
   document.getElementById("cfgPaneMat").style.display = cfgTab==="mat"?"":"none";
   document.getElementById("cfgPaneOrd").style.display = cfgTab==="ord"?"":"none";
+  const bp=document.getElementById("cfgPaneBom");
+  if(bp) bp.style.display = cfgTab==="bom"?"":"none";
   const sp=document.getElementById("cfgPaneSys");
   if(sp) sp.style.display = cfgTab==="sys"?"":"none";
   document.querySelectorAll(".cfg-tab").forEach(b=>{
@@ -1010,6 +1015,7 @@ function showCfgTab(which,keepScroll){
   // 懒加载：第一次看到某个面板时才去读它那份配置
   if(cfgTab==="mat"){ if(!advLoaded && cfg) loadAdvFromCfg(); }
   else if(cfgTab==="ord"){ if(!ordCfgLoaded) loadOrdersCfg(); }
+  else if(cfgTab==="bom"){ if(!bomCfgLoaded) loadBomCfg(); }
   else { loadSysInfo(); }
   if(!keepScroll) window.scrollTo({top:0,behavior:"smooth"});
 }
@@ -1041,6 +1047,7 @@ document.getElementById("cfgEntry").addEventListener("click",()=>{ if(window.__c
 document.getElementById("cfgNavBtn").addEventListener("click",()=>showModule("config"));
 document.getElementById("cfgTabMat").addEventListener("click",()=>showCfgTab("mat"));
 document.getElementById("cfgTabOrd").addEventListener("click",()=>showCfgTab("ord"));
+document.getElementById("cfgTabBom").addEventListener("click",()=>showCfgTab("bom"));
 const _cfgTabSysBtn=document.getElementById("cfgTabSys");
 if(_cfgTabSysBtn) _cfgTabSysBtn.addEventListener("click",()=>showCfgTab("sys"));
 document.getElementById("backHomeBtn").addEventListener("click",()=>{
@@ -1413,6 +1420,163 @@ document.getElementById("ordCfgSaveBtn").addEventListener("click",async()=>{
   }catch(e){ ordAdvMsg(t("ord_cfg_fail")+((e&&e.message)||""),false); }
 });
 
+// ---- BOM 配置编辑器（配置中心「BOM / 用料表」页签，全表单无 JSON） ----
+const BOM_COL_ROLES=[
+  {k:"parent",      labelKey:"bom_col_parent"},
+  {k:"parent_name", labelKey:"bom_col_parent_name"},
+  {k:"seq",         labelKey:"bom_col_seq"},
+  {k:"child",       labelKey:"bom_col_child"},
+  {k:"unit",        labelKey:"bom_col_unit"},
+  {k:"base",        labelKey:"bom_col_base"},
+  {k:"base_div",    labelKey:"bom_col_base_div"},
+  {k:"loss",        labelKey:"bom_col_loss"}
+];
+const BOM_MASTER_KEYS=[
+  {k:"name_prefix", labelKey:"bom_mf_name_prefix"},
+  {k:"bom_type",    labelKey:"bom_mf_bom_type"},
+  {k:"kind",        labelKey:"bom_mf_kind"},
+  {k:"unit",        labelKey:"bom_mf_unit"}
+];
+const BOM_DETAIL_KEYS=[
+  {k:"layer",     labelKey:"bom_df_layer"},
+  {k:"issue_type",labelKey:"bom_df_issue_type"},
+  {k:"allow_sub", labelKey:"bom_df_allow_sub"},
+  {k:"main_flag", labelKey:"bom_df_main_flag"}
+];
+let bomCfg=null, bomCfgLoaded=false;
+function bomEnsureCfg(c){
+  c=c||{};
+  c.columns=c.columns||{};
+  c.master_fixed=c.master_fixed||{};
+  c.detail_fixed=c.detail_fixed||{};
+  c.unit_aliases=c.unit_aliases||{};
+  c.src_sheet=c.src_sheet||"";
+  c.master_sheet=c.master_sheet||"";
+  c.detail_sheet=c.detail_sheet||"";
+  return c;
+}
+async function loadBomCfg(){
+  try{
+    const r=await fetch("/api/bom/config"); const d=await r.json();
+    if(!d.ok) throw new Error("not ok");
+    bomCfg=bomEnsureCfg(d.config);
+    bomCfgLoaded=true; window.__bomFail=false;
+    bomRenderCfg();
+    // 转换页「组成用量÷底数」复选框的默认值跟随配置
+    const cb=document.getElementById("bomBasediv");
+    if(cb && !cb.dataset.touched) cb.checked=!!bomCfg.basediv;
+  }catch(e){ window.__bomFail=true; }
+  applyCfgGuard();
+}
+function bomFixedRows(keys,obj,cls){
+  return keys.map(k=>'<tr><td>'+esc(t(k.labelKey))+'</td>'
+    +'<td><input class="'+cls+'" data-k="'+k.k+'" value="'+esc(obj[k.k]||"")+'"></td></tr>').join("");
+}
+function bomRenderCfg(){
+  if(!bomCfg) return;
+  // 工作表名
+  document.getElementById("bomSheetWrap").innerHTML =
+    '<span class="pc-inline">'+t("bom_sheet_src")+' <input type="text" id="bomSheetSrc" value="'+esc(bomCfg.src_sheet||"")+'" style="width:220px"></span>'
+    +'<span class="pc-inline">'+t("bom_sheet_master")+' <input type="text" id="bomSheetMaster" value="'+esc(bomCfg.master_sheet||"")+'" style="width:130px"></span>'
+    +'<span class="pc-inline">'+t("bom_sheet_detail")+' <input type="text" id="bomSheetDetail" value="'+esc(bomCfg.detail_sheet||"")+'" style="width:130px"></span>';
+  // 源列映射
+  document.querySelector("#bomColTable tbody").innerHTML = BOM_COL_ROLES.map(k=>
+    '<tr><td>'+esc(t(k.labelKey))+'</td>'
+    +'<td><input class="bc-col" data-k="'+k.k+'" value="'+esc(bomCfg.columns[k.k]||"")+'" placeholder="A / J / 10"></td></tr>').join("");
+  // 固定值
+  document.getElementById("bomMasterWrap").innerHTML =
+    '<table><tbody>'+bomFixedRows(BOM_MASTER_KEYS,bomCfg.master_fixed,"bc-mf")+'</tbody></table>';
+  document.getElementById("bomDetailWrap").innerHTML =
+    '<table><tbody>'+bomFixedRows(BOM_DETAIL_KEYS,bomCfg.detail_fixed,"bc-df")+'</tbody></table>';
+  // 单位别名
+  const al=bomCfg.unit_aliases||{};
+  document.getElementById("bomAliasWrap").innerHTML =
+    '<table><thead><tr><th style="width:45%">'+t("bom_col_unit")+'</th><th style="width:45%">→</th><th style="width:70px"></th></tr></thead><tbody>'
+    +Object.keys(al).map(k=>'<tr><td><input class="ba-k" value="'+esc(k)+'"></td>'
+      +'<td><input class="ba-v" value="'+esc(al[k]||"")+'"></td>'
+      +'<td><button class="row-del ba-del">✕</button></td></tr>').join("")
+    +'</tbody></table>';
+  bindBomCfgEvents();
+  // 默认选项
+  const bd=document.getElementById("bomCfgBasediv");
+  if(bd) bd.checked=!!bomCfg.basediv;
+}
+function bindBomCfgEvents(){
+  document.querySelectorAll("#bomAliasWrap button.ba-del").forEach(b=>{
+    b.addEventListener("click",()=>b.closest("tr").remove());
+  });
+}
+document.getElementById("bomAliasAddBtn").addEventListener("click",()=>{
+  const tbody=document.querySelector("#bomAliasWrap tbody");
+  if(!tbody) return;
+  const tr=document.createElement("tr");
+  tr.innerHTML='<td><input class="ba-k"></td><td><input class="ba-v"></td><td><button class="row-del ba-del">✕</button></td>';
+  tbody.appendChild(tr);
+  tr.querySelector(".ba-del").addEventListener("click",()=>tr.remove());
+});
+function bomVal(id){ const el=document.getElementById(id); return el?(el.value||"").trim():""; }
+// 从表单收集 BOM 配置
+function collectBomCfg(){
+  const c=bomEnsureCfg(clone(bomCfg||{}));
+  c.src_sheet=bomVal("bomSheetSrc");
+  c.master_sheet=bomVal("bomSheetMaster");
+  c.detail_sheet=bomVal("bomSheetDetail");
+  document.querySelectorAll("#bomColTable .bc-col").forEach(inp=>{
+    c.columns[inp.getAttribute("data-k")]=(inp.value||"").trim();
+  });
+  ["bc-mf","bc-df"].forEach(cls=>{
+    const tgt=cls==="bc-mf"?c.master_fixed:c.detail_fixed;
+    document.querySelectorAll("#bomMasterWrap ."+cls+", #bomDetailWrap ."+cls).forEach(inp=>{
+      tgt[inp.getAttribute("data-k")]=(inp.value||"").trim();
+    });
+  });
+  const al={};
+  document.querySelectorAll("#bomAliasWrap tbody tr").forEach(tr=>{
+    const k=(tr.querySelector(".ba-k").value||"").trim();
+    const v=(tr.querySelector(".ba-v").value||"").trim();
+    if(k&&v) al[k]=v;
+  });
+  c.unit_aliases=al;
+  const bd=document.getElementById("bomCfgBasediv");
+  if(bd) c.basediv=bd.checked;
+  return c;
+}
+function bomAdvMsg(text,ok){
+  const el=document.getElementById("bomAdvMsg");
+  el.className="adv-msg "+(ok?"ok":"err");
+  el.textContent=text;
+}
+document.getElementById("bomCfgReloadBtn").addEventListener("click",()=>{
+  bomCfgLoaded=false; window.__dirty.bom=false;
+  loadBomCfg().then(()=>bomAdvMsg(t("loaded_ok"),true));
+});
+document.getElementById("bomCfgSaveBtn").addEventListener("click",async()=>{
+  const c=collectBomCfg();
+  try{
+    const r=await fetch("/api/bom/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(c)});
+    const d=await r.json();
+    if(d.ok){ bomCfg=c; window.__dirty.bom=false; bomAdvMsg(t("bom_cfg_saved"),true); }
+    else bomAdvMsg(t("bom_cfg_fail")+(d.error||""),false);
+  }catch(e){ bomAdvMsg(t("bom_cfg_fail")+((e&&e.message)||""),false); }
+});
+// BOM 配置变更 diff（保存前确认用）
+(function(){
+  const cb=document.getElementById("bomBasediv");
+  if(cb) cb.addEventListener("change",function(){ this.dataset.touched="1"; });
+})();
+function diffBomConfig(a,b){
+  const items=[];
+  ["src_sheet","master_sheet","detail_sheet"].forEach(k=>{
+    if((a[k]||"")!==(b[k]||"")) pushDiff(items,k,"chg",t("diff_chg")+" "+k+" · "+brief(a[k])+" → "+brief(b[k]));
+  });
+  diffNameMap("bom_cols",a.columns,b.columns,items,v=>brief(v));
+  diffNameMap("bom_master",a.master_fixed,b.master_fixed,items,v=>brief(v));
+  diffNameMap("bom_detail",a.detail_fixed,b.detail_fixed,items,v=>brief(v));
+  diffNameMap("bom_alias",a.unit_aliases,b.unit_aliases,items,v=>brief(v));
+  if(!!a.basediv!==!!b.basediv) pushDiff(items,"bom_opts","chg",t("diff_chg")+" basediv · "+a.basediv+" → "+b.basediv);
+  return items;
+}
+
 // ============================================================================
 // 本轮新增：批量多文件 / 口令锁 / 系统页签 / 配置变更确认 / 字段表交互 / 结果小图表
 //
@@ -1438,6 +1602,9 @@ const STR2 = {
     dg_column_order:"输出列顺序", dg_required_columns:"必填列", dg_column_aliases:"表头别名表",
     dg_date_columns:"日期列", dg_template_headers:"表头模板", dg_tag_materials:"打标判定",
     dg_settings:"运行选项", dg_duplicate_keys:"重复检查键",
+    dg_src_sheet:"源工作表", dg_master_sheet:"输出主表", dg_detail_sheet:"输出明细表",
+    dg_bom_cols:"BOM 源列映射", dg_bom_master:"BOM 主表固定值", dg_bom_detail:"BOM 明细固定值",
+    dg_bom_alias:"BOM 单位别名", dg_bom_opts:"BOM 默认选项",
     cfg_tab_sys:"系统",
     sys_desc:"程序自身的运行方式：谁能访问、开机是否自动启动、MES 模板有没有变、出问题怎么取证。与字段映射无关；涉及监听的改动需要重启程序。",
     sys_block_access:"访问与安全",
@@ -1490,6 +1657,9 @@ const STR2 = {
     dg_column_order:"輸出欄順序", dg_required_columns:"必填欄", dg_column_aliases:"表頭別名表",
     dg_date_columns:"日期欄", dg_template_headers:"表頭樣板", dg_tag_materials:"打標判定",
     dg_settings:"執行選項", dg_duplicate_keys:"重複檢查鍵",
+    dg_src_sheet:"源工作表", dg_master_sheet:"輸出主表", dg_detail_sheet:"輸出明細表",
+    dg_bom_cols:"BOM 源欄映射", dg_bom_master:"BOM 主表固定值", dg_bom_detail:"BOM 明細固定值",
+    dg_bom_alias:"BOM 單位別名", dg_bom_opts:"BOM 預設選項",
     cfg_tab_sys:"系統",
     sys_desc:"程式本身的執行方式：誰能存取、開機是否自動啟動、MES 樣板有沒有變、出問題怎麼蒐證。與欄位對應無關；涉及監聽的改動需要重新啟動程式。",
     sys_block_access:"存取與安全",
@@ -1542,6 +1712,9 @@ const STR2 = {
     dg_column_order:"Thứ tự cột đầu ra", dg_required_columns:"Cột bắt buộc", dg_column_aliases:"Bảng tên thay thế",
     dg_date_columns:"Cột ngày", dg_template_headers:"Tiêu đề mẫu", dg_tag_materials:"Quy tắc đánh dấu",
     dg_settings:"Tùy chọn chạy", dg_duplicate_keys:"Khóa kiểm tra trùng",
+    dg_src_sheet:"Trang nguồn", dg_master_sheet:"Bảng chính kết quả", dg_detail_sheet:"Bảng chi tiết kết quả",
+    dg_bom_cols:"Ánh xạ cột nguồn BOM", dg_bom_master:"Giá trị cố định BOM chính", dg_bom_detail:"Giá trị cố định BOM chi tiết",
+    dg_bom_alias:"Bí danh đơn vị BOM", dg_bom_opts:"Tùy chọn mặc định BOM",
     cfg_tab_sys:"Hệ thống",
     sys_desc:"Cách chương trình tự chạy: ai truy cập được, có khởi động cùng Windows không, mẫu MES có đổi không, và cách thu thập chứng cứ khi có sự cố. Không liên quan ánh xạ trường; thay đổi cổng nghe cần khởi động lại.",
     sys_block_access:"Truy cập & bảo mật",
@@ -1594,6 +1767,9 @@ const STR2 = {
     dg_column_order:"Output column order", dg_required_columns:"Required columns",
     dg_column_aliases:"Header aliases", dg_date_columns:"Date columns", dg_template_headers:"Template headers",
     dg_tag_materials:"Tagging rule", dg_settings:"Run options", dg_duplicate_keys:"Duplicate-check keys",
+    dg_src_sheet:"Source sheet", dg_master_sheet:"Output master sheet", dg_detail_sheet:"Output detail sheet",
+    dg_bom_cols:"BOM source columns", dg_bom_master:"BOM master fixed values", dg_bom_detail:"BOM detail fixed values",
+    dg_bom_alias:"BOM unit aliases", dg_bom_opts:"BOM defaults",
     cfg_tab_sys:"System",
     sys_desc:"How the program itself runs: who can access it, whether it starts with Windows, whether the MES template changed, and how to collect evidence when something breaks. Unrelated to field mapping; changes affecting listening need a restart.",
     sys_block_access:"Access & security",
@@ -1935,14 +2111,15 @@ document.getElementById("diffClose").addEventListener("click",closeDiff);
 
 // 在「保存配置」上做一层拦截：先把表单同步进配置对象，算出 diff 给用户看，确认后才放行原本的保存逻辑。
 // 用捕获阶段拦，靠 stopImmediatePropagation 挡住后面那个 bubble 监听器；放行时置标志重新 click 一次。
-const _diffBypass={mat:false, ord:false};
+const _diffBypass={mat:false, ord:false, bom:false};
 document.addEventListener("click",e=>{
-  const btn = e.target.closest && e.target.closest("#saveConfigBtn,#ordCfgSaveBtn");
+  const btn = e.target.closest && e.target.closest("#saveConfigBtn,#ordCfgSaveBtn,#bomCfgSaveBtn");
   if(!btn) return;
-  const which = btn.id==="saveConfigBtn" ? "mat" : "ord";
+  const which = btn.id==="saveConfigBtn" ? "mat" : (btn.id==="ordCfgSaveBtn" ? "ord" : "bom");
   if(_diffBypass[which]){ _diffBypass[which]=false; return; }
   if(window.__cfgFail && which==="mat") return;   // 配置没读到就别拦，交给原有逻辑报错
   if(window.__ordFail && which==="ord") return;
+  if(window.__bomFail && which==="bom") return;
   let before, after, items;
   try{
     if(which==="mat"){
@@ -1950,11 +2127,16 @@ document.addEventListener("click",e=>{
       before = window.__cfgSnapMat || clone(cfg);
       after = clone(cfg);
       items = diffMatConfig(before, after);
-    } else {
+    } else if(which==="ord"){
       const c=collectOrdCfg();
       before = window.__ordCfgSnap || clone(ordCfg||{});
       after = clone(c);
       items = diffOrdConfig(before, after);
+    } else {
+      const c=collectBomCfg();
+      before = window.__bomCfgSnap || clone(bomCfg||{});
+      after = clone(c);
+      items = diffBomConfig(before, after);
     }
   }catch(err){ return; }   // 同步失败就让原逻辑自己处理
   if(!items.length) return;  // 没改动不用打扰
@@ -1968,6 +2150,8 @@ const _loadAdvFromCfgBase=loadAdvFromCfg;
 loadAdvFromCfg=function(){ _loadAdvFromCfgBase(); try{ window.__cfgSnapMat=clone(cfg); }catch(e){} };
 const _loadOrdersCfgBase=loadOrdersCfg;
 loadOrdersCfg=function(){ return Promise.resolve(_loadOrdersCfgBase()).then(r=>{ try{ window.__ordCfgSnap=clone(ordCfg||{}); }catch(e){} return r; }); };
+const _loadBomCfgBase=loadBomCfg;
+loadBomCfg=function(){ return Promise.resolve(_loadBomCfgBase()).then(r=>{ try{ window.__bomCfgSnap=clone(bomCfg||{}); }catch(e){} return r; }); };
 
 // ---------------------------------------------------------------- 字段映射：搜索 / 筛选 / 拖拽排序
 (function fieldTableTools(){
@@ -2319,31 +2503,34 @@ async function maybeShowWelcome(){
     const q=new URLSearchParams(location.search);
     const qv=q.get("view");
     const qt=q.get("tab");
-    if(qt==="ord"||qt==="mat"||qt==="sys") cfgTab=qt;
+    if(qt==="ord"||qt==="mat"||qt==="sys"||qt==="bom") cfgTab=qt;
     if(qv && VIEW_IDS[qv]) showModule(qv);
   }catch(e){}
   maybeShowWelcome();
 })();
 
 // ---- 配置保护 / 未保存提示 / 键盘与拖拽体验 ----
-window.__dirty={mat:false,ord:false};
+window.__dirty={mat:false,ord:false,bom:false};
 function applyCfgGuard(){
-  const f=!!window.__cfgFail, o=!!window.__ordFail;
+  const f=!!window.__cfgFail, o=!!window.__ordFail, bm=!!window.__bomFail;
   ["saveConfigBtn","importConfigBtn","restoreBtn","profileSaveBtn","valuesImportBtn"].forEach(id=>{ const b=document.getElementById(id); if(b) b.disabled=f; });
   const ob=document.getElementById("ordCfgSaveBtn"); if(ob) ob.disabled=o;
-  document.getElementById("cfgFailBanner").classList.toggle("show",f||o);
+  const bb=document.getElementById("bomCfgSaveBtn"); if(bb) bb.disabled=bm;
+  document.getElementById("cfgFailBanner").classList.toggle("show",f||o||bm);
 }
 (function(){
   const vc=document.getElementById("viewConfig");
   const mark=e=>{
     const tg=e.target; if(!tg.closest) return;
     if(tg.matches("#profileSel,#backupSel,input[type=file]")) return;
-    if(tg.closest("#cfgPaneMat")) window.__dirty.mat=true; else if(tg.closest("#cfgPaneOrd")) window.__dirty.ord=true;
+    if(tg.closest("#cfgPaneMat")) window.__dirty.mat=true;
+    else if(tg.closest("#cfgPaneOrd")) window.__dirty.ord=true;
+    else if(tg.closest("#cfgPaneBom")) window.__dirty.bom=true;
   };
   vc.addEventListener("input",mark); vc.addEventListener("change",mark);
   vc.addEventListener("click",e=>{ if(e.target.closest&&e.target.closest(".row-del,.mini-btn,#addFieldBtn")) mark(e); });
 })();
-window.addEventListener("beforeunload",e=>{ if(window.__mesBusy||window.__dirty.mat||window.__dirty.ord){ e.preventDefault(); e.returnValue=""; } });
+window.addEventListener("beforeunload",e=>{ if(window.__mesBusy||window.__dirty.mat||window.__dirty.ord||window.__dirty.bom){ e.preventDefault(); e.returnValue=""; } });
 const _openModal=()=>[...document.querySelectorAll('[id$="Modal"]')].find(m=>m.style.display==="flex");
 document.addEventListener("keydown",e=>{
   if(e.key==="Escape"){
@@ -2361,13 +2548,16 @@ document.addEventListener("keydown",e=>{
   if(e.shiftKey&&cur===first){ e.preventDefault(); last.focus(); }
   else if(!e.shiftKey&&cur===last){ e.preventDefault(); first.focus(); }
 });
-// 页签支持左右方向键切换（ARIA tablist 惯例）
+// 页签支持左右方向键切换（ARIA tablist 惯例）：mat → ord → bom → sys 循环
 document.querySelector(".cfg-tabs").addEventListener("keydown",e=>{
   if(e.key!=="ArrowLeft"&&e.key!=="ArrowRight") return;
   e.preventDefault();
-  const next=cfgTab==="mat"?"ord":"mat";
-  showCfgTab(next);
-  document.getElementById(next==="mat"?"cfgTabMat":"cfgTabOrd").focus();
+  const order=["mat","ord","bom","sys"];
+  let i=order.indexOf(cfgTab); if(i<0) i=0;
+  i=(i+(e.key==="ArrowRight"?1:order.length-1))%order.length;
+  showCfgTab(order[i]);
+  const btn=document.getElementById("cfgTab"+order[i].charAt(0).toUpperCase()+order[i].slice(1));
+  if(btn) btn.focus();
 });
 // 动态生成的表格/图标按钮统一补语义：表头加 scope、纯符号的 ✕ 按钮加 aria-label
 (function(){

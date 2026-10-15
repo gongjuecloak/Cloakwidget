@@ -28,10 +28,11 @@ const (
 
 // BomOptions 转换选项
 type BomOptions struct {
-	Basediv     bool   // true: 底數≠1 时基础用量 = 組成用量÷底數；false: 直接取組成用量原值
-	SrcSheet    string // 源工作表名，空用默认
-	MasterSheet string // 目标主表名，空用默认
-	DetailSheet string // 目标明细表名，空用默认
+	Basediv     bool       // true: 底數≠1 时基础用量 = 組成用量÷底數；false: 直接取組成用量原值
+	SrcSheet    string     // 源工作表名，空用默认
+	MasterSheet string     // 目标主表名，空用默认
+	DetailSheet string     // 目标明细表名，空用默认
+	Cfg         *BomConfig // 非空时按配置解析源列位 / 固定值 / 单位别名；空用内置默认
 }
 
 // BomUnitStat 源單位出现次数与映射结果（诊断用）
@@ -392,6 +393,16 @@ func ConvertBOM(srcPath, tplPath, mapPath, outPath string, opt BomOptions, L map
 		return nil, fmt.Errorf("%s: %w", L["b_err_rows"], err)
 	}
 
+	// 源列位：按配置解析（表头名优先 / 列号次之），失败回退内置默认列位并写日志提示
+	cfg := opt.Cfg
+	if cfg == nil {
+		cfg = defaultBomConfig()
+	}
+	colsIdx, colFallback := bomResolveColumns(src, opt.SrcSheet, cfg.Columns)
+	for _, role := range colFallback {
+		logf(fmt.Sprintf(L["b_warn_col_fallback"], role, cfg.Columns[role]))
+	}
+
 	masterName := map[string]string{}
 	masterOrder := []string{}
 	unitRawStats := map[string]int{}
@@ -400,6 +411,16 @@ func ConvertBOM(srcPath, tplPath, mapPath, outPath string, opt BomOptions, L map
 	detailCount := 0
 	detailRow := 2
 	headerSkipped := false
+
+	// 固定值：配置可覆盖内置默认
+	mfPrefix := bomFixedVal(cfg.MasterFixed, "name_prefix", "BOM-")
+	mfType := bomFixedVal(cfg.MasterFixed, "bom_type", "量产BOM")
+	mfKind := bomFixedVal(cfg.MasterFixed, "kind", "production")
+	mfUnit := bomFixedVal(cfg.MasterFixed, "unit", "支")
+	dfLayer := bomFixedVal(cfg.DetailFixed, "layer", "1")
+	dfIssue := bomFixedVal(cfg.DetailFixed, "issue_type", "定额发料")
+	dfAllowSub := bomFixedVal(cfg.DetailFixed, "allow_sub", "是")
+	dfMain := bomFixedVal(cfg.DetailFixed, "main_flag", "否")
 
 	for iter.Next() {
 		if !headerSkipped {
@@ -410,24 +431,24 @@ func ConvertBOM(srcPath, tplPath, mapPath, outPath string, opt BomOptions, L map
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", L["b_err_cols"], err)
 		}
-		parent := bomGet(cols, 0)
+		parent := bomGet(cols, colsIdx["parent"])
 		if parent == "" {
 			continue
 		}
-		child := bomGet(cols, 4)
-		seqRaw := bomGet(cols, 3)
-		base := bomGet(cols, 9) // 組成用量
+		child := bomGet(cols, colsIdx["child"])
+		seqRaw := bomGet(cols, colsIdx["seq"])
+		base := bomGet(cols, colsIdx["base"]) // 組成用量
 		if opt.Basediv {
 			// 底數≠1 时归一化为「每 1 支主件用量」
 			if cu, e1 := strconv.ParseFloat(base, 64); e1 == nil {
-				if d, e2 := strconv.ParseFloat(bomGet(cols, 10), 64); e2 == nil && d != 0 && d != 1 {
+				if d, e2 := strconv.ParseFloat(bomGet(cols, colsIdx["base_div"]), 64); e2 == nil && d != 0 && d != 1 {
 					base = strconv.FormatFloat(cu/d, 'f', -1, 64)
 					divApplied++
 				}
 			}
 		}
-		loss := bomGet(cols, 11)
-		unitRaw := bomGet(cols, 7)
+		loss := bomGet(cols, colsIdx["loss"])
+		unitRaw := bomGet(cols, colsIdx["unit"])
 
 		if child == "" {
 			emptyChild++
@@ -440,13 +461,13 @@ func ConvertBOM(srcPath, tplPath, mapPath, outPath string, opt BomOptions, L map
 		unitRawStats[unitRaw]++
 
 		if _, ok := masterName[parent]; !ok {
-			masterName[parent] = bomGet(cols, 1)
+			masterName[parent] = bomGet(cols, colsIdx["parent_name"])
 			masterOrder = append(masterOrder, parent)
 		}
 
 		dRow := []interface{}{
-			parent, bomToInt(seqRaw), 1, nil, child, bomToNum(base), bomToNum(loss),
-			nil, "定额发料", "是", "否", nil, nil, nil,
+			parent, bomToInt(seqRaw), bomToInt(dfLayer), nil, child, bomToNum(base), bomToNum(loss),
+			nil, dfIssue, dfAllowSub, dfMain, nil, nil, nil,
 		}
 		cell, _ := excelize.CoordinatesToCellName(1, detailRow)
 		if err := dSw.SetRow(cell, dRow); err != nil {
@@ -477,10 +498,10 @@ func ConvertBOM(srcPath, tplPath, mapPath, outPath string, opt BomOptions, L map
 	}
 	masterRow := 2
 	for _, parent := range masterOrder {
-		name := "BOM-" + parent
+		name := mfPrefix + parent
 		mRow := []interface{}{
 			parent, name, nil, nil, parent, nil,
-			"量产BOM", "production", nil, "支", nil, nil, nil, nil,
+			mfType, mfKind, nil, mfUnit, nil, nil, nil, nil,
 		}
 		cell, _ := excelize.CoordinatesToCellName(1, masterRow)
 		if err := mSw.SetRow(cell, mRow); err != nil {
@@ -534,6 +555,12 @@ func ConvertBOM(srcPath, tplPath, mapPath, outPath string, opt BomOptions, L map
 	rep.UnitStats = make([]BomUnitStat, 0, len(a1))
 	for _, e := range a1 {
 		mu, st := bomMapUnit(um, e.k)
+		// 配置里的单位别名优先于映射表：命中即取别名目标（如 PCSQ -> PCS）
+		if k := strings.ToUpper(bomClean(e.k)); k != "" {
+			if alias, ok := cfg.UnitAliases[k]; ok && strings.TrimSpace(alias) != "" {
+				mu, st = alias, "ALIAS"
+			}
+		}
 		rep.UnitStats = append(rep.UnitStats, BomUnitStat{Raw: e.k, Count: e.c, Mapped: mu, Status: st})
 	}
 	return rep, nil

@@ -1482,6 +1482,13 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("/api/orders/convert", handlerOrdersConvert)
 	mux.HandleFunc("/api/orders/history", handlerOrdersHistory)
 	mux.HandleFunc("/api/bom/convert", handlerBomConvert)
+	mux.HandleFunc("/api/bom/config", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			handlerBomSaveConfig(w, r)
+		} else {
+			handlerBomGetConfig(w, r)
+		}
+	})
 	mux.HandleFunc("/download", handlerDownload)
 	return mux
 }
