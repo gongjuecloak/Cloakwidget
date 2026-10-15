@@ -34,6 +34,9 @@ MES物料档案转换工具_分享版/backup/
 MES物料档案转换工具_分享版/configs/
 # 首次运行由程序自动写出 welcomed 标记，不是源码
 MES物料档案转换工具_分享版/welcomed
+# 运行期状态：模板基线快照 + 自动更新检查时间戳，均非源码
+MES物料档案转换工具_分享版/tpl_baseline.json
+MES物料档案转换工具_分享版/autoupdate.json
 
 # 分享用的打包产物（内含 exe，同样不入库）
 /MES物料档案转换工具_*.zip

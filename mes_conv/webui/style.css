@@ -222,3 +222,21 @@
   .wc-tips{margin:16px 0 0;display:flex;flex-direction:column;gap:9px}
   .wc-tips>div{position:relative;padding-left:20px;font-size:13px;line-height:1.7}
   .wc-tips>div::before{content:"";position:absolute;left:4px;top:7px;width:6px;height:6px;border-radius:50%;background:var(--primary)}
+
+/* ---- 目标列即时校验（P1） ---- */
+input.tgt-bad{border-color:var(--err) !important;background:#fff3f2}
+
+/* ---- 映射预览（P4） ---- */
+.preview-tbl{border-collapse:collapse;width:100%;margin-top:8px;font-size:13px}
+.preview-tbl th,.preview-tbl td{border:1px solid var(--line);padding:6px 10px;text-align:left;vertical-align:top}
+.preview-tbl th{background:#f8fafc;font-weight:600}
+.preview-tbl td:last-child{max-width:560px;word-break:break-all}
+
+/* ---- 配置对比（P4） ---- */
+.diff-wrap{margin-top:10px}
+.diff-wrap h3{font-size:14px;margin:0 0 6px}
+.diff-line{font-size:13px;color:var(--muted);margin-bottom:4px}
+.diff-row{font-size:13px;padding:3px 0}
+.diff-row.add{color:#065f46}
+.diff-row.del{color:#991b1b}
+.diff-row.chg{color:#92400e}

@@ -182,6 +182,7 @@ func Convert(cfg *Config, srcPath, tplPath, outPath, lang string) (*Report, erro
 	unknownUnit := map[string]int{}  // 未识别单位 -> 行数
 	notInList := map[string]int{}    // "目标列 = 值" -> 行数（值不在白名单，如 MES 单位档案）
 	errCellByCol := map[string]int{} // 源列 -> Excel 错误值（#NAME? 等）格数
+	notNumeric := map[string]int{}   // "目标列 = 原值" -> 行数（数值列写入了非数字原值）
 
 	// 重复检查：关键列来自配置（留空默认「物料编码」），每一列各自成组
 	dupCols := cfg.DuplicateKeys
@@ -207,6 +208,7 @@ func Convert(cfg *Config, srcPath, tplPath, outPath, lang string) (*Report, erro
 		srcIdx = i
 	}
 
+	unitKeys := sortedUnitKeys(cfg.UnitMap) // 单位键按长度降序预编译一次，避免每行重复排序
 	totalRows := len(srows) - 1
 	progressSet(0, totalRows)
 	for ri, row := range srows[1:] {
@@ -253,14 +255,14 @@ func Convert(cfg *Config, srcPath, tplPath, outPath, lang string) (*Report, erro
 							outv = c.Then
 							break
 						}
-					} else { // contains
-						s := get(row, c.Source)
+					} else { // contains（忽略大小写，与 eq 的 EqualFold 保持一致）
+						s := strings.ToLower(get(row, c.Source))
 						hit := false
-						if c.Value != "" && strings.Contains(s, c.Value) {
+						if c.Value != "" && strings.Contains(s, strings.ToLower(c.Value)) {
 							hit = true
 						}
 						for _, kw := range c.Keywords {
-							if kw != "" && strings.Contains(s, kw) {
+							if kw != "" && strings.Contains(s, strings.ToLower(kw)) {
 								hit = true
 								break
 							}
@@ -283,7 +285,13 @@ func Convert(cfg *Config, srcPath, tplPath, outPath, lang string) (*Report, erro
 					}
 				}
 			case "num":
-				out[ci] = num(get(row, f.Source))
+				sv := get(row, f.Source)
+				out[ci] = num(sv)
+				if strings.TrimSpace(sv) != "" {
+					if _, isStr := out[ci].(string); isStr {
+						notNumeric[f.Target+" = "+strings.TrimSpace(sv)]++
+					}
+				}
 			case "fixed":
 				out[ci] = num(f.Value)
 			case "rownum":
@@ -323,7 +331,7 @@ func Convert(cfg *Config, srcPath, tplPath, outPath, lang string) (*Report, erro
 				out[ci] = val
 			case "unit":
 				raw := get(row, f.Source)
-				v, hit := translateUnit(raw, cfg.UnitMap, cfg.ValueWhitelist[f.Target])
+				v, hit := translateUnitKeys(raw, cfg.UnitMap, cfg.ValueWhitelist[f.Target], unitKeys)
 				out[ci] = v
 				if !hit && strings.TrimSpace(raw) != "" {
 					unknownUnit[strings.TrimSpace(raw)]++
@@ -384,6 +392,42 @@ func Convert(cfg *Config, srcPath, tplPath, outPath, lang string) (*Report, erro
 			addIssue(rowNo, scol, fmt.Sprintf(L["warn_excel_err"], strings.TrimSpace(cellv)), "warning")
 		}
 
+		// 5) 字段长度上限（MES 部分列有最大长度，超出导入会失败）
+		for target, max := range cfg.ColumnMaxLen {
+			if max <= 0 {
+				continue
+			}
+			ci, ok := idx[target]
+			if !ok || ci >= len(out) {
+				continue
+			}
+			s, ok := out[ci].(string)
+			if !ok {
+				continue
+			}
+			if n := len([]rune(s)); n > max {
+				addIssue(rowNo, target, fmt.Sprintf(L["chk_maxlen"], target, max, n), "warning")
+			}
+		}
+
+		// 6) 跨字段联动校验（如 序列管理=是 → 序列号规则编码 必填）
+		for _, cc := range cfg.CrossChecks {
+			wci, ok1 := idx[cc.WhenCol]
+			tci, ok2 := idx[cc.ThenCol]
+			if !ok1 || !ok2 || wci >= len(out) || tci >= len(out) {
+				continue
+			}
+			wv, _ := out[wci].(string)
+			tv, _ := out[tci].(string)
+			if strings.EqualFold(strings.TrimSpace(wv), cc.WhenVal) && strings.TrimSpace(tv) == "" {
+				msg := cc.Msg
+				if msg == "" {
+					msg = fmt.Sprintf(L["chk_cross"], cc.WhenCol, cc.WhenVal, cc.ThenCol)
+				}
+				addIssue(rowNo, cc.ThenCol, msg, "warning")
+			}
+		}
+
 		if typeIdx >= 0 {
 			if v, ok := out[typeIdx].(string); ok {
 				rep.Types[v]++
@@ -431,6 +475,9 @@ func Convert(cfg *Config, srcPath, tplPath, outPath, lang string) (*Report, erro
 	for _, k := range sortedCountKeys(notInList) {
 		rep.Warnings = append(rep.Warnings, fmt.Sprintf(L["sum_not_in_list"], k, notInList[k]))
 	}
+	for _, k := range sortedCountKeys(notNumeric) {
+		rep.Warnings = append(rep.Warnings, fmt.Sprintf(L["sum_not_numeric"], k, notNumeric[k]))
+	}
 	return rep, nil
 }
 
@@ -450,14 +497,30 @@ func num(s string) interface{} {
 	return f
 }
 
-// translateUnit 基本单位翻译：
+// sortedUnitKeys 把单位键按长度降序排列一次（长键优先，避免 mm 被 m 误中）。
+// 单位表在单次转换内是稳定的，故在 Convert 开头预编译一次后复用，避免每行重复排序。
+func sortedUnitKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool { return len(keys[i]) > len(keys[j]) })
+	return keys
+}
+
+// translateUnit 基本单位翻译（便捷封装，每次调用重新排序键；高频场景改用 translateUnitKeys）。
 //  1. 源值本身已在目标列白名单（即 MES 档案中真实存在的单位名，如 PCS/SET/套/支/桶/组/卷）→ 原样保留；
 //  2. 否则查表精确匹配；
-//  3. 再否则「最接近」子串匹配（长键优先，避免 mm 被 m 误中）；
+//  3. 再否则「最接近」子串匹配（长键优先）；
 //  4. 已是中文(含 CJK)则原样保留；其余原样保留并视为未识别。
 //
 // 第二个返回值表示是否命中（即该值是否为 MES 认可的合法单位）。
 func translateUnit(s string, m map[string]string, allow []string) (string, bool) {
+	return translateUnitKeys(s, m, allow, sortedUnitKeys(m))
+}
+
+// translateUnitKeys 与 translateUnit 同逻辑，但复用调用方预编译好的 keys（按长度降序）。
+func translateUnitKeys(s string, m map[string]string, allow, keys []string) (string, bool) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return "", true
@@ -470,11 +533,6 @@ func translateUnit(s string, m map[string]string, allow []string) (string, bool)
 	if v, ok := m[low]; ok {
 		return v, true
 	}
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Slice(keys, func(i, j int) bool { return len(keys[i]) > len(keys[j]) })
 	for _, k := range keys {
 		if k != "" && strings.Contains(low, k) {
 			return m[k], true

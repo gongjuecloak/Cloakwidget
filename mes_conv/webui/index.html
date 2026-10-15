@@ -97,6 +97,7 @@
 
   <div class="actions">
     <button id="startBtn" class="primary">开始转换</button>
+    <button id="previewBtn" class="ghost">预览映射结果</button>
   </div>
 
   <div id="progressWrap" style="display:none;margin:14px 0 0">
@@ -107,6 +108,8 @@
   </div>
 
   <div id="statusBanner" class="banner" role="status" aria-live="polite"></div>
+
+  <div id="previewWrap" class="result" style="display:none"></div>
 
   <section id="resultSection" class="result">
     <div class="ok-icon">✓</div>
@@ -314,8 +317,10 @@
       <div class="pc-line">
         <select id="backupSel" style="width:260px"></select>
         <button id="restoreBtn" class="ghost">恢复此备份</button>
+        <button id="diffBtn" class="ghost">对比当前配置</button>
         <button id="refreshBackupBtn" class="ghost">刷新列表</button>
       </div>
+      <div id="diffWrap" class="diff-wrap" style="display:none"></div>
 
       <div class="block-title"><span id="block_fields">字段映射</span>
         <small id="block_fields_hint">每一行 = 一个目标列怎么填</small></div>
@@ -346,6 +351,16 @@
         <small id="block_wl_hint">某列的值不在清单里时，预检会告警（不改写数据）。例如「基本单位」只允许 MES 单位档案里的单位名</small></div>
       <div id="wlWrap"></div>
       <button class="mini-btn" id="addWlBtn">+ 添加一列的允许值</button>
+
+      <div class="block-title"><span>字段长度上限</span>
+        <small>某列写出值超过最大长度时预检告警（不阻断）。例如 MES 部分列有字符数上限，超出会导入失败。</small></div>
+      <div id="lenWrap"></div>
+      <button class="mini-btn" id="addLenBtn">+ 添加长度规则</button>
+
+      <div class="block-title"><span>跨字段联动校验</span>
+        <small>当 A 列=某值时，要求 B 列必填。用于捕捉组合错误，例如「序列管理=是」时「序列号规则编码」不能为空。</small></div>
+      <div id="crossWrap"></div>
+      <button class="mini-btn" id="addCrossBtn">+ 添加联动规则</button>
     </section>
 
     <!-- ---------- 面板二：订单 / 工单配置 ---------- -->

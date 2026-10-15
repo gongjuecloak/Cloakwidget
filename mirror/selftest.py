@@ -48,6 +48,7 @@ PAGES = [
     ("_assets_html", lambda: m._assets_html()),
     ("_clients_html", lambda: m._clients_html()),
     ("_downloads_html", lambda: m._downloads_html()),
+    ("_api_html", lambda: m._api_html()),
     ("_activity_html", lambda: m._activity_html(None)),
     ("_activity_html(checkin)", lambda: m._activity_html("checkin")),
     ("_system_html", lambda: m._system_html()),

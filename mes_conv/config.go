@@ -34,6 +34,16 @@ type WhenCase struct {
 	Then     string   `json:"then,omitempty"`     // 命中后写入值
 }
 
+// CrossCheck 跨字段联动校验：当 when_col 的写出值(忽略大小写)等于 when_val 时，
+// 要求 then_col 非空，否则预检告警。用于捕捉「勾了序列管理却没填序列号规则」这类组合错误。
+// 留空不生效；可在 UI「预检规则」里增删。
+type CrossCheck struct {
+	WhenCol string `json:"when_col"`
+	WhenVal string `json:"when_val"`
+	ThenCol string `json:"then_col"`
+	Msg     string `json:"msg,omitempty"` // 自定义告警语；为空时用默认模板
+}
+
 // Config 是工具的唯一数据源：UI 与 CLI 都读它
 type Config struct {
 	SourceSheet   int                          `json:"source_sheet"`   // 源数据工作表索引，-1 表示第一个
@@ -48,6 +58,11 @@ type Config struct {
 	// DuplicateKeys 需要做重复检查的目标列。每列各自成组（不是组合键），
 	// 与 MES 的「物料编码唯一」这类约束对应。留空则默认检查「物料编码」。
 	DuplicateKeys []string `json:"duplicate_keys,omitempty"`
+	// ColumnMaxLen 目标列 -> 最大字符长度。写出值超出时预检告警（不阻断），
+	// 用于提前发现 MES 字段长度上限导致的导入失败。留空表示不检查。
+	ColumnMaxLen map[string]int `json:"column_max_len,omitempty"`
+	// CrossChecks 跨字段联动校验规则（见 CrossCheck）。留空表示不检查。
+	CrossChecks []CrossCheck `json:"cross_checks,omitempty"`
 }
 
 // exeDir 返回可执行文件所在目录（配置文件放在这里）
@@ -99,6 +114,7 @@ func defaultConfig() *Config {
 			{Target: "基本单位", Source: "MB004", Op: "unit"},
 			{Target: "物料来源", Source: "MB025", Op: "dict", Dict: "matSource"},
 			{Target: "序列号规则编码", Op: "fixed", Value: "SN001"},
+			{Target: "标识规则前缀", Op: "fixed", Value: ""},
 			{Target: "默认发料仓库", Op: "fixed", Value: "虚拟仓"},
 			{Target: "默认供应商", Source: "MB032", Op: "copy"},
 			{Target: "批次管理", Source: "MB022", Op: "cond", If: "N", Then: "否", Else: "是"},
@@ -107,6 +123,7 @@ func defaultConfig() *Config {
 			{Target: "时效物料", Op: "fixed", Value: "否"},
 			{Target: "危险品标识", Op: "fixed", Value: "否"},
 			{Target: "关键物料", Op: "fixed", Value: "否"},
+			{Target: "是否主件", Op: "fixed", Value: "否"},
 			{Target: "物料状态", Op: "fixed", Value: "正常"},
 			{Target: "ABC分类", Source: "MB027", Op: "num"},
 			{Target: "虚拟件标识", Op: "fixed", Value: "否"},
@@ -167,6 +184,11 @@ func defaultConfig() *Config {
 				"PCSB02", "PCSA01", "A010", "Bao", "bale", "gal", "barrel", "L", "Lít",
 				"Bottle", "Coil", "XẤP",
 			},
+		},
+		// 跨字段联动校验示例：勾了序列管理就必须填序列号规则编码，否则 MES 导入报错。
+		CrossChecks: []CrossCheck{
+			{WhenCol: "序列管理", WhenVal: "是", ThenCol: "序列号规则编码",
+				Msg: "序列管理=是 时，序列号规则编码不能为空"},
 		},
 	}
 }

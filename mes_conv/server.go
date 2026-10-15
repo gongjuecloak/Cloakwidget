@@ -53,6 +53,10 @@ var logI18n = map[string]map[string]string{
 		"sum_unit_unknown": "单位未识别，已原样保留：%s（%d 行）",
 		"sum_not_in_list":  "值不在允许清单中：%s（%d 行）",
 
+		"chk_maxlen":      "列 %s 超出最大长度 %d（当前 %d 字）",
+		"chk_cross":       "%s=%s 时，%s 不能为空",
+		"sum_not_numeric": "数值列写入了非数字原值：%s（%d 行）",
+
 		"err_open_tpl":   "打开模板失败",
 		"err_tpl_header": "读模板表头失败",
 		"err_open_src":   "打开源文件失败",
@@ -79,6 +83,10 @@ var logI18n = map[string]map[string]string{
 		"sum_dict_unknown": "字典未匹配，已保留原值：%s（%d 行）",
 		"sum_unit_unknown": "單位未識別，已原樣保留：%s（%d 行）",
 		"sum_not_in_list":  "值不在允許清單中：%s（%d 行）",
+
+		"chk_maxlen":      "欄 %s 超出最大長度 %d（目前 %d 字）",
+		"chk_cross":       "%s=%s 時，%s 不能為空",
+		"sum_not_numeric": "數值欄寫入了非數字原值：%s（%d 行）",
 
 		"err_open_tpl":   "開啟範本失敗",
 		"err_tpl_header": "讀取範本表頭失敗",
@@ -107,6 +115,10 @@ var logI18n = map[string]map[string]string{
 		"sum_unit_unknown": "Không nhận diện đơn vị, giữ nguyên: %s (%d dòng)",
 		"sum_not_in_list":  "Giá trị không có trong danh sách cho phép: %s (%d dòng)",
 
+		"chk_maxlen":      "Cột %s vượt quá độ dài tối đa %d (hiện %d ký tự)",
+		"chk_cross":       "Khi %s=%s thì %s không được để trống",
+		"sum_not_numeric": "Cột số ghi giá trị không phải số: %s (%d dòng)",
+
 		"err_open_tpl":   "Mở tệp mẫu thất bại",
 		"err_tpl_header": "Đọc tiêu đề tệp mẫu thất bại",
 		"err_open_src":   "Mở tệp nguồn thất bại",
@@ -133,6 +145,10 @@ var logI18n = map[string]map[string]string{
 		"sum_dict_unknown": "Dictionary miss, original value kept: %s (%d rows)",
 		"sum_unit_unknown": "Unit not recognized, kept as-is: %s (%d rows)",
 		"sum_not_in_list":  "Value not in allowed list: %s (%d rows)",
+
+		"chk_maxlen":      "Column %s exceeds max length %d (current %d chars)",
+		"chk_cross":       "When %s=%s, %s must not be empty",
+		"sum_not_numeric": "Numeric column got a non-numeric value: %s (%d rows)",
 
 		"err_open_tpl":   "Failed to open template",
 		"err_tpl_header": "Failed to read template header",
@@ -318,6 +334,26 @@ func handlerConfigBackups(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name > out[j].Name }) // 新的在前
 	writeJSON(w, map[string]interface{}{"ok": true, "items": out})
+}
+
+// handlerConfigBackupGet 只读返回某份备份的完整配置（供「对比当前配置」使用）。
+func handlerConfigBackupGet(w http.ResponseWriter, r *http.Request) {
+	name := filepath.Base(r.URL.Query().Get("name")) // 防目录穿越
+	if name == "" || !strings.HasSuffix(name, ".json") {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": "非法备份名"})
+		return
+	}
+	b, err := os.ReadFile(filepath.Join(backupRoot(), name))
+	if err != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": "备份不存在: " + err.Error()})
+		return
+	}
+	var c Config
+	if err := json.Unmarshal(b, &c); err != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": "备份内容不是合法配置: " + err.Error()})
+		return
+	}
+	writeJSON(w, map[string]interface{}{"ok": true, "fields": c.Fields})
 }
 
 func handlerConfigRestore(w http.ResponseWriter, r *http.Request) {
@@ -727,6 +763,116 @@ func handlerSourceHeaders(w http.ResponseWriter, r *http.Request) {
 		"count":   len(headers),
 		"headers": headers,
 	})
+}
+
+// handlerPreview 在正式转换前，用当前映射规则对源文件跑一遍、只取前 N 行，
+// 返回「每个目标列会写出什么样例值」，让用户先确认映射是否符合预期，再决定是否正式转换。
+func handlerPreview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+	if err := r.ParseMultipartForm(64 << 20); err != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": "解析上传失败: " + err.Error()})
+		return
+	}
+	srcHeads := r.MultipartForm.File["source"]
+	if len(srcHeads) == 0 {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": "缺少源文件"})
+		return
+	}
+	tplF, _, err := r.FormFile("template")
+	if err != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": "缺少模板文件"})
+		return
+	}
+	defer tplF.Close()
+
+	lang := r.FormValue("lang")
+	if _, ok := logI18n[lang]; !ok {
+		lang = "zh"
+	}
+
+	var cfg *Config
+	if cs := r.FormValue("config"); cs != "" {
+		var c Config
+		if err := json.Unmarshal([]byte(cs), &c); err == nil && c.OutputSheet != "" && len(c.Fields) > 0 {
+			cfg = &c
+		}
+	}
+	if cfg == nil {
+		cfg = ensureConfig()
+	}
+
+	dir, err := os.MkdirTemp("", "mesprev-*")
+	if err != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+		return
+	}
+	defer os.RemoveAll(dir)
+
+	srcPath := filepath.Join(dir, "src.xlsx")
+	f, e := srcHeads[0].Open()
+	if e != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": e.Error()})
+		return
+	}
+	if e := saveUpload(f, srcPath); e != nil {
+		f.Close()
+		writeJSON(w, map[string]interface{}{"ok": false, "error": e.Error()})
+		return
+	}
+	f.Close()
+	tplPath := filepath.Join(dir, "tpl.xlsx")
+	if err := saveUpload(tplF, tplPath); err != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+		return
+	}
+
+	outPath := filepath.Join(dir, "out.xlsx")
+	if _, err := Convert(cfg, srcPath, tplPath, outPath, lang); err != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+		return
+	}
+
+	// 读回输出文件前 N 行，按目标列收集样例（非空、去重、每列最多 N 个）
+	const N = 5
+	owb, err := excelize.OpenFile(outPath)
+	if err != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": "读取预览失败: " + err.Error()})
+		return
+	}
+	defer owb.Close()
+	oSheet := cfg.OutputSheet
+	if oSheet == "" {
+		oSheet = owb.GetSheetName(0)
+	}
+	rows, err := owb.GetRows(oSheet)
+	if err != nil || len(rows) == 0 {
+		writeJSON(w, map[string]interface{}{"ok": true, "samples": map[string][]string{}})
+		return
+	}
+	headers := rows[0]
+	samples := map[string][]string{}
+	seen := map[string]map[string]bool{}
+	for _, hr := range headers {
+		samples[hr] = []string{}
+		seen[hr] = map[string]bool{}
+	}
+	for _, row := range rows[1:] {
+		for ci, hr := range headers {
+			if ci >= len(row) {
+				continue
+			}
+			v := strings.TrimSpace(row[ci])
+			if v == "" || seen[hr][v] || len(samples[hr]) >= N {
+				continue
+			}
+			seen[hr][v] = true
+			samples[hr] = append(samples[hr], v)
+		}
+	}
+	writeJSON(w, map[string]interface{}{"ok": true, "samples": samples})
 }
 
 // ---------- 转换 ----------
@@ -1298,6 +1444,7 @@ func buildMux() *http.ServeMux {
 		}
 	})
 	mux.HandleFunc("/api/config-backups", handlerConfigBackups)
+	mux.HandleFunc("/api/config-backup", handlerConfigBackupGet)
 	mux.HandleFunc("/api/config-restore", handlerConfigRestore)
 	mux.HandleFunc("/api/source-headers", handlerSourceHeaders)
 	mux.HandleFunc("/api/tpl/status", handlerTplStatus)
@@ -1323,6 +1470,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("/api/report", handlerReport)
 	mux.HandleFunc("/api/open-folder", handlerOpenFolder)
 	mux.HandleFunc("/api/convert", handlerConvert)
+	mux.HandleFunc("/api/preview", handlerPreview)
 	// ---- 订单 / 工单模块 ----
 	mux.HandleFunc("/api/orders/config", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {

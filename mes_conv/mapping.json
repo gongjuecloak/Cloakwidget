@@ -54,6 +54,11 @@
       "value": "SN001"
     },
     {
+      "target": "标识规则前缀",
+      "op": "fixed",
+      "value": ""
+    },
+    {
       "target": "默认发料仓库",
       "op": "fixed",
       "value": "虚拟仓"
@@ -93,6 +98,11 @@
     },
     {
       "target": "关键物料",
+      "op": "fixed",
+      "value": "否"
+    },
+    {
+      "target": "是否主件",
       "op": "fixed",
       "value": "否"
     },
