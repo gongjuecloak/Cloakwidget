@@ -37,7 +37,7 @@
   <div id="viewHome" class="view">
     <div class="home-intro">
       <h2 id="home_title">请选择要使用的模块</h2>
-      <p id="home_desc">两个模块各自独立，配置与输出互不影响</p>
+      <p id="home_desc">三个模块各自独立，配置与输出互不影响</p>
     </div>
     <div class="mod-grid">
       <div class="mod-card" id="modMaterials">
@@ -61,6 +61,17 @@
           <span class="mod-tag" id="mod_ord_t3">打标判定</span>
         </div>
         <div class="mod-go" id="mod_ord_go">进入 →</div>
+      </div>
+      <div class="mod-card" id="modBom">
+        <div class="mod-ico">🧱</div>
+        <h3 id="mod_bom_name">BOM / 用料表</h3>
+        <p id="mod_bom_desc">把 MES 抓取的 ERP BOM 大表（BOM抓取 V1.1）转换成 MES 的「BOM主表 + BOM明细」导入模板，自动生成 BOM 编码与项次。</p>
+        <div class="mod-tags">
+          <span class="mod-tag" id="mod_bom_t1">主表 + 明细</span>
+          <span class="mod-tag" id="mod_bom_t2">单位核对</span>
+          <span class="mod-tag" id="mod_bom_t3">维度修复</span>
+        </div>
+        <div class="mod-go" id="mod_bom_go">进入 →</div>
       </div>
     </div>
     <div class="cfg-entry" id="cfgEntry">
@@ -265,12 +276,103 @@
 
   </div><!-- /viewOrders -->
 
+  <!-- ===== 模块三：BOM / 用料表 ===== -->
+  <div id="viewBom" class="view" style="display:none">
+    <div class="steps">
+      <div class="card" id="bomSrcCard">
+        <div class="step-no">1</div>
+        <h2 id="bom_step_source">BOM 抓取文件</h2>
+        <p id="bom_step_source_desc">MES 抓取的 ERP BOM 大表（.xlsx，工作表「ERP 的 BOM 抓取 V1.1」）</p>
+        <label class="file-btn"><input type="file" id="bomSrcFile" accept=".xlsx" multiple><span id="bomSrcLabel">选择文件</span></label>
+        <div class="file-name" id="bomSrcName"></div>
+        <div class="file-list" id="bomSrcList"></div>
+        <div class="drop-hint" id="bomSrcDropHint">也可以直接把文件拖到这里</div>
+      </div>
+      <div class="card" id="bomTplCard">
+        <div class="step-no">2</div>
+        <h2 id="bom_step_tpl">BOM 导入模板</h2>
+        <p id="bom_step_tpl_desc">MES 的 BOM 导入模板（.xlsx，含「BOM主表」「BOM明细」两张表，数据行会被清空重写）</p>
+        <label class="file-btn"><input type="file" id="bomTplFile" accept=".xlsx" multiple><span id="bomTplLabel">选择文件</span></label>
+        <div class="file-name" id="bomTplName"></div>
+        <div class="file-list" id="bomTplList"></div>
+        <div class="drop-hint" id="bomTplDropHint">也可以直接把文件拖到这里</div>
+      </div>
+      <div class="card" id="bomMapCard">
+        <div class="step-no">3</div>
+        <h2 id="bom_step_map">计量单位映射表（可选）</h2>
+        <p id="bom_step_map_desc">MES 的计量单位档案（.xlsx），用于核对源單位是否都能对上；不给则跳过该核对</p>
+        <label class="file-btn"><input type="file" id="bomMapFile" accept=".xlsx,.xls" multiple><span id="bomMapLabel">选择文件</span></label>
+        <div class="file-name" id="bomMapName"></div>
+        <div class="file-list" id="bomMapList"></div>
+        <div class="drop-hint" id="bomMapDropHint">也可以直接把文件拖到这里</div>
+      </div>
+    </div>
+
+    <div class="card" id="bomOptCard">
+      <div class="opt-line">
+        <label class="chk"><input type="checkbox" id="bomBasediv"><span id="bom_basediv_label">基础用量按「組成用量 ÷ 底數」归一化（不勾选则直接取組成用量原值）</span></label>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button id="bomStartBtn" class="primary">开始转换</button>
+    </div>
+
+    <div id="bomProgressWrap" style="display:none;margin:14px 0 0">
+      <div style="height:8px;background:#e5e7eb;border-radius:999px;overflow:hidden">
+        <div id="bomProgressBar" style="height:100%;width:0;background:#2563eb;transition:width .2s ease"></div>
+      </div>
+      <div id="bomProgressText" style="margin-top:6px;font-size:13px;color:#6b7280"></div>
+    </div>
+
+    <div id="bomBanner" class="banner" role="status" aria-live="polite"></div>
+
+    <section id="bomResultSection" class="result">
+      <div class="ok-icon">✓</div>
+      <h2 id="bom_result_title">转换完成！</h2>
+      <p id="bom_result_desc">文件已生成，点击下载即可导入 MES。</p>
+      <div class="stats" id="bomStats"></div>
+      <div class="result-btns">
+        <a id="bomDownloadLink" class="primary" href="#">下载结果文件</a>
+        <button id="bomOpenFolderBtn" class="ghost">打开输出文件夹</button>
+      </div>
+    </section>
+
+    <section id="bomDiagSection" class="check-section">
+      <div class="section-title">
+        <h3 id="bom_diag_title">诊断与单位核对</h3>
+        <span class="ghost" id="bomDiagSummary"></span>
+      </div>
+      <div id="bomDiagBox"></div>
+      <div id="bomUnitWrap" class="scrollbox" style="display:none">
+        <table><thead><tr>
+          <th id="bom_unit_raw">源單位</th>
+          <th id="bom_unit_count" style="width:110px">行数</th>
+          <th id="bom_unit_mapped">→ MES 单位</th>
+          <th id="bom_unit_status" style="width:150px">状态</th>
+        </tr></thead><tbody id="bomUnitBody"></tbody></table>
+      </div>
+    </section>
+
+    <section id="bomLogSection" class="log-section">
+      <div class="log-head">
+        <h3 id="bom_log_title">转换日志</h3>
+        <div class="btns">
+          <button id="bomCopyLogBtn" class="ghost">复制日志</button>
+          <button id="bomToggleLogBtn" class="ghost">查看日志</button>
+        </div>
+      </div>
+      <pre id="bomLogBox" class="log-box"></pre>
+    </section>
+
+  </div><!-- /viewBom -->
+
   <!-- ===== 配置中心：所有配置集中在这里，操作页面不维护配置 ===== -->
   <div id="viewConfig" class="view" style="display:none">
     <div id="cfgFailBanner" class="banner err" role="alert"></div>
     <div class="cfg-head">
       <h2 id="cfg_title">配置中心</h2>
-      <p id="cfg_desc">两个模块的字段映射与规则都在这里维护。选文件、转换这些日常操作在各自的模块页面完成，这里只改配置。</p>
+      <p id="cfg_desc">各模块的字段映射与规则都在这里维护。选文件、转换这些日常操作在各自的模块页面完成，这里只改配置。</p>
     </div>
     <div class="cfg-tabs" role="tablist" aria-label="配置模块">
       <button type="button" class="cfg-tab active" role="tab" id="cfgTabMat" data-tab="mat" aria-controls="cfgPaneMat" aria-selected="true">物料档案</button>

@@ -974,7 +974,7 @@ document.getElementById("valuesFile").addEventListener("change",e=>{
 // 打开先看到模块选择页。四个视图：home（选模块）/ materials / orders / config（配置中心）。
 // 配置统一收在 config 视图，操作页面只负责选文件与转换。
 let currentModule="home";
-const VIEW_IDS={home:"viewHome",materials:"viewMaterials",orders:"viewOrders",config:"viewConfig"};
+const VIEW_IDS={home:"viewHome",materials:"viewMaterials",orders:"viewOrders",bom:"viewBom",config:"viewConfig"};
 
 function showModule(name){
   if(!VIEW_IDS[name]) name="home";
@@ -1036,6 +1036,7 @@ function applyModuleChrome(){
 }
 document.getElementById("modMaterials").addEventListener("click",()=>showModule("materials"));
 document.getElementById("modOrders").addEventListener("click",()=>showModule("orders"));
+document.getElementById("modBom").addEventListener("click",()=>showModule("bom"));
 document.getElementById("cfgEntry").addEventListener("click",()=>{ if(window.__cfgReady) showModule("config"); });
 document.getElementById("cfgNavBtn").addEventListener("click",()=>showModule("config"));
 document.getElementById("cfgTabMat").addEventListener("click",()=>showCfgTab("mat"));
@@ -1050,6 +1051,9 @@ document.getElementById("backHomeBtn").addEventListener("click",()=>{
 document.getElementById("langSel").addEventListener("change",()=>{
   if(ordCfgLoaded){ const bak=ordCfg; ordCfg=collectOrdCfg(); ordRenderCfg(); ordCfg=bak; }
   if(currentModule==="orders") loadOrdersHistory();
+  if(bomLastResult && document.getElementById("bomResultSection").classList.contains("show")){
+    renderBomStats(bomLastResult.data); renderBomDiag(bomLastResult.data);
+  }
   if(ordLastResult && document.getElementById("ordResultSection").classList.contains("show")){
     ordRenderStats(ordLastResult.data);
     ordRenderChecks(ordLastResult.data);
@@ -1138,6 +1142,104 @@ document.getElementById("ordCopyLogBtn").addEventListener("click",()=>{
 });
 bindFile("ordSrcFile","ordSrcName","ordSrcCard",null);
 bindFile("ordWorkFile","ordWorkName","ordWorkCard",null);
+
+// ==================== BOM / 用料表模块 ====================
+const bomShowStatus=makeStatus("bomBanner"), bomSetBusy=makeBusy("bomStartBtn","bom_converting","bom_start_btn");
+const _bprog=makeProgress({wrap:"bomProgressWrap",bar:"bomProgressBar",text:"bomProgressText"},d=>t("prog_preparing"));
+const bomStartProgressPoll=_bprog.start, bomFinishProgress=_bprog.finish;
+const bomRenderLog=makeLogRenderer({box:"bomLogBox",section:"bomLogSection",toggle:"bomToggleLogBtn"});
+const bomSrcPicker = bindMultiFile("bomSrcFile","bomSrcName","bomSrcList","bomSrcCard", null, null);
+const bomTplPicker = bindMultiFile("bomTplFile","bomTplName","bomTplList","bomTplCard", null, null);
+const bomMapPicker = bindMultiFile("bomMapFile","bomMapName","bomMapList","bomMapCard", null, null);
+let bomLastResult=null;
+
+function bomEsc(s){
+  return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+function renderBomStats(data){
+  document.getElementById("bomStats").innerHTML =
+    statCard(t("rows_label"),data.rows)
+    + statCard(t("elapsed_label"),(data.elapsed||0)+" ms")
+    + statCard(t("bom_stat_master"),data.master||0)
+    + statCard(t("bom_stat_detail"),data.detail||0);
+}
+
+function renderBomDiag(data){
+  const box=document.getElementById("bomDiagBox");
+  box.innerHTML =
+    '<div class="diag-line">'+t("bom_diag_line")
+      .replace("{a}",data.empty_seq||0).replace("{b}",data.non_numeric_seq||0).replace("{c}",data.empty_child||0)+'</div>'
+    +'<div class="diag-line">'+t("bom_rule_line")
+      .replace("{rule}",bomEsc(data.base_rule||"-")).replace("{n}",data.div_applied||0)+'</div>'
+    +((data.dim_fixes&&data.dim_fixes.length)
+      ? '<div class="diag-line">'+t("bom_dim_line")+' '+bomEsc(data.dim_fixes.join("; "))+'</div>'
+      : "");
+  const wrap=document.getElementById("bomUnitWrap"), body=document.getElementById("bomUnitBody");
+  const units=(data.unit_stats||[]);
+  const sum=document.getElementById("bomDiagSummary");
+  if(!units.length){
+    wrap.style.display="none"; sum.textContent="";
+  }else{
+    wrap.style.display="";
+    sum.textContent=t("bom_unit_summary").replace("{n}",units.length);
+    body.innerHTML=units.map(u=>{
+      const key="bom_st_"+String(u.status||"").toLowerCase();
+      const label=(typeof STR[currentLang]==="object" && STR[currentLang][key]) ? t(key) : bomEsc(u.status);
+      return '<tr><td>'+bomEsc(u.raw)+'</td><td>'+u.count+'</td><td>'+bomEsc(u.mapped)+'</td><td>'+label+'</td></tr>';
+    }).join("");
+  }
+  document.getElementById("bomDiagSection").classList.add("show");
+}
+
+async function doBomConvert(){
+  const sfs=bomSrcPicker.get(), tfs=bomTplPicker.get(), mfs=bomMapPicker.get();
+  if(!sfs.length){ bomShowStatus("err","bom_no_src"); return; }
+  if(!tfs.length){ bomShowStatus("err","bom_no_tpl"); return; }
+  bomSetBusy(true); bomShowStatus("","");
+  bomStartProgressPoll();
+  let doneText="";
+  const fd=new FormData();
+  sfs.forEach(f=>fd.append("source",f));
+  tfs.forEach(f=>fd.append("template",f));
+  mfs.forEach(f=>fd.append("unitmap",f));
+  fd.append("basediv", document.getElementById("bomBasediv").checked?"1":"0");
+  fd.append("lang",currentLang);
+  try{
+    const resp=await fetch("/api/bom/convert",{method:"POST",body:fd,signal:timeoutSignal(CONVERT_TIMEOUT_MS)});
+    const data=await safeJson(resp);
+    bomRenderLog(data.log||[]);
+    if(data.ok){
+      bomShowStatus("ok","status_done");
+      const rs=document.getElementById("bomResultSection"); rs.classList.add("show");
+      document.getElementById("bomDownloadLink").href="/download?file="+encodeURIComponent(data.file);
+      renderBomStats(data); renderBomDiag(data);
+      bomLastResult={data:data,lang:currentLang};
+      doneText=fmt("prog_done",[data.rows||0]);
+      rs.scrollIntoView({behavior:"smooth",block:"nearest"});
+    }else{
+      bomShowStatus("err", data.error || t("status_error"));
+      if(data.log) bomRenderLog(data.log);
+    }
+  }catch(e){
+    bomShowStatus("err",fetchErrText(e));
+  }finally{ bomSetBusy(false); bomFinishProgress(doneText); }
+}
+document.getElementById("bomStartBtn").addEventListener("click",doBomConvert);
+document.getElementById("bomOpenFolderBtn").addEventListener("click",async()=>{
+  const b=document.getElementById("bomOpenFolderBtn"); const old=b.textContent;
+  b.textContent=t("opening");
+  try{ await fetch("/api/open-folder"); }catch(e){}
+  setTimeout(()=>{ b.textContent=old; },900);
+});
+document.getElementById("bomToggleLogBtn").addEventListener("click",()=>{
+  const box=document.getElementById("bomLogBox"); box.classList.toggle("show");
+  document.getElementById("bomToggleLogBtn").textContent = box.classList.contains("show")?t("hide_log"):t("bom_view_log");
+});
+document.getElementById("bomCopyLogBtn").addEventListener("click",()=>{
+  const txt=document.getElementById("bomLogBox").textContent||"";
+  if(navigator.clipboard) navigator.clipboard.writeText(txt);
+});
 
 // ---- 订单配置编辑器（全表单，无 JSON） ----
 const ORD_CATS=[

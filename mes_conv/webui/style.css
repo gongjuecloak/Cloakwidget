@@ -240,3 +240,9 @@ input.tgt-bad{border-color:var(--err) !important;background:#fff3f2}
 .diff-row.add{color:#065f46}
 .diff-row.del{color:#991b1b}
 .diff-row.chg{color:#92400e}
+
+/* ---- BOM 模块 ---- */
+.opt-line{padding:4px 0}
+.opt-line .chk{display:flex;align-items:flex-start;gap:8px;font-size:14px;cursor:pointer}
+.opt-line .chk input{margin-top:3px}
+.diag-line{font-size:13px;color:#6b7280;margin-bottom:4px}
