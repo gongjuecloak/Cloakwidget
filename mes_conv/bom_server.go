@@ -55,6 +55,7 @@ var bomI18n = map[string]bomMsg{
 		"b_rule_div":         "組成用量÷底數",
 		"b_rule_raw":         "組成用量原值",
 		"b_warn_col_fallback": "⚠ 角色 %s 的源列「%s」没找到，已回退默认列位",
+		"b_warn_sheet_fallback": "⚠ 源工作表「%s」不存在，已改用第一个工作表「%s」",
 	},
 	"zht": {
 		"b_start":            "開始處理 BOM 資料…",
@@ -86,6 +87,7 @@ var bomI18n = map[string]bomMsg{
 		"b_rule_div":         "組成用量÷底數",
 		"b_rule_raw":         "組成用量原值",
 		"b_warn_col_fallback": "⚠ 角色 %s 的源欄「%s」沒找到，已回退預設欄位",
+		"b_warn_sheet_fallback": "⚠ 來源工作表「%s」不存在，已改用第一個工作表「%s」",
 	},
 	"vi": {
 		"b_start":            "Bắt đầu xử lý dữ liệu BOM…",
@@ -117,6 +119,7 @@ var bomI18n = map[string]bomMsg{
 		"b_rule_div":         "組成用量÷底數",
 		"b_rule_raw":         "Giá trị 組成用量 gốc",
 		"b_warn_col_fallback": "⚠ Không tìm thấy cột nguồn「%s」của vai trò %s, đã dùng vị trí cột mặc định",
+		"b_warn_sheet_fallback": "⚠ Trang tính nguồn「%s」không tồn tại, đã dùng trang tính đầu tiên「%s」",
 	},
 	"en": {
 		"b_start":            "Starting BOM conversion…",
@@ -148,6 +151,7 @@ var bomI18n = map[string]bomMsg{
 		"b_rule_div":         "usage ÷ base",
 		"b_rule_raw":         "usage as-is",
 		"b_warn_col_fallback": "⚠ Column「%s」for role %s not found, fell back to default position",
+		"b_warn_sheet_fallback": "⚠ Source sheet「%s」not found, using first sheet「%s」",
 	},
 }
 

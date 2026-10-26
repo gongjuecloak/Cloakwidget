@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	bomSrcSheetDefault    = `ERP 的 BOM 抓取 V1.1`
+	bomSrcSheetDefault    = ``
 	bomMasterSheetDefault = `BOM主表`
 	bomDetailSheetDefault = `BOM明细`
 )
@@ -357,6 +357,23 @@ func ConvertBOM(srcPath, tplPath, mapPath, outPath string, opt BomOptions, L map
 		return nil, fmt.Errorf("%s: %w", L["b_err_src"], err)
 	}
 	defer src.Close()
+
+	// 源工作表：未指定时用第一个；指定了但不存在时回退第一个并写日志告警（与列回退同一理念）
+	if sheets := src.GetSheetList(); len(sheets) > 0 {
+		found := opt.SrcSheet == ""
+		for _, s := range sheets {
+			if s == opt.SrcSheet {
+				found = true
+				break
+			}
+		}
+		if !found {
+			logf(fmt.Sprintf(L["b_warn_sheet_fallback"], opt.SrcSheet, sheets[0]))
+		}
+		if !found || opt.SrcSheet == "" {
+			opt.SrcSheet = sheets[0]
+		}
+	}
 
 	// 输出 = 模板整份拷贝（styles/theme/表头样式原样保留），再用 StreamWriter
 	// 把两张表的数据区整表重写。不在模板上原地清行——excelize v2.11 的
