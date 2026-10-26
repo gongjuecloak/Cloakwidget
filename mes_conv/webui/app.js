@@ -220,12 +220,11 @@ async function doConvert(){
   const sfs=srcPicker.get();
   const tf=document.getElementById("tplFile").files[0];
   if(!sfs.length){ showStatus("err","err_no_src"); return; }
-  if(!tf){ showStatus("err","err_no_tpl"); return; }
   setBusy(true); showStatus("","");
   startProgressPoll();
   let doneText="";
   const fd=new FormData();
-  fd.append("template",tf);
+  if(tf) fd.append("template",tf);   // 可选：不选用内置模板
   sfs.forEach(f=>fd.append("source",f));
   fd.append("config", JSON.stringify(cfg||{})); fd.append("lang",currentLang);
   try{
@@ -568,11 +567,10 @@ async function doPreview(){
   const wrap=document.getElementById("previewWrap");
   wrap.style.display="block";
   if(!src.files || src.files.length===0){ wrap.innerHTML='<div class="banner err">请先选择源文件再预览</div>'; return; }
-  if(!tpl.files || tpl.files.length===0){ wrap.innerHTML='<div class="banner err">请先选择模板文件再预览</div>'; return; }
   syncAdvToCfg();
   const fd=new FormData();
   for(const f of src.files) fd.append("source", f);
-  fd.append("template", tpl.files[0]);
+  if(tpl.files && tpl.files[0]) fd.append("template", tpl.files[0]);   // 可选：不选用内置模板
   fd.append("lang", currentLang);
   fd.append("config", JSON.stringify(cfg));
   wrap.innerHTML='<div class="loading">正在生成预览…</div>';
@@ -1202,14 +1200,13 @@ function renderBomDiag(data){
 async function doBomConvert(){
   const sfs=bomSrcPicker.get(), tfs=bomTplPicker.get(), mfs=bomMapPicker.get();
   if(!sfs.length){ bomShowStatus("err","bom_no_src"); return; }
-  if(!tfs.length){ bomShowStatus("err","bom_no_tpl"); return; }
   bomSetBusy(true); bomShowStatus("","");
   bomStartProgressPoll();
   let doneText="";
   const fd=new FormData();
   sfs.forEach(f=>fd.append("source",f));
-  tfs.forEach(f=>fd.append("template",f));
-  mfs.forEach(f=>fd.append("unitmap",f));
+  tfs.forEach(f=>fd.append("template",f));   // 可选：不选用内置模板
+  mfs.forEach(f=>fd.append("unitmap",f));    // 可选：首次上传后自动存入配置
   fd.append("basediv", document.getElementById("bomBasediv").checked?"1":"0");
   fd.append("lang",currentLang);
   try{
@@ -2581,3 +2578,55 @@ document.querySelector(".cfg-tabs").addEventListener("keydown",e=>{
   document.querySelectorAll("th:not([scope])").forEach(th=>th.setAttribute("scope","col"));
 })();
 ["dragover","drop"].forEach(ev=>window.addEventListener(ev,e=>{ if(!(e.target.closest&&e.target.closest(".card"))) e.preventDefault(); }));
+
+// ---- 发现新版本弹窗（启动后静默查一次；24h 内已在后台自动更新过的会报 has_update=false） ----
+(function(){
+  const LS_KEY="upd_dismissed";
+  function showUpdateModal(d){
+    document.getElementById("updTitle").textContent=t("upd_title");
+    document.getElementById("updText").textContent=fmt("upd_text",[d.latest||"", d.current||appVersionStr()]);
+    const notes=document.getElementById("updNotes");
+    const ns=(d.notes||"").trim();
+    if(ns){ notes.textContent=ns.slice(0,2000); notes.style.display="block"; }
+    else notes.style.display="none";
+    const m=document.getElementById("updateModal");
+    m.style.display="flex";
+  }
+  function appVersionStr(){
+    const el=document.querySelector(".ver, #verTag");
+    return el?el.textContent.replace(/^v/,""):"";
+  }
+  document.getElementById("updLater").addEventListener("click",()=>{
+    try{ localStorage.setItem(LS_KEY, window.__latestVer||""); }catch(e){}
+    document.getElementById("updateModal").style.display="none";
+  });
+  const nowBtn=document.getElementById("updNow");
+  nowBtn.addEventListener("click",async()=>{
+    const old=nowBtn.textContent;
+    nowBtn.disabled=true; nowBtn.textContent=t("upd_applying");
+    try{
+      const r=await fetch("/api/system/update/apply",{method:"POST"});
+      const d=await r.json();
+      if(d.ok){
+        nowBtn.textContent=t("upd_done");
+        setTimeout(()=>{ document.getElementById("updateModal").style.display="none"; },1500);
+      }else{
+        alert(t("upd_fail")+(d.error||d.message||""));
+        nowBtn.disabled=false; nowBtn.textContent=old;
+      }
+    }catch(e){
+      alert(t("upd_fail")+((e&&e.message)||""));
+      nowBtn.disabled=false; nowBtn.textContent=old;
+    }
+  });
+  setTimeout(async()=>{
+    try{
+      const r=await fetch("/api/system/update?lang="+currentLang);
+      const d=await r.json();
+      if(!d || !d.has_update) return;
+      window.__latestVer=d.latest||"";
+      try{ if(localStorage.getItem(LS_KEY)===d.latest) return; }catch(e){}
+      showUpdateModal(d);
+    }catch(e){}
+  },3000);
+})();

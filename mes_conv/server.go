@@ -781,12 +781,11 @@ func handlerPreview(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]interface{}{"ok": false, "error": "缺少源文件"})
 		return
 	}
-	tplF, _, err := r.FormFile("template")
-	if err != nil {
-		writeJSON(w, map[string]interface{}{"ok": false, "error": "缺少模板文件"})
-		return
+	tplF, _, tplErr := r.FormFile("template")
+	hasTpl := tplErr == nil
+	if hasTpl {
+		defer tplF.Close()
 	}
-	defer tplF.Close()
 
 	lang := r.FormValue("lang")
 	if _, ok := logI18n[lang]; !ok {
@@ -824,9 +823,18 @@ func handlerPreview(w http.ResponseWriter, r *http.Request) {
 	}
 	f.Close()
 	tplPath := filepath.Join(dir, "tpl.xlsx")
-	if err := saveUpload(tplF, tplPath); err != nil {
-		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
-		return
+	if hasTpl {
+		if err := saveUpload(tplF, tplPath); err != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+			return
+		}
+	} else {
+		var e error
+		tplPath, e = embeddedTemplate(dir, "materials.xlsx")
+		if e != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": e.Error()})
+			return
+		}
 	}
 
 	outPath := filepath.Join(dir, "out.xlsx")
@@ -893,12 +901,13 @@ func handlerConvert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	srcH := srcHeads[0]
-	tplF, tplH, err := r.FormFile("template")
-	if err != nil {
-		writeJSON(w, map[string]interface{}{"ok": false, "error": "缺少模板文件"})
-		return
+	// 模板可选：不传时用内置模板（表头+样式嵌在二进制里），传了就优先用上传的
+	tplF, tplH, tplErr := r.FormFile("template")
+	hasTpl := tplErr == nil
+	tplName := ""
+	if hasTpl {
+		defer tplF.Close()
 	}
-	defer tplF.Close()
 
 	lang := r.FormValue("lang")
 	if _, ok := logI18n[lang]; !ok {
@@ -926,9 +935,20 @@ func handlerConvert(w http.ResponseWriter, r *http.Request) {
 	defer os.RemoveAll(dir)
 	srcPath := filepath.Join(dir, "src.xlsx")
 	tplPath := filepath.Join(dir, "tpl.xlsx")
-	if err := saveUpload(tplF, tplPath); err != nil {
-		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
-		return
+	if hasTpl {
+		if err := saveUpload(tplF, tplPath); err != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+			return
+		}
+		tplName = tplH.Filename
+	} else {
+		var e error
+		tplPath, e = embeddedTemplate(dir, "materials.xlsx")
+		if e != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": e.Error()})
+			return
+		}
+		tplName = "内置物料档案模板"
 	}
 
 	// ---- 源文件落盘：单个直接用；多个先合并成一份临时 xlsx ----
@@ -1008,7 +1028,7 @@ func handlerConvert(w http.ResponseWriter, r *http.Request) {
 			add("  " + n)
 		}
 	}
-	add(fmt.Sprintf(L["tpl"], tplH.Filename))
+	add(fmt.Sprintf(L["tpl"], tplName))
 	add(L["conv"])
 
 	progressStart(srcH.Filename)
@@ -1045,7 +1065,7 @@ func handlerConvert(w http.ResponseWriter, r *http.Request) {
 		ID:         reportID,
 		Time:       nowStr,
 		Source:     srcH.Filename,
-		Template:   tplH.Filename,
+		Template:   tplName,
 		Output:     base,
 		Rows:       rep.Rows,
 		ElapsedMS:  elapsed,
@@ -1062,7 +1082,7 @@ func handlerConvert(w http.ResponseWriter, r *http.Request) {
 		File:     base,
 		Rows:     rep.Rows,
 		Source:   srcH.Filename,
-		Template: tplH.Filename,
+		Template: tplName,
 		Issues:   rep.IssueTotal,
 		Warnings: len(rep.Warnings),
 		Report:   reportID,

@@ -33,6 +33,10 @@ type BomConfig struct {
 	// UnitAliases 源单位别名（匹配时忽略大小写）-> 归一后的单位名，如 PCSQ -> PCS。
 	// 优先级高于单位映射表。
 	UnitAliases map[string]string `json:"unit_aliases"`
+	// UnitMap 单位映射表（键为大写源单位，值为标准单位名）。来自首次上传的
+	// 「计量单位」映射表，解析后持久化在这里，之后转换不再需要人工上传。
+	// 优先级低于 UnitAliases。
+	UnitMap map[string]string `json:"unit_map,omitempty"`
 	// Basediv 转换页「基础用量归一化」复选框的默认值
 	Basediv bool `json:"basediv"`
 }
@@ -236,6 +240,10 @@ func handlerBomSaveConfig(w http.ResponseWriter, r *http.Request) {
 	if len(c.Columns) == 0 {
 		writeJSON(w, map[string]interface{}{"ok": false, "error": "配置里没有源列映射，拒绝保存"})
 		return
+	}
+	// 请求体没带 unit_map 时保留磁盘上已有的单位映射（配置页保存不应抹掉它）
+	if c.UnitMap == nil {
+		c.UnitMap = loadBomConfig().UnitMap
 	}
 	c.fillDefaults()
 	if fileExists(bomConfigPath()) {

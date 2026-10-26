@@ -56,6 +56,9 @@ var bomI18n = map[string]bomMsg{
 		"b_rule_raw":         "組成用量原值",
 		"b_warn_col_fallback": "⚠ 角色 %s 的源列「%s」没找到，已回退默认列位",
 		"b_warn_sheet_fallback": "⚠ 源工作表「%s」不存在，已改用第一个工作表「%s」",
+		"b_tpl_builtin":         "内置 BOM 模板",
+		"b_map_saved":           "单位映射已存入配置（%d 条），下次转换无需再上传",
+		"b_map_cfg":             "使用配置内置单位映射：%d 条",
 	},
 	"zht": {
 		"b_start":            "開始處理 BOM 資料…",
@@ -88,6 +91,9 @@ var bomI18n = map[string]bomMsg{
 		"b_rule_raw":         "組成用量原值",
 		"b_warn_col_fallback": "⚠ 角色 %s 的源欄「%s」沒找到，已回退預設欄位",
 		"b_warn_sheet_fallback": "⚠ 來源工作表「%s」不存在，已改用第一個工作表「%s」",
+		"b_tpl_builtin":         "內建 BOM 模板",
+		"b_map_saved":           "單位映射已存入設定（%d 條），下次轉換無需再上傳",
+		"b_map_cfg":             "使用設定內建單位映射：%d 條",
 	},
 	"vi": {
 		"b_start":            "Bắt đầu xử lý dữ liệu BOM…",
@@ -120,6 +126,9 @@ var bomI18n = map[string]bomMsg{
 		"b_rule_raw":         "Giá trị 組成用量 gốc",
 		"b_warn_col_fallback": "⚠ Không tìm thấy cột nguồn「%s」của vai trò %s, đã dùng vị trí cột mặc định",
 		"b_warn_sheet_fallback": "⚠ Trang tính nguồn「%s」không tồn tại, đã dùng trang tính đầu tiên「%s」",
+		"b_tpl_builtin":         "Mẫu BOM tích hợp",
+		"b_map_saved":           "Đã lưu bảng ánh xạ đơn vị vào cấu hình (%d mục), lần sau không cần tải lên lại",
+		"b_map_cfg":             "Dùng bảng ánh xạ đơn vị tích hợp trong cấu hình: %d mục",
 	},
 	"en": {
 		"b_start":            "Starting BOM conversion…",
@@ -152,6 +161,9 @@ var bomI18n = map[string]bomMsg{
 		"b_rule_raw":         "usage as-is",
 		"b_warn_col_fallback": "⚠ Column「%s」for role %s not found, fell back to default position",
 		"b_warn_sheet_fallback": "⚠ Source sheet「%s」not found, using first sheet「%s」",
+		"b_tpl_builtin":         "Built-in BOM template",
+		"b_map_saved":           "Unit mapping saved to config (%d entries); no need to upload again",
+		"b_map_cfg":             "Using unit mapping stored in config: %d entries",
 	},
 }
 
@@ -204,14 +216,19 @@ func handlerBomConvert(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]interface{}{"ok": false, "error": L["b_err_src"]})
 		return
 	}
+	// 模板可选：不传时用内置模板（表头+样式嵌在二进制里），传了就优先用上传的
 	tplPath, tplName, err := bomSaveOne(r, dir, "template")
 	if err != nil {
 		writeJSON(w, map[string]interface{}{"ok": false, "error": L["b_err_tpl"] + ": " + err.Error()})
 		return
 	}
 	if tplPath == "" {
-		writeJSON(w, map[string]interface{}{"ok": false, "error": L["b_err_tpl"]})
-		return
+		tplPath, err = embeddedTemplate(dir, "bom.xlsx")
+		if err != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+			return
+		}
+		tplName = L["b_tpl_builtin"]
 	}
 	mapPath, mapName, err := bomSaveOne(r, dir, "unitmap")
 	if err != nil {
@@ -222,6 +239,17 @@ func handlerBomConvert(w http.ResponseWriter, r *http.Request) {
 	// 配置：磁盘上的 bom_mapping.json（无则用内置默认并落盘）。
 	// 工作表名、源列位、固定值、单位别名都从配置来。
 	bc := ensureBomConfig()
+
+	// 单位映射：上传了就解析并持久化进配置（下次免传）；没上传就用配置里的
+	unitMapSaved := 0
+	if mapPath != "" {
+		if m, e := bomUnitMapFromFile(mapPath); e == nil && len(m) > 0 {
+			bc.UnitMap = m
+			if e := saveBomConfig(bc); e == nil {
+				unitMapSaved = len(m)
+			}
+		}
+	}
 
 	// basediv：表单带了就按表单，没带用配置默认
 	basediv := bc.Basediv
@@ -265,6 +293,9 @@ func handlerBomConvert(w http.ResponseWriter, r *http.Request) {
 		add(strings.TrimSuffix(L["b_map"], "%s") + "-")
 	}
 	add(L["b_conv"])
+	if unitMapSaved > 0 {
+		add(fmt.Sprintf(L["b_map_saved"], unitMapSaved))
+	}
 
 	progressStart(srcName)
 	rep, err := ConvertBOM(srcPath, tplPath, mapPath, outPath, opt, L, func(s string) { add(s) })

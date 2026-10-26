@@ -183,6 +183,46 @@ type bomUnitMaps struct {
 	names, syms, ens map[string]string
 }
 
+// bomUnitMapFromFile 把上传的「计量单位」映射表解析成扁平映射
+// （键=大写源单位/英文名/符号，值=标准单位名），供持久化进配置。
+func bomUnitMapFromFile(path string) (map[string]string, error) {
+	m, err := bomLoadUnits(path)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(m.names)+len(m.syms)+len(m.ens))
+	// 优先级：符号 > 英文名 > 名称（后写的覆盖先写的，符号最贴近源表用法）
+	for k, v := range m.names {
+		out[k] = v
+	}
+	for k, v := range m.ens {
+		out[k] = v
+	}
+	for k, v := range m.syms {
+		out[k] = v
+	}
+	return out, nil
+}
+
+// bomUnitMapsFromMap 用配置里持久化的单位映射（键=大写源单位，值=标准单位名）
+// 构造映射结构，语义与上传的映射表一致（查 names/syms/ens 任一命中都算映射到）。
+func bomUnitMapsFromMap(m map[string]string) *bomUnitMaps {
+	if len(m) == 0 {
+		return nil
+	}
+	names := make(map[string]string, len(m))
+	for k, v := range m {
+		if strings.TrimSpace(k) == "" || strings.TrimSpace(v) == "" {
+			continue
+		}
+		names[strings.ToUpper(strings.TrimSpace(k))] = strings.TrimSpace(v)
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	return &bomUnitMaps{names: names, syms: map[string]string{}, ens: map[string]string{}}
+}
+
 // bomLoadUnits 读映射表。注意「计量单位 (3).xls」实际是 xlsx 容器，
 // 用 excelize.OpenReader 按内容嗅探打开（对真实 xls 也能走 OpenReader 之外的分支）。
 func bomLoadUnits(path string) (*bomUnitMaps, error) {
@@ -350,6 +390,10 @@ func ConvertBOM(srcPath, tplPath, mapPath, outPath string, opt BomOptions, L map
 			return nil, fmt.Errorf("%s: %w", L["b_err_map"], err)
 		}
 		logf(fmt.Sprintf(L["b_map_loaded"], len(um.names), len(um.syms), len(um.ens)))
+	} else if m := bomUnitMapsFromMap(opt.Cfg.UnitMap); m != nil {
+		// 没上传映射表时用配置里持久化的那份（首次上传后自动记住，之后免传）
+		um = m
+		logf(fmt.Sprintf(L["b_map_cfg"], len(um.names)))
 	}
 
 	src, err := excelize.OpenFile(srcPath)
