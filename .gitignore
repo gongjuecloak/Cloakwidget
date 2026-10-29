@@ -7,6 +7,10 @@ mes_conv/backup/
 mes_conv/configs/
 # 运行期自动更新状态（记录上次检查时间，避免每次启动都打 GitHub）
 mes_conv/autoupdate.json
+# 上次运行的版本号（用于「刚升级过就弹一次更新日志」，运行期状态）
+mes_conv/last_version.txt
+# 配置原子写入的临时文件
+mes_conv/*.json.tmp
 # 镜像访问令牌（运行期由客户端自动协商写入，不入库）
 mes_mirror_token
 # 就地更新时的临时文件
@@ -39,6 +43,7 @@ MES物料档案转换工具_分享版/welcomed
 # 运行期状态：模板基线快照 + 自动更新检查时间戳，均非源码
 MES物料档案转换工具_分享版/tpl_baseline.json
 MES物料档案转换工具_分享版/autoupdate.json
+MES物料档案转换工具_分享版/last_version.txt
 
 # 分享用的打包产物（内含 exe，同样不入库）
 /MES物料档案转换工具_*.zip

@@ -308,7 +308,10 @@ func fetchLatestRelease() (*ghRelease, error) {
 // updateManifest 描述一次发布的更新包；由 CI 在构建时生成并随 release 一起上传。
 type updateManifest struct {
 	Version string `json:"version"`
-	Exe     struct {
+	// Notes 更新说明（多语言，可选）。构建时从 mes_conv/changelog.json 里取该版本的条目。
+	// 内网镜像环境拿不到 GitHub Release 正文，就靠这个把「改了什么」显示给用户。
+	Notes map[string][]string `json:"notes,omitempty"`
+	Exe   struct {
 		Name   string `json:"name"`   // 如 MES-Converter-v1.9.0.exe
 		URL    string `json:"url"`    // GitHub 上的下载地址（兜底用）
 		SHA256 string `json:"sha256"` // 构建时算出的真实哈希，校验锚点
@@ -540,18 +543,27 @@ func handlerUpdate(w http.ResponseWriter, r *http.Request) {
 	if has {
 		msg = fmt.Sprintf(L["msg_update_new"], latest, appVersion)
 	}
-	// 尽量给更新说明（best-effort）
+	// 更新说明：优先用清单里带的（镜像 / 内网环境也能看到），没有再回 GitHub Release 正文
 	notes := ""
-	if rel, e := fetchLatestRelease(); e == nil {
-		notes = rel.Body
-		if len(notes) > 4000 {
-			notes = notes[:4000]
+	if m != nil {
+		if ns := pickLang(m.Notes, lang); len(ns) > 0 {
+			notes = strings.Join(ns, "\n")
+		}
+	}
+	if notes == "" {
+		if rel, e := fetchLatestRelease(); e == nil {
+			notes = rel.Body
+			if len(notes) > 4000 {
+				notes = notes[:4000]
+			}
 		}
 	}
 	writeJSON(w, map[string]interface{}{
 		"ok": true, "current": appVersion, "latest": latest, "has_update": has,
 		"url":      "https://github.com/" + releaseRepo + "/releases",
 		"download": dl, "notes": notes, "message": msg,
+		// updated_from 不为空表示「这次是从哪个版本升上来的」，界面据此主动弹一次更新日志
+		"updated_from": updatedFrom,
 	})
 }
 

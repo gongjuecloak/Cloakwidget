@@ -21,11 +21,49 @@ import (
 	"github.com/xuri/excelize/v2"
 )
 
+// ensureConfig 配置的统一入口（启动与每次取配置都走这里）：
+//   - 文件不存在 → 写出内置默认（首次运行）
+//   - 存在但解析失败 → **先备份再重置**，绝不静默覆盖用户的自定义映射
+//     （旧行为是直接写回默认值：手滑少个逗号就等于把整套映射丢了，且没有任何痕迹）
+//   - 存在且发生 schema 迁移 → 迁移前备份、迁移后写回，盘上配置始终是当前 schema
 func ensureConfig() *Config {
-	c, err := loadConfig()
-	if err != nil {
-		c = defaultConfig()
+	path := configPath()
+	if !fileExists(path) {
+		c := defaultConfig()
+		c.Schema = schemaMaterials
 		_ = saveConfig(c)
+		return c
+	}
+
+	c, changed, err := loadConfig()
+	if err != nil {
+		name := ""
+		if n, e := backupFile(path, backupRoot()); e == nil {
+			name = n
+		}
+		addConfigNote("mapping.json 解析失败（%v）；已备份为 backup/%s，本次改用内置默认配置。修好备份文件后覆盖回去并重启即可恢复自定义规则",
+			err, name)
+		def := defaultConfig()
+		def.Schema = schemaMaterials
+		_ = saveConfig(def)
+		return def
+	}
+
+	// 配置比程序新（schema > 当前）：只读不写，避免旧版把新版写入的键抹掉
+	if c.Schema > schemaMaterials {
+		return c
+	}
+
+	if changed {
+		if name := backupBeforeMigrate(path); name != "" {
+			addConfigNote("mapping.json 迁移前已备份：backup/%s", name)
+		}
+		if e := saveConfig(c); e != nil {
+			// 写回失败不影响本次使用（内存里已经是迁移后的配置），下次启动会再迁一次
+			addConfigNote("警告：mapping.json 迁移结果写回失败（%v），本次仍按迁移后的配置运行", e)
+		} else {
+			addConfigNote("mapping.json 已升级到 schema v%d", c.Schema)
+		}
 	}
 	return c
 }
@@ -46,12 +84,14 @@ var logI18n = map[string]map[string]string{
 		"elapsed":  "耗时：%d 毫秒",
 		"failed":   "转换失败：%s",
 
-		"chk_required":     "必填列为空",
-		"chk_code_dup":     "与第 %d 行重复（%s）",
-		"sum_code_dup":     "物料编码重复：%s（共 %d 行）",
-		"sum_dict_unknown": "字典未匹配，已保留原值：%s（%d 行）",
-		"sum_unit_unknown": "单位未识别，已原样保留：%s（%d 行）",
-		"sum_not_in_list":  "值不在允许清单中：%s（%d 行）",
+		"chk_required":           "必填列为空",
+		"chk_code_dup":           "与第 %d 行重复（%s）",
+		"sum_code_dup":           "物料编码重复：%s（共 %d 行）",
+		"sum_dict_unknown":       "字典未匹配，已保留原值：%s（%d 行）",
+		"sum_unit_unknown":       "单位未识别，已原样保留：%s（%d 行）",
+		"sum_not_in_list":        "值不在允许清单中：%s（%d 行）",
+		"sum_unmapped_required":  "模板必填列没有对应的映射规则（会整列为空，MES 导入会失败）：%s",
+		"note_unmapped_optional": "模板中有 %d 列未配置映射规则（保持为空）：%s",
 
 		"chk_maxlen":      "列 %s 超出最大长度 %d（当前 %d 字）",
 		"chk_cross":       "%s=%s 时，%s 不能为空",
@@ -77,12 +117,14 @@ var logI18n = map[string]map[string]string{
 		"elapsed":  "耗時：%d 毫秒",
 		"failed":   "轉換失敗：%s",
 
-		"chk_required":     "必填欄為空",
-		"chk_code_dup":     "與第 %d 行重複（%s）",
-		"sum_code_dup":     "物料編號重複：%s（共 %d 行）",
-		"sum_dict_unknown": "字典未匹配，已保留原值：%s（%d 行）",
-		"sum_unit_unknown": "單位未識別，已原樣保留：%s（%d 行）",
-		"sum_not_in_list":  "值不在允許清單中：%s（%d 行）",
+		"chk_required":           "必填欄為空",
+		"chk_code_dup":           "與第 %d 行重複（%s）",
+		"sum_code_dup":           "物料編號重複：%s（共 %d 行）",
+		"sum_dict_unknown":       "字典未匹配，已保留原值：%s（%d 行）",
+		"sum_unit_unknown":       "單位未識別，已原樣保留：%s（%d 行）",
+		"sum_not_in_list":        "值不在允許清單中：%s（%d 行）",
+		"sum_unmapped_required":  "範本必填欄沒有對應的對應規則（會整欄為空，MES 匯入會失敗）：%s",
+		"note_unmapped_optional": "範本中有 %d 欄未設定對應規則（保持為空）：%s",
 
 		"chk_maxlen":      "欄 %s 超出最大長度 %d（目前 %d 字）",
 		"chk_cross":       "%s=%s 時，%s 不能為空",
@@ -108,12 +150,14 @@ var logI18n = map[string]map[string]string{
 		"elapsed":  "Thời gian: %d ms",
 		"failed":   "Chuyển đổi thất bại: %s",
 
-		"chk_required":     "Cột bắt buộc bị trống",
-		"chk_code_dup":     "Trùng với dòng %d (%s)",
-		"sum_code_dup":     "Mã vật liệu bị trùng: %s (%d dòng)",
-		"sum_dict_unknown": "Không khớp từ điển, giữ nguyên giá trị: %s (%d dòng)",
-		"sum_unit_unknown": "Không nhận diện đơn vị, giữ nguyên: %s (%d dòng)",
-		"sum_not_in_list":  "Giá trị không có trong danh sách cho phép: %s (%d dòng)",
+		"chk_required":           "Cột bắt buộc bị trống",
+		"chk_code_dup":           "Trùng với dòng %d (%s)",
+		"sum_code_dup":           "Mã vật liệu bị trùng: %s (%d dòng)",
+		"sum_dict_unknown":       "Không khớp từ điển, giữ nguyên giá trị: %s (%d dòng)",
+		"sum_unit_unknown":       "Không nhận diện đơn vị, giữ nguyên: %s (%d dòng)",
+		"sum_not_in_list":        "Giá trị không có trong danh sách cho phép: %s (%d dòng)",
+		"sum_unmapped_required":  "Cột bắt buộc của mẫu chưa có quy tắc ánh xạ (sẽ để trống cả cột, nhập vào MES sẽ lỗi): %s",
+		"note_unmapped_optional": "Mẫu có %d cột chưa cấu hình quy tắc ánh xạ (giữ trống): %s",
 
 		"chk_maxlen":      "Cột %s vượt quá độ dài tối đa %d (hiện %d ký tự)",
 		"chk_cross":       "Khi %s=%s thì %s không được để trống",
@@ -139,12 +183,14 @@ var logI18n = map[string]map[string]string{
 		"elapsed":  "Elapsed: %d ms",
 		"failed":   "Conversion failed: %s",
 
-		"chk_required":     "Required column is empty",
-		"chk_code_dup":     "Duplicate of row %d (%s)",
-		"sum_code_dup":     "Duplicate material code: %s (%d rows)",
-		"sum_dict_unknown": "Dictionary miss, original value kept: %s (%d rows)",
-		"sum_unit_unknown": "Unit not recognized, kept as-is: %s (%d rows)",
-		"sum_not_in_list":  "Value not in allowed list: %s (%d rows)",
+		"chk_required":           "Required column is empty",
+		"chk_code_dup":           "Duplicate of row %d (%s)",
+		"sum_code_dup":           "Duplicate material code: %s (%d rows)",
+		"sum_dict_unknown":       "Dictionary miss, original value kept: %s (%d rows)",
+		"sum_unit_unknown":       "Unit not recognized, kept as-is: %s (%d rows)",
+		"sum_not_in_list":        "Value not in allowed list: %s (%d rows)",
+		"sum_unmapped_required":  "Required template columns have no mapping rule (will be blank; MES import will fail): %s",
+		"note_unmapped_optional": "%d template columns have no mapping rule (kept blank): %s",
 
 		"chk_maxlen":      "Column %s exceeds max length %d (current %d chars)",
 		"chk_cross":       "When %s=%s, %s must not be empty",
@@ -258,6 +304,8 @@ func handlerSaveConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	// 覆盖前先备份旧配置，改坏了可回滚
 	backupName, _ := backupConfig()
+	// 界面上保存的配置就是「当前代」的配置，标上 schema 免得下次启动再迁一遍
+	c.Schema = schemaMaterials
 	if err := saveConfig(&c); err != nil {
 		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
 		return
@@ -1484,6 +1532,10 @@ func handlerAbout(w http.ResponseWriter, r *http.Request) {
 		"port":       currentPort,
 		"addr":       fmt.Sprintf("http://127.0.0.1:%d/", currentPort),
 		"runtime":    runtime.Version() + " " + runtime.GOOS + "/" + runtime.GOARCH,
+		// 配置 schema 迁移 / 损坏备份等情况，界面「关于」里直接可见
+		"config_notes": configNotesSnapshot(),
+		// 本次启动的上一个版本（空 = 首次运行或版本没变）
+		"updated_from": updatedFrom,
 	})
 }
 
@@ -1492,6 +1544,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("/", handlerIndex)
 	mux.HandleFunc("/api/ping", handlerPing)
 	mux.HandleFunc("/api/about", handlerAbout)
+	mux.HandleFunc("/api/changelog", handlerChangelog)
 	mux.HandleFunc("/api/progress", handlerProgress)
 	mux.HandleFunc("/api/config", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {

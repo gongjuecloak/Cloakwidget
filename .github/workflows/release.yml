@@ -139,17 +139,37 @@ jobs:
           VER="${VER#v}"
           SHA=$(sha256sum "$EXE" | awk '{print $1}')
           SIZE=$(stat -c%s "$EXE")
-          cat > dist/version.json <<JSON
-          {
-            "version": "$VER",
-            "exe": {
-              "name": "MES-Converter-${{ github.ref_name }}.exe",
-              "url": "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/MES-Converter-${{ github.ref_name }}.exe",
-              "sha256": "$SHA",
-              "size": $SIZE
-            }
+          python3 - "$VER" "$SHA" "$SIZE" "${{ github.ref_name }}" <<'PY'
+          import json, os, sys
+
+          ver, sha, size, tag = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
+          manifest = {
+              "version": ver,
+              "exe": {
+                  "name": "MES-Converter-%s.exe" % tag,
+                  "url": "https://github.com/%s/releases/download/%s/MES-Converter-%s.exe"
+                         % (os.environ.get("GITHUB_REPOSITORY", ""), tag, tag),
+                  "sha256": sha,
+                  "size": size,
+              },
           }
-          JSON
+          # 更新说明：从 mes_conv/changelog.json 取该版本条目（多语言）。
+          # 客户端在「内网镜像、连不上 GitHub」时，就靠清单里的 notes 显示改了什么。
+          try:
+              with open("mes_conv/changelog.json", encoding="utf-8") as f:
+                  data = json.load(f)
+              for e in data.get("versions", []):
+                  if str(e.get("version", "")).lstrip("v") == ver:
+                      if e.get("notes"):
+                          manifest["notes"] = e["notes"]
+                      break
+          except Exception as e:
+              print("changelog.json 读取失败（清单将不带更新说明）：", e)
+
+          with open("dist/version.json", "w", encoding="utf-8") as f:
+              json.dump(manifest, f, ensure_ascii=False, indent=2)
+          print(json.dumps(manifest, ensure_ascii=False, indent=2))
+          PY
           echo "version.json 内容："; cat dist/version.json
 
       - name: 签名 version.json（Ed25519，建立供应链信任根）

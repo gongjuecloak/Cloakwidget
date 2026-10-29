@@ -2,6 +2,21 @@
 
 版本号在 `mes_conv/version.go`，本文件按版本倒序记录。
 
+## v1.17.0
+
+配置随版本演进不再「静默失配」，并把更新内容内置进程序：
+
+- **配置 schema**：`mapping.json` / `orders.json` / `bom_mapping.json` 各加 `schema` 字段。程序启动时按版本逐级迁移，盘上配置始终对齐当前版本；配置由**更高版本**程序写入时只读不写，避免回退版本把新键抹掉。
+- **迁移前备份、迁移后写回**：迁移前自动复制到 `backup/`（如 `orders_20261029_170000.json`），迁移结果写回磁盘并记日志（`orders.json 已按 schema v1 补齐 N 项`）。排障包里能查到配置属于哪一代。
+- **配置损坏先备份再重置**：`mapping.json` 解析失败时先备份成 `backup/mapping_*.json` 再回退默认（旧行为是直接覆盖写回默认，用户的自定义映射会无声消失），并在「关于」里给出提示。
+- **字段级补齐**（`reconcileConfig` 扩展）：除原有的列顺序 / 表头 / 必填 / 日期列，新增 `field_mapping`、`default_values`、`derived_columns`、`column_aliases` 的补缺；开关类只有「键根本没写」才按默认打开（缺省 false 与用户有意关掉用原始 JSON 键存在性区分）；`tag_materials` 整组缺失时补回（缺了会导致「是否需要打标」整列为空、MES 导入失败）。
+- **BOM 配置同样补齐**：`columns` / `master_fixed` / `detail_fixed` / `unit_aliases` 缺键补齐（以前 map 非 nil 就跳过，新增角色/固定值到不了旧配置）。
+- **未覆盖列告警**：转换结果新增「模板里有、配置没有数据来源的列」提示 —— 物料模块按模板 `*` 必填列判断，必填缺规则报警告（会整列为空、MES 导入失败），非必填只记中性说明；订单 / 工单按 `column_order` 逐列判断，程序内部生成的列（行号 / 来源单号 / 打标 / 产线）不计入。
+- **更新日志内置**：新增 `mes_conv/changelog.json`（go:embed）。更新弹窗优先显示清单里带的 `notes`（内网镜像环境连不上 GitHub 也能看到），「关于」里可翻历史版本说明；版本变化后首次启动会主动弹一次本次更新内容（每个版本只弹一次）。
+- `version.json` 由 `gen_version.py` 从 `changelog.json` 取该版本说明写入 `notes`（多语言），CI 同步产物。
+- 配置写盘改为**原子写**（先写 `.tmp` 再 rename），避免写到一半被杀 / 断电留下半截 JSON 被下次启动判成损坏。
+- 新增 `config_schema_test.go`（旧配置迁移、schema 过新只读、字段级补齐、显式关闭不被覆盖、未覆盖列识别）。
+
 ## v1.16.0
 
 订单 / 工单模块「统一上传入口 + 自动识别」，并整体优化界面：

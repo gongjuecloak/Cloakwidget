@@ -857,6 +857,35 @@ function hideModal(id){
   if(_modalFocus&&_modalFocus.focus){ try{ _modalFocus.focus(); }catch(e){} }
   _modalFocus=null;
 }
+
+// ---- 更新日志（版本更新内容）----
+// 数据来自程序内置的 changelog.json：内网镜像环境连不上 GitHub 也能看到改了什么。
+async function openChangelog(fromVersion){
+  const body=document.getElementById("clBody");
+  const sub=document.getElementById("clSub");
+  document.getElementById("clTitle").textContent=t("cl_title");
+  const btn=document.getElementById("clClose");
+  if(btn) btn.textContent=t("cl_close");
+  sub.textContent="";
+  body.innerHTML='<p style="color:#6b7280">'+esc(t("prog_preparing"))+'</p>';
+  showModal("clModal");
+  try{
+    const r=await fetch("/api/changelog?lang="+currentLang+"&limit=10");
+    const d=await r.json();
+    if(fromVersion) sub.textContent=fmt("cl_updated_from",[fromVersion,(d&&d.current)||fromVersion]);
+    const list=(d&&d.versions)||[];
+    if(!list.length){ body.innerHTML='<p style="color:#6b7280">'+esc(t("cl_empty"))+'</p>'; return; }
+    body.innerHTML=list.map(v=>{
+      const head='<div style="display:flex;gap:8px;align-items:baseline;margin:14px 0 6px">'
+        +'<b style="font-size:14px">v'+esc(v.version||"")+'</b>'
+        +'<span style="color:#9ca3af;font-size:12px">'+esc(v.date||"")+'</span></div>';
+      const items=(v.items||[]).map(x=>'<li>'+esc(x)+'</li>').join("");
+      return head+'<ul style="margin:0;padding-left:18px;font-size:13px;color:#374151;line-height:1.75">'+items+'</ul>';
+    }).join("");
+  }catch(e){ body.innerHTML='<p style="color:#dc2626">'+esc(e.message)+'</p>'; }
+}
+if(document.getElementById("clClose")) document.getElementById("clClose").addEventListener("click",()=>hideModal("clModal"));
+if(document.getElementById("clModal")) document.getElementById("clModal").addEventListener("click",e=>{ if(e.target.id==="clModal") hideModal("clModal"); });
 document.getElementById("helpBtn").addEventListener("click",()=>{
   document.getElementById("helpBody").innerHTML=t("help_body");
   showModal("helpModal");
@@ -883,7 +912,16 @@ document.getElementById("aboutBtn").addEventListener("click",async()=>{
     html+=row(t("about_out"), d.out);
     html+=row(t("about_backup"), d.backup);
     html+='</table>';
+    // 配置迁移 / 损坏备份之类的说明：让用户知道程序动过哪些配置
+    const cfgNotes=(d&&d.config_notes)||[];
+    if(cfgNotes.length){
+      html+='<div style="margin-top:14px;font-size:12.5px;line-height:1.7;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:10px 12px;color:#92400e">'
+        +cfgNotes.map(n=>'<div>· '+esc(n)+'</div>').join("")+'</div>';
+    }
+    html+='<div style="margin-top:16px"><button class="ghost" id="aboutChangelogBtn">'+esc(t("about_changelog"))+'</button></div>';
     body.innerHTML=html;
+    const clBtn=document.getElementById("aboutChangelogBtn");
+    if(clBtn) clBtn.addEventListener("click",()=>openChangelog(""));
   }catch(e){ body.innerHTML='<p style="color:#dc2626">'+esc(e.message)+'</p>'; }
 });
 document.getElementById("aboutClose").addEventListener("click",()=>hideModal("aboutModal"));
@@ -2727,10 +2765,24 @@ document.querySelector(".cfg-tabs").addEventListener("keydown",e=>{
     try{
       const r=await fetch("/api/system/update?lang="+currentLang);
       const d=await r.json();
-      if(!d || !d.has_update) return;
-      window.__latestVer=d.latest||"";
-      try{ if(localStorage.getItem(LS_KEY)===d.latest) return; }catch(e){}
-      showUpdateModal(d);
+      if(d && d.has_update){
+        window.__latestVer=d.latest||"";
+        let dismissed=false;
+        try{ dismissed=localStorage.getItem(LS_KEY)===d.latest; }catch(e){}
+        if(!dismissed) showUpdateModal(d);
+        return;
+      }
+      // 版本变了（刚升级过）：主动弹一次更新日志，让用户知道这个版本改了什么。
+      // 每个版本只弹一次（本地记下已看过的版本号），不打扰日常使用。
+      if(d && d.updated_from){
+        const cur=String(d.current||"");
+        let seen="";
+        try{ seen=localStorage.getItem("cl_seen")||""; }catch(e){}
+        if(seen!==cur){
+          try{ localStorage.setItem("cl_seen",cur); }catch(e){}
+          openChangelog(d.updated_from);
+        }
+      }
     }catch(e){}
   },3000);
 })();

@@ -70,6 +70,45 @@ func inList(list []string, v string) bool {
 	return false
 }
 
+// unmappedTemplateColumns 找出模板里「没有任何映射规则」的列，按是否必填分成两组。
+// 必填组会被报成告警（整列空着，MES 导入必然失败）；其余只作中性说明，
+// 因为模板里本来就有一批列是「MES 侧才填」的（英文名称、库存参数…），不该当问题报。
+func unmappedTemplateColumns(headers []string, required []int, fields []FieldRule) (req, opt []string) {
+	mapped := make(map[string]bool, len(fields))
+	for _, f := range fields {
+		if t := strings.TrimSpace(f.Target); t != "" {
+			mapped[t] = true
+		}
+	}
+	reqSet := make(map[int]bool, len(required))
+	for _, i := range required {
+		reqSet[i] = true
+	}
+	for i, h := range headers {
+		col := cleanHeader(h)
+		if col == "" || mapped[col] {
+			continue
+		}
+		if reqSet[i] {
+			req = append(req, col)
+		} else {
+			opt = append(opt, col)
+		}
+	}
+	return req, opt
+}
+
+// previewList 把列表截成一行便于看：「a、b、c…」
+func previewList(items []string, n int) string {
+	if n <= 0 || len(items) == 0 {
+		return ""
+	}
+	if len(items) <= n {
+		return strings.Join(items, "、")
+	}
+	return strings.Join(items[:n], "、") + "…"
+}
+
 // Convert 按配置把源 xlsx 转成模板格式，写到 outPath，返回统计与预检结果。
 // lang 决定预检提示 / 汇总告警 / 错误信息的语言（zh / zht / vi / en），未知语言回退中文。
 func Convert(cfg *Config, srcPath, tplPath, outPath, lang string) (*Report, error) {
@@ -169,6 +208,20 @@ func Convert(cfg *Config, srcPath, tplPath, outPath, lang string) (*Report, erro
 		tNotes, tWarns := checkTemplate(tSheet, theaders, cfg, L)
 		rep.Notes = append(rep.Notes, tNotes...)
 		rep.Warnings = append(rep.Warnings, tWarns...)
+	}
+	// 模板里有、但映射规则完全没覆盖的列：这类列会整列为空。
+	// 带 * 的必填列空着，MES 导入必然失败 —— 以前这种情况一声不响（模板加了必填列 +
+	// 盘上是旧配置 = 静默空列），现在至少能在这里看见。
+	{
+		reqUnmapped, optUnmapped := unmappedTemplateColumns(theaders, required, cfg.Fields)
+		if len(reqUnmapped) > 0 {
+			rep.Warnings = append(rep.Warnings,
+				fmt.Sprintf(L["sum_unmapped_required"], strings.Join(reqUnmapped, "、")))
+		}
+		if len(optUnmapped) > 0 {
+			rep.Notes = append(rep.Notes,
+				fmt.Sprintf(L["note_unmapped_optional"], len(optUnmapped), previewList(optUnmapped, 6)))
+		}
 	}
 	var issues []Issue
 	issueTotal := 0

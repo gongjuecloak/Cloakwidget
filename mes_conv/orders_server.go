@@ -33,6 +33,8 @@ func handlerOrdersSaveConfig(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]interface{}{"ok": false, "error": "配置里没有字段映射，拒绝保存"})
 		return
 	}
+	// 界面上保存的配置就是「当前代」的配置，标上 schema 免得下次启动再迁一遍
+	c.Schema = schemaOrders
 	c.fillDefaults()
 	if fileExists(ordersConfigPath()) {
 		_, _ = backupFile(ordersConfigPath(), backupRoot())

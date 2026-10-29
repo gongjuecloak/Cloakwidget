@@ -57,6 +57,33 @@ def sign_ed25519(data: bytes, key_path: str) -> bytes:
     return key.sign(data)
 
 
+def load_notes(ver, path=None):
+    """从 changelog.json 取该版本的更新说明（多语言）。
+
+    清单里带上 notes 之后，客户端在「内网镜像、连不上 GitHub」的环境里
+    也能把「这个版本改了什么」显示在更新弹窗里。
+    """
+    cands = [path] if path else ["mes_conv/changelog.json", "changelog.json"]
+    for p in cands:
+        if not p or not os.path.exists(p):
+            continue
+        try:
+            with open(p, encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            print("  ! 读取 {} 失败（{}），清单将不带更新说明".format(p, e))
+            return None
+        for e in data.get("versions", []):
+            if str(e.get("version", "")).lstrip("v") == str(ver).lstrip("v"):
+                notes = e.get("notes") or None
+                if notes:
+                    print("  已带入更新说明：{}（{} 条 zh）".format(p, len(notes.get("zh", []))))
+                return notes
+        print("  ! {} 里没有 {} 的条目，清单将不带更新说明".format(p, ver))
+        return None
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--exe", required=True, help="真实构建产物 exe 路径（用于算 sha256/size）")
@@ -65,6 +92,7 @@ def main():
     ap.add_argument("--repo", default=REPO)
     ap.add_argument("--out", default="version.json")
     ap.add_argument("--key", default=None, help="Ed25519 私钥路径（PEM 或 64 字节种子）；也可用环境变量 MES_SIGN_PRIVATE_KEY")
+    ap.add_argument("--changelog", default=None, help="changelog.json 路径（默认自动找 mes_conv/changelog.json）")
     args = ap.parse_args()
 
     if not os.path.exists(args.exe):
@@ -85,6 +113,9 @@ def main():
             "size": size,
         },
     }
+    notes = load_notes(ver, args.changelog)
+    if notes:
+        manifest["notes"] = notes
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=2)
         f.write("\n")

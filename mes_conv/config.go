@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -46,6 +47,9 @@ type CrossCheck struct {
 
 // Config 是工具的唯一数据源：UI 与 CLI 都读它
 type Config struct {
+	// Schema 配置结构版本。0 = 老版本写的（无此字段），加载时按 v0 迁移到 schemaMaterials。
+	// 详见 config_schema.go 的说明。
+	Schema        int                          `json:"schema,omitempty"`
 	SourceSheet   int                          `json:"source_sheet"`   // 源数据工作表索引，-1 表示第一个
 	TemplateSheet int                          `json:"template_sheet"` // 模板工作表索引
 	OutputSheet   string                       `json:"output_sheet"`   // 输出工作表名
@@ -78,24 +82,139 @@ func configPath() string {
 	return filepath.Join(exeDir(), "mapping.json")
 }
 
-func loadConfig() (*Config, error) {
+// loadConfig 读磁盘配置并完成 schema 迁移（只读文件，不写盘）。
+// 第二个返回值表示「是否发生了迁移」——写回由 ensureConfig 负责，
+// 这样命令行 / 只读场景也能安全复用本函数。
+func loadConfig() (*Config, bool, error) {
 	b, err := os.ReadFile(configPath())
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	var c Config
 	if err := json.Unmarshal(b, &c); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return &c, nil
+	changed := migrateMaterialConfig(&c, b)
+	return &c, changed, nil
 }
 
+// saveConfig 写回配置。schema 比程序新时拒绝写入 —— 否则旧版程序会把新版的键抹掉。
 func saveConfig(c *Config) error {
+	if c.Schema > schemaMaterials {
+		return fmt.Errorf("配置由更高版本的程序写入（schema %d > %d），本版本不回写，以免丢字段；请先升级程序",
+			c.Schema, schemaMaterials)
+	}
 	b, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(configPath(), b, 0644)
+	return writeConfigFile(configPath(), b)
+}
+
+// migrateMaterialConfig 把盘上配置向当前 schema 迁移，返回是否发生了改动。
+// 迁移只做「补」，不删不覆盖用户已有的值；迁移前由调用方备份。
+func migrateMaterialConfig(c *Config, raw []byte) (changed bool) {
+	if c == nil {
+		return false
+	}
+	// 配置比程序新：只读不写，也不做任何补齐（补齐会掩盖新版本引入的字段）
+	if c.Schema > schemaMaterials {
+		addConfigNote("mapping.json 由更高版本的程序写入（schema %d > %d）：本版本只读不写，请升级程序",
+			c.Schema, schemaMaterials)
+		return false
+	}
+
+	addedFields, addedKeys := fillMaterialDefaults(c, raw)
+	if addedFields > 0 || addedKeys > 0 {
+		changed = true
+		addConfigNote("mapping.json 已按 schema v%d 补齐：新增 %d 条字段规则、%d 项字典/清单",
+			schemaMaterials, addedFields, addedKeys)
+	}
+	if c.Schema != schemaMaterials {
+		c.Schema = schemaMaterials
+		changed = true
+	}
+	return changed
+}
+
+// fillMaterialDefaults 字段级补齐：把内置默认里有、盘上缺的字段规则 / 字典 / 清单补上。
+//
+// 为什么按「字段规则」而不是整份配置对齐：Fields 是按 Target 逐条生效的，
+// 少一条的表现是「模板里那一列整列为空」，而不是报错 —— 最难发现的那种。
+// 只补缺的 Target，用户改过的规则（哪怕改成空值）一律不动。
+//
+// raw 用来分辨「键没写」和「键写了零值」：像 duplicate_keys 这种，
+// 空数组是用户「有意关掉检查」的表达，不能被默认值悄悄打开。
+func fillMaterialDefaults(c *Config, raw []byte) (addedFields, addedKeys int) {
+	def := defaultConfig()
+	top := rawTopKeys(raw)
+
+	if c.OutputSheet == "" {
+		c.OutputSheet = def.OutputSheet
+		addedKeys++
+	}
+
+	// Fields：按 Target 补缺，追加在末尾（输出列顺序由模板表头决定，不受 Fields 顺序影响）
+	seen := make(map[string]bool, len(c.Fields))
+	for _, f := range c.Fields {
+		seen[f.Target] = true
+	}
+	for _, f := range def.Fields {
+		if f.Target == "" || seen[f.Target] {
+			continue
+		}
+		c.Fields = append(c.Fields, f)
+		seen[f.Target] = true
+		addedFields++
+	}
+
+	// Dicts：按「字典名」整组补缺。已存在的字典不合并键 —— 字典内容属于业务口径，
+	// 用户删掉某条多半是有意的，硬塞回去会让转换结果变样。
+	if c.Dicts == nil {
+		c.Dicts = map[string]map[string]string{}
+	}
+	for name, d := range def.Dicts {
+		if _, ok := c.Dicts[name]; !ok {
+			c.Dicts[name] = d
+			addedKeys++
+		}
+	}
+
+	// UnitMap：整表缺才补
+	if len(c.UnitMap) == 0 {
+		c.UnitMap = def.UnitMap
+		addedKeys++
+	}
+
+	// ValueWhitelist / ColumnMaxLen：按目标列补缺（只影响「告警」，不改变输出）
+	if c.ValueWhitelist == nil {
+		c.ValueWhitelist = map[string][]string{}
+	}
+	for k, v := range def.ValueWhitelist {
+		if _, ok := c.ValueWhitelist[k]; !ok {
+			c.ValueWhitelist[k] = v
+			addedKeys++
+		}
+	}
+	if c.ColumnMaxLen == nil {
+		c.ColumnMaxLen = map[string]int{}
+	}
+	for k, v := range def.ColumnMaxLen {
+		if _, ok := c.ColumnMaxLen[k]; !ok {
+			c.ColumnMaxLen[k] = v
+			addedKeys++
+		}
+	}
+
+	// DuplicateKeys：只有「键根本没写」且默认确实有值时才补；
+	// 写成 [] 是用户有意关闭检查，不能被默认值悄悄打开。
+	// 注意别把「默认也是 nil」算成一次补齐 —— 那会让迁移永不收敛，每次启动都备份一遍。
+	if !rawHas(top, "duplicate_keys") && len(c.DuplicateKeys) == 0 && len(def.DuplicateKeys) > 0 {
+		c.DuplicateKeys = def.DuplicateKeys
+		addedKeys++
+	}
+
+	return addedFields, addedKeys
 }
 
 // defaultConfig 内置默认映射，首次运行且 mapping.json 不存在时写出

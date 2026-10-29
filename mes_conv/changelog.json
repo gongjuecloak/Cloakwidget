@@ -1,0 +1,89 @@
+{
+  "note": "程序内置的更新日志。发版时在 versions 顶部加一条，并把 version 改成新版本号；notes 按语言分组，缺的语言回退到 zh。",
+  "versions": [
+    {
+      "version": "1.17.0",
+      "date": "2026-10-29",
+      "notes": {
+        "zh": [
+          "配置文件加了版本号（schema）：新版程序启动时会把旧配置自动补齐，不再出现「模板加了列、输出却是空列」这种无声的问题。",
+          "补齐只做「加法」：新增的列、默认值、开关补进来，用户改过的值一律不动；补齐前自动备份到 backup/。",
+          "配置解析失败时先备份再重置（以前是直接覆盖写回默认），自定义映射不会因为少一个逗号就没了。",
+          "转换结果新增「模板里有、配置没有数据来源的列」提示：必填列报警告（会导致 MES 导入失败），非必填列列为说明。",
+          "更新弹窗与「关于」里可以直接查看历史版本的更新内容；内网镜像环境（连不上 GitHub）也能看到本次更新说明。"
+        ],
+        "zht": [
+          "設定檔加了版本號（schema）：新版程式啟動時會把舊設定自動補齊，不再出現「範本加了欄、輸出卻是空欄」這種無聲的問題。",
+          "補齊只做「加法」：新增的欄、預設值、開關補進來，使用者改過的值一律不動；補齊前自動備份到 backup/。",
+          "設定解析失敗時先備份再重置（以前是直接覆寫回預設），自訂對應不會因為少一個逗號就沒了。",
+          "轉換結果新增「範本裡有、設定沒有資料來源的欄」提示：必填欄報警告（會導致 MES 匯入失敗），非必填欄列為說明。",
+          "更新視窗與「關於」裡可以直接查看歷史版本的更新內容；內網鏡像環境（連不上 GitHub）也能看到本次更新說明。"
+        ],
+        "vi": [
+          "Tệp cấu hình đã có số phiên bản (schema): khi chạy bản mới, cấu hình cũ được tự động bổ sung — không còn tình trạng \"mẫu thêm cột mà đầu ra để trống\".",
+          "Chỉ bổ sung, không ghi đè: thêm cột / giá trị mặc định / công tắc còn thiếu, giữ nguyên mọi giá trị người dùng đã sửa; sao lưu vào backup/ trước khi bổ sung.",
+          "Khi tệp cấu hình bị lỗi định dạng: sao lưu rồi mới đặt lại (trước đây ghi đè luôn), không mất thiết lập tự chỉnh vì một dấu phẩy.",
+          "Kết quả chuyển đổi có thêm cảnh báo \"cột có trong mẫu nhưng chưa có nguồn dữ liệu\": cột bắt buộc là cảnh báo (nhập MES sẽ lỗi), cột khác chỉ là ghi chú.",
+          "Hộp thoại cập nhật và mục \"Giới thiệu\" xem được nội dung cập nhật của các phiên bản; máy trong mạng nội bộ (không ra GitHub) vẫn thấy được ghi chú phiên bản này."
+        ],
+        "en": [
+          "Config files now carry a schema version: a new build auto-completes older configs, so a newly added template column no longer silently comes out blank.",
+          "Completion is additive only — new columns, defaults and switches are added; your edited values are never overwritten. Everything is backed up to backup/ first.",
+          "A corrupt config is backed up before being reset (it used to be overwritten silently), so custom mappings survive a stray comma.",
+          "Conversion results now report template columns that have no data source: required ones raise a warning (MES import would fail), the rest are listed as notes.",
+          "The update dialog and About panel show release notes for every version, including on intranet mirrors without GitHub access."
+        ]
+      }
+    },
+    {
+      "version": "1.16.0",
+      "date": "2026-10-28",
+      "notes": {
+        "zh": [
+          "订单页合并为一个上传入口：订单档、製令（工单）档直接拖进来，程序按表头自动识别并分流。",
+          "识别结果写进转换日志与结果统计（订单 N · 工单 M），判定不了的文件按订单兜底并提示。",
+          "界面整体重设计：模块卡、上传卡、结果区、配置中心，响应式到手机宽度，支持键盘操作。"
+        ]
+      }
+    },
+    {
+      "version": "1.15.2",
+      "date": "2026-10-28",
+      "notes": {
+        "zh": [
+          "修复「工单输出比模板少一列」：盘上旧配置整体覆盖内置默认，导致新增的「工艺路线编码」不出现。",
+          "加载配置后自动向内置默认对齐补列，模板再变输出也会跟上。"
+        ]
+      }
+    },
+    {
+      "version": "1.15.1",
+      "date": "2026-10-28",
+      "notes": {
+        "zh": [
+          "工单输出按 MES 新模板回退到 16 列（去掉 完成/合格/报废数量 三列，保留 工艺路线编码）。"
+        ]
+      }
+    },
+    {
+      "version": "1.15.0",
+      "date": "2026-10-28",
+      "notes": {
+        "zh": [
+          "工单导入模板新增字段：工艺路线编码（文本）与 完成/合格/报废数量（默认 0）。"
+        ]
+      }
+    },
+    {
+      "version": "1.14.0",
+      "date": "2026-10-27",
+      "notes": {
+        "zh": [
+          "BOM 计量单位映射表并入配置，首次上传后不再需要每次上传。",
+          "物料档案与 BOM 的输出模板内嵌进程序，转换页只需上传源文件。",
+          "启动后静默检查更新，发现新版本弹窗提示更新说明。"
+        ]
+      }
+    }
+  ]
+}

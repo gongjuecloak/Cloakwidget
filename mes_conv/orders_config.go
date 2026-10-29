@@ -8,8 +8,10 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // TagMaterials 「是否需要打标」列的判定规则：产品编码以任一前缀开头 → 是
@@ -33,6 +35,8 @@ type OrdersSettings struct {
 
 // OrdersConfig 订单模块的唯一数据源（界面与命令行都读它）
 type OrdersConfig struct {
+	// Schema 配置结构版本。0 = 老版本写的（无此字段），加载时按 v0 迁移到 schemaOrders。
+	Schema int `json:"schema,omitempty"`
 	// category（order_master / order_detail / work_order）-> 源字段 -> 目标列
 	FieldMapping map[string]map[string]string `json:"field_mapping"`
 	// category -> 目标列 -> 源空时填入的默认值
@@ -62,36 +66,69 @@ func ordersConfigPath() string {
 }
 
 // loadOrdersConfig 磁盘优先；没有或解析失败则回退内置默认配置。
-// 和物料档案模块同一策略：默认配置编译在 exe 里，首次运行落一份到磁盘供维护。
-func loadOrdersConfig() *OrdersConfig {
-	if b, err := os.ReadFile(ordersConfigPath()); err == nil && len(b) > 0 {
+// 第二个返回值表示「是否发生了 schema 迁移」，写回由 ensureOrdersConfig 负责。
+func loadOrdersConfig() (*OrdersConfig, bool) {
+	path := ordersConfigPath()
+	if b, err := os.ReadFile(path); err == nil && len(b) > 0 {
 		var c OrdersConfig
 		if json.Unmarshal(b, &c) == nil && len(c.FieldMapping) > 0 {
 			c.fillDefaults()
-			// 盘上配置可能比内置默认旧（缺新增的模板列），先向默认对齐再返回，
-			// 否则旧配置会整体覆盖内置默认，导致模板改了输出却跟不上。
-			reconcileConfig(&c)
-			return &c
+			// 配置由更高版本程序写入：只读不写，避免旧版把新键抹掉
+			if c.Schema > schemaOrders {
+				addConfigNote("orders.json 由更高版本的程序写入（schema %d > %d）：本版本只读不写，请升级程序",
+					c.Schema, schemaOrders)
+				return &c, false
+			}
+			// 盘上配置可能比内置默认旧（缺新增的模板列 / 默认值 / 开关），
+			// 先向默认对齐再返回，否则旧配置会整体覆盖内置默认，导致模板改了输出却跟不上。
+			changed := reconcileConfig(&c, b)
+			if c.Schema != schemaOrders {
+				c.Schema = schemaOrders
+				changed = true
+			}
+			return &c, changed
+		}
+		// 解析失败 / 缺少 field_mapping：先备份再回退默认，绝不静默覆盖用户的自定义映射
+		if name, e := backupFile(path, backupRoot()); e == nil && name != "" {
+			addConfigNote("orders.json 解析失败或缺少 field_mapping，已备份为 backup/%s，本次改用内置默认配置",
+				name)
 		}
 	}
 	c := defaultOrdersConfig()
-	return c
+	c.Schema = schemaOrders
+	return c, true
 }
 
-// saveOrdersConfig 覆盖前由调用方负责备份
+// saveOrdersConfig 覆盖前由调用方负责备份。
+// schema 比程序新时拒绝写入 —— 否则旧版程序会把新版写入的键抹掉。
 func saveOrdersConfig(c *OrdersConfig) error {
+	if c.Schema > schemaOrders {
+		return fmt.Errorf("配置由更高版本的程序写入（schema %d > %d），本版本不回写，以免丢字段；请先升级程序",
+			c.Schema, schemaOrders)
+	}
 	b, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(ordersConfigPath(), b, 0644)
+	return writeConfigFile(ordersConfigPath(), b)
 }
 
-// ensureOrdersConfig 首次运行写出配置文件；返回当前生效的配置
+// ensureOrdersConfig 首次运行写出配置文件；返回当前生效的配置。
+// 发生迁移时：先备份旧文件，再把迁移结果写回（盘上配置始终是当前 schema）。
 func ensureOrdersConfig() *OrdersConfig {
-	c := loadOrdersConfig()
-	if !fileExists(ordersConfigPath()) {
+	path := ordersConfigPath()
+	c, changed := loadOrdersConfig()
+	if !fileExists(path) {
 		_ = saveOrdersConfig(c)
+		return c
+	}
+	if changed && c.Schema <= schemaOrders {
+		if name := backupBeforeMigrate(path); name != "" {
+			addConfigNote("orders.json 迁移前已备份：backup/%s", name)
+		}
+		if e := saveOrdersConfig(c); e != nil {
+			addConfigNote("警告：orders.json 迁移结果写回失败（%v），本次仍按迁移后的配置运行", e)
+		}
 	}
 	return c
 }
@@ -136,17 +173,21 @@ func (c *OrdersConfig) fillDefaults() {
 	}
 }
 
-// reconcileConfig 让盘上配置的结构性列定义向内置默认（= 当前 MES 模板）对齐：
+// reconcileConfig 让盘上配置的结构与内置默认（= 当前 MES 模板）对齐：
 //   - ColumnOrder：把内置默认里有、但盘上缺失的列追加到末尾，保留用户已有列的先后顺序；
-//   - TemplateHeaders / RequiredColumns / DateColumns：补齐盘上缺失的键（不覆盖已有值）。
+//   - TemplateHeaders / RequiredColumns / DateColumns：补齐盘上缺失的键（不覆盖已有值）；
+//   - FieldMapping / DefaultValues / DerivedColumns / ColumnAliases：按「源字段 / 目标列」补缺
+//     —— 否则新版本加的映射与默认值到不了旧配置，表现是「某列整列为空」，全程无声；
+//   - Settings 开关与 TagMaterials：只有「盘上根本没写这个键」才补默认
+//     （布尔缺省 false 与用户有意关掉长得一样，靠原始 JSON 的键存在性区分）。
 //
-// 这样「模板变了」时，即使盘上存着一份旧配置，输出也会自动跟上，
-// 不会被旧列集合整体覆盖（之前 工艺路线编码 加进模板却没出现在输出，就是这个坑）。
-// 仅做「追加/补缺」，不删除盘上多出来的列，避免误伤用户合法定制。
-func reconcileConfig(c *OrdersConfig) {
+// 仅做「追加/补缺」，不删除盘上多出来的项，避免误伤用户合法定制。
+// raw 是盘上配置原始字节，用于判断键是否存在；传 nil 表示不判断（单元测试用）。
+func reconcileConfig(c *OrdersConfig, raw []byte) bool {
 	d := defaultOrdersConfig()
+	added := 0
 
-	// 防御：盘上配置若没写这些分支，先初始化再补列，避免对 nil map 赋值 panic
+	// 防御：盘上配置若没写这些分支，先初始化再补，避免对 nil map 赋值 panic
 	if c.ColumnOrder == nil {
 		c.ColumnOrder = map[string][]string{}
 	}
@@ -159,67 +200,199 @@ func reconcileConfig(c *OrdersConfig) {
 	if c.DateColumns == nil {
 		c.DateColumns = map[string][]string{}
 	}
+	if c.FieldMapping == nil {
+		c.FieldMapping = map[string]map[string]string{}
+	}
+	if c.DefaultValues == nil {
+		c.DefaultValues = map[string]map[string]string{}
+	}
+	if c.DerivedColumns == nil {
+		c.DerivedColumns = map[string]map[string]string{}
+	}
 
 	// ColumnOrder：追加默认里有、但盘上缺失的列
 	for cat, defCols := range d.ColumnOrder {
-		saved := c.ColumnOrder[cat]
-		if saved == nil {
-			saved = []string{}
-		}
-		seen := make(map[string]bool, len(saved))
-		for _, s := range saved {
-			seen[s] = true
-		}
-		for _, dc := range defCols {
-			if !seen[dc] {
-				saved = append(saved, dc)
-				seen[dc] = true
-			}
-		}
-		c.ColumnOrder[cat] = saved
+		cur, n := mergeMissingStrings(c.ColumnOrder[cat], defCols)
+		c.ColumnOrder[cat] = cur
+		added += n
 	}
 
 	// TemplateHeaders：补齐缺失的表头前缀映射
-	if c.TemplateHeaders == nil {
-		c.TemplateHeaders = map[string]string{}
-	}
 	for k, v := range d.TemplateHeaders {
 		if _, ok := c.TemplateHeaders[k]; !ok {
 			c.TemplateHeaders[k] = v
+			added++
 		}
 	}
 
 	// RequiredColumns：补齐默认必填列
 	for cat, req := range d.RequiredColumns {
-		cur := c.RequiredColumns[cat]
-		seen := make(map[string]bool, len(cur))
-		for _, s := range cur {
-			seen[s] = true
-		}
-		for _, r := range req {
-			if !seen[r] {
-				cur = append(cur, r)
-				seen[r] = true
-			}
-		}
+		cur, n := mergeMissingStrings(c.RequiredColumns[cat], req)
 		c.RequiredColumns[cat] = cur
+		added += n
 	}
 
 	// DateColumns：补齐默认日期列
 	for cat, dc := range d.DateColumns {
-		cur := c.DateColumns[cat]
-		seen := make(map[string]bool, len(cur))
-		for _, s := range cur {
-			seen[s] = true
+		cur, n := mergeMissingStrings(c.DateColumns[cat], dc)
+		c.DateColumns[cat] = cur
+		added += n
+	}
+
+	// FieldMapping：补齐缺失的「源字段 → 目标列」
+	for cat, m := range d.FieldMapping {
+		cur := c.FieldMapping[cat]
+		if cur == nil {
+			cur = map[string]string{}
 		}
-		for _, r := range dc {
-			if !seen[r] {
-				cur = append(cur, r)
-				seen[r] = true
+		for src, tgt := range m {
+			if _, ok := cur[src]; !ok {
+				cur[src] = tgt
+				added++
 			}
 		}
-		c.DateColumns[cat] = cur
+		c.FieldMapping[cat] = cur
 	}
+
+	// DefaultValues：补齐缺失的「目标列默认值」。
+	// 这一项最容易漏：新版本给某列加了默认值（如 工艺路线编码），旧配置里没有该键，
+	// 输出就会整列为空，且不会报错。
+	for cat, m := range d.DefaultValues {
+		cur := c.DefaultValues[cat]
+		if cur == nil {
+			cur = map[string]string{}
+		}
+		for k, v := range m {
+			if _, ok := cur[k]; !ok {
+				cur[k] = v
+				added++
+			}
+		}
+		c.DefaultValues[cat] = cur
+	}
+
+	// DerivedColumns：补齐缺失的派生列
+	for cat, m := range d.DerivedColumns {
+		cur := c.DerivedColumns[cat]
+		if cur == nil {
+			cur = map[string]string{}
+		}
+		for k, v := range m {
+			if _, ok := cur[k]; !ok {
+				cur[k] = v
+				added++
+			}
+		}
+		c.DerivedColumns[cat] = cur
+	}
+
+	// ColumnAliases：补齐缺失的源表头同义词组（缺了会直接认不出源档表头）
+	if c.ColumnAliases == nil {
+		c.ColumnAliases = map[string][]string{}
+	}
+	for k, v := range d.ColumnAliases {
+		if _, ok := c.ColumnAliases[k]; !ok {
+			c.ColumnAliases[k] = v
+			added++
+		}
+	}
+
+	// Settings 开关：只有「键根本没写」才按默认打开（旧配置缺这些键时全是 false，
+	// 会让校验 / 自动回填 / 合计行过滤这些功能静默失效）
+	top := rawTopKeys(raw)
+	if len(raw) > 0 {
+		var probe struct {
+			Settings struct {
+				UseTemplateHeader *bool `json:"use_template_header"`
+				AutoFillOrderLine *bool `json:"auto_fill_order_line"`
+				FilterSummaryRows *bool `json:"filter_summary_rows"`
+				EnableValidation  *bool `json:"enable_validation"`
+			} `json:"settings"`
+		}
+		if json.Unmarshal(raw, &probe) == nil {
+			if probe.Settings.UseTemplateHeader == nil {
+				c.Settings.UseTemplateHeader = d.Settings.UseTemplateHeader
+				added++
+			}
+			if probe.Settings.AutoFillOrderLine == nil {
+				c.Settings.AutoFillOrderLine = d.Settings.AutoFillOrderLine
+				added++
+			}
+			if probe.Settings.FilterSummaryRows == nil {
+				c.Settings.FilterSummaryRows = d.Settings.FilterSummaryRows
+				added++
+			}
+			if probe.Settings.EnableValidation == nil {
+				c.Settings.EnableValidation = d.Settings.EnableValidation
+				added++
+			}
+		}
+	}
+
+	// TagMaterials：整组缺（旧配置没有这一节）才补。
+	// 缺了就等于「永远不判打标」，是否需要打标列整列为空，MES 导入会直接失败。
+	if !rawHas(top, "tag_materials") {
+		if c.TagMaterials.Column == "" || len(c.TagMaterials.Prefixes) == 0 {
+			c.TagMaterials = d.TagMaterials
+			added++
+		}
+	} else if c.TagMaterials.Enabled && len(c.TagMaterials.Prefixes) == 0 {
+		// 开了打标却没有任何前缀 = 永远判「否」，按默认前缀补齐
+		c.TagMaterials.Prefixes = d.TagMaterials.Prefixes
+		added++
+	}
+
+	if added > 0 {
+		addConfigNote("orders.json 已按 schema v%d 补齐 %d 项（列顺序 / 映射 / 默认值 / 开关）", schemaOrders, added)
+		return true
+	}
+	return false
+}
+
+// orderConfigCoverage 检查某张表「模板里有、但没有任何数据来源」的输出列。
+// 返回 (必填列缺来源, 非必填列缺来源)，都按 ColumnOrder 的顺序。
+//
+// 「有来源」= 有源字段映射 / 有默认值 / 有派生列 / 由程序内部生成（明细的 行号、
+// 工单的 来源单号 与 是否需要打标）。这些列以前是最容易被忽略的一类问题：
+// 模板加了一列、配置没跟上，转换照样「成功」，只是那一列整列为空。
+func orderConfigCoverage(cfg *OrdersConfig, cat string) (missingRequired, missingOptional []string) {
+	covered := make(map[string]bool, 32)
+	for _, tgt := range cfg.FieldMapping[cat] {
+		if t := strings.TrimSpace(tgt); t != "" {
+			covered[t] = true
+		}
+	}
+	for k := range cfg.DefaultValues[cat] {
+		covered[k] = true
+	}
+	for k := range cfg.DerivedColumns[cat] {
+		covered[k] = true
+	}
+	// 程序内部生成的列（不来自映射，但一定有值）
+	switch cat {
+	case "order_detail":
+		covered["行号"] = true
+	case "work_order":
+		covered["来源单号"] = true
+		covered["销售订单行号"] = true
+		covered["产线"] = true
+		if cfg.TagMaterials.Enabled && cfg.TagMaterials.Column != "" {
+			covered[cfg.TagMaterials.Column] = true
+		}
+	}
+
+	for _, col := range cfg.ColumnOrder[cat] {
+		name := strings.TrimSpace(col)
+		if name == "" || covered[name] {
+			continue
+		}
+		if strings.HasPrefix(strings.TrimSpace(cfg.TemplateHeaders[name]), "*") {
+			missingRequired = append(missingRequired, name)
+		} else {
+			missingOptional = append(missingOptional, name)
+		}
+	}
+	return missingRequired, missingOptional
 }
 
 // defaultOrdersConfig 内置默认配置（与 Python 版 config.json 业务口径一致）

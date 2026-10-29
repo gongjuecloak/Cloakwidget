@@ -13,6 +13,22 @@ import (
 )
 
 // importOrder 订单文件 → 销售订单主表 + 销售订单明细
+// checkCoverage 报告某张表「模板里有、但没有任何数据来源」的列。
+// 必填列缺来源报告警（整列空着，MES 导入必失败）；非必填只记一条中性说明 ——
+// 否则「模板加了一列、配置没跟上」这种情况永远是静默的。
+func (c *orderCtx) checkCoverage(cat, sheetLabel string) {
+	req, opt := orderConfigCoverage(c.cfg, cat)
+	if len(req) > 0 {
+		msg := fmt.Sprintf(c.L["o_unmapped_required"], sheetLabel, strings.Join(req, "、"))
+		c.rep.Warnings = append(c.rep.Warnings, msg)
+		c.log(msg)
+	}
+	if len(opt) > 0 {
+		c.rep.Notes = append(c.rep.Notes,
+			fmt.Sprintf(c.L["o_unmapped_optional"], sheetLabel, len(opt), previewList(opt, 6)))
+	}
+}
+
 func (c *orderCtx) importOrder(owb *excelize.File, firstSheet string, created *bool, srcPath string) error {
 	g, err := c.openGrid(srcPath)
 	if err != nil {
@@ -23,6 +39,9 @@ func (c *orderCtx) importOrder(owb *excelize.File, firstSheet string, created *b
 	if g.SrcDesc != "" {
 		c.info(c.L["note_src_fmt"], g.SrcDesc)
 	}
+	// 配置覆盖检查放在最前面：一次转换就把「哪一列会空着出去」讲清楚
+	c.checkCoverage("order_master", "销售订单主表")
+	c.checkCoverage("order_detail", "销售订单明细")
 
 	// 必需列（源档侧）：没有订单号和品号，整件事无从谈起
 	if missing := ensureColumns(g, []string{"訂單單號", "品號"}, aliases); len(missing) > 0 {
@@ -168,6 +187,7 @@ func (c *orderCtx) importWorkOrder(owb *excelize.File, firstSheet string, create
 	if missing := ensureColumns(g, []string{"製令編號", "產品品號"}, aliases); len(missing) > 0 {
 		return fmt.Errorf(c.L["o_missing_cols"], c.L["label_work"], strings.Join(missing, "、"))
 	}
+	c.checkCoverage("work_order", "工单")
 	if c.cfg.Settings.EnableValidation {
 		c.validateNumeric(g, "預計產量", "计划数量")
 	}

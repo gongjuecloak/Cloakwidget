@@ -11,6 +11,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -22,6 +23,8 @@ import (
 
 // BomConfig BOM 模块唯一数据源（界面与转换都读它）
 type BomConfig struct {
+	// Schema 配置结构版本。0 = 老版本写的（无此字段），加载时按 v0 迁移到 schemaBom。
+	Schema      int               `json:"schema,omitempty"`
 	SrcSheet    string            `json:"src_sheet"`    // 源工作表名，空用内置默认
 	MasterSheet string            `json:"master_sheet"` // 输出主表名，空用内置默认
 	DetailSheet string            `json:"detail_sheet"` // 输出明细表名，空用内置默认
@@ -75,33 +78,90 @@ func defaultBomConfig() *BomConfig {
 }
 
 // loadBomConfig 磁盘优先；没有或解析失败则回退内置默认配置。
-func loadBomConfig() *BomConfig {
-	if b, err := os.ReadFile(bomConfigPath()); err == nil && len(b) > 0 {
+// 第二个返回值表示「是否发生了 schema 迁移」，写回由 ensureBomConfig 负责。
+func loadBomConfig() (*BomConfig, bool) {
+	path := bomConfigPath()
+	if b, err := os.ReadFile(path); err == nil && len(b) > 0 {
 		var c BomConfig
 		if json.Unmarshal(b, &c) == nil {
 			c.fillDefaults()
-			return &c
+			if c.Schema > schemaBom {
+				addConfigNote("bom_mapping.json 由更高版本的程序写入（schema %d > %d）：本版本只读不写，请升级程序",
+					c.Schema, schemaBom)
+				return &c, false
+			}
+			changed := reconcileBomConfig(&c)
+			if c.Schema != schemaBom {
+				c.Schema = schemaBom
+				changed = true
+			}
+			return &c, changed
+		}
+		if name, e := backupFile(path, backupRoot()); e == nil && name != "" {
+			addConfigNote("bom_mapping.json 解析失败，已备份为 backup/%s，本次改用内置默认配置", name)
 		}
 	}
-	return defaultBomConfig()
+	c := defaultBomConfig()
+	c.Schema = schemaBom
+	return c, true
 }
 
+// saveBomConfig 写回配置。schema 比程序新时拒绝写入，避免旧版抹掉新版写入的键。
 func saveBomConfig(c *BomConfig) error {
+	if c.Schema > schemaBom {
+		return fmt.Errorf("配置由更高版本的程序写入（schema %d > %d），本版本不回写，以免丢字段；请先升级程序",
+			c.Schema, schemaBom)
+	}
 	c.fillDefaults()
 	b, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(bomConfigPath(), b, 0644)
+	return writeConfigFile(bomConfigPath(), b)
 }
 
-// ensureBomConfig 首次运行写出配置文件；返回当前生效的配置
+// ensureBomConfig 首次运行写出配置文件；返回当前生效的配置。
+// 发生迁移时：先备份旧文件，再把迁移结果写回。
 func ensureBomConfig() *BomConfig {
-	c := loadBomConfig()
-	if !fileExists(bomConfigPath()) {
+	path := bomConfigPath()
+	c, changed := loadBomConfig()
+	if !fileExists(path) {
 		_ = saveBomConfig(c)
+		return c
+	}
+	if changed && c.Schema <= schemaBom {
+		if name := backupBeforeMigrate(path); name != "" {
+			addConfigNote("bom_mapping.json 迁移前已备份：backup/%s", name)
+		}
+		if e := saveBomConfig(c); e != nil {
+			addConfigNote("警告：bom_mapping.json 迁移结果写回失败（%v），本次仍按迁移后的配置运行", e)
+		}
 	}
 	return c
+}
+
+// reconcileBomConfig 把盘上 BOM 配置向内置默认补齐，返回是否改动。
+// 补的是「角色 -> 源列」与两组固定值：新版本新增一个角色（或某个固定值）时，
+// 旧配置里的 map 已经非 nil，fillDefaults 看不出来，转换时那一列/那个值就是空的。
+// 只补缺键，不覆盖已有值（留空往往是用户有意为之，交给 bomFixedVal 兜底）。
+func reconcileBomConfig(c *BomConfig) bool {
+	d := defaultBomConfig()
+	added := 0
+
+	cols, n := mergeMissingMap(c.Columns, d.Columns)
+	c.Columns, added = cols, added+n
+	mf, n := mergeMissingMap(c.MasterFixed, d.MasterFixed)
+	c.MasterFixed, added = mf, added+n
+	df, n := mergeMissingMap(c.DetailFixed, d.DetailFixed)
+	c.DetailFixed, added = df, added+n
+	ua, n := mergeMissingMap(c.UnitAliases, d.UnitAliases)
+	c.UnitAliases, added = ua, added+n
+
+	if added > 0 {
+		addConfigNote("bom_mapping.json 已按 schema v%d 补齐 %d 项（列映射 / 固定值 / 单位别名）", schemaBom, added)
+		return true
+	}
+	return false
 }
 
 // fillDefaults 补齐缺失分支，避免配置里没写的键到处判空
@@ -243,8 +303,11 @@ func handlerBomSaveConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	// 请求体没带 unit_map 时保留磁盘上已有的单位映射（配置页保存不应抹掉它）
 	if c.UnitMap == nil {
-		c.UnitMap = loadBomConfig().UnitMap
+		prev, _ := loadBomConfig()
+		c.UnitMap = prev.UnitMap
 	}
+	// 保存时把 schema 标成当前版本：界面上改过的配置同样是「当前代」的配置
+	c.Schema = schemaBom
 	c.fillDefaults()
 	if fileExists(bomConfigPath()) {
 		_, _ = backupFile(bomConfigPath(), backupRoot())

@@ -82,7 +82,7 @@ for c in "${PYTHON:-}" "$HOME/.workbuddy/binaries/python/envs/default/Scripts/py
   if command -v "$c" >/dev/null 2>&1; then PYBIN="$c"; break; fi
 done
 if [ -n "$PYBIN" ] && [ -f "$ROOT/gen_version.py" ]; then
-  if "$PYBIN" "$ROOT/gen_version.py" --exe "$MES/$EXE_NAME" --name "$ASSET_NAME" --ver "$VER" --out "$ROOT/version.json"; then
+  if "$PYBIN" "$ROOT/gen_version.py" --exe "$MES/$EXE_NAME" --name "$ASSET_NAME" --ver "$VER" --out "$ROOT/version.json" --changelog "$MES/changelog.json"; then
     echo "  已生成 $ROOT/version.json（资产名 $ASSET_NAME）"
   else
     echo "  ! version.json 生成失败，跳过（不影响 exe）"
@@ -96,7 +96,12 @@ step "同步分享版目录"
 mkdir -p "$SHARE"
 cp -f "$EXE_NAME" "$SHARE/"
 cp -f mapping.json "$SHARE/"
-[ -f orders.json ] && cp -f orders.json "$SHARE/"
+# orders.json 不再随包分发：它是「运行期配置」，本机跑过转换后会带上本机的定制与旧列集合，
+# 拷进分享包等于把某一台机器的快照当成发布基线（v1.17.0 之前就因此把 15 列的旧配置发出去过）。
+# 内置默认（16 列 + 全部默认值）编译在 exe 里，新装用户首启会自动写出一份当前版本的配置。
+if [ -f "$SHARE/orders.json" ]; then
+  echo "  ! 分享版里已有 orders.json（运行期配置）—— 确认它是否该随包分发，脚本不再自动覆盖"
+fi
 # 界面已拆到 webui/ 并内嵌进 exe，不再单独同步 webui.html。
 # 若分享版里残留旧的 webui.html，程序会把它当作「磁盘覆盖」优先读取，务必清掉。
 rm -f "$SHARE/webui.html"

@@ -17,7 +17,7 @@ func TestReconcileConfigAppendsNewColumns(t *testing.T) {
 			},
 		},
 	}
-	reconcileConfig(c)
+	reconcileConfig(c, nil)
 	wo := c.ColumnOrder["work_order"]
 	if len(wo) != 16 {
 		t.Fatalf("work_order 应为 16 列, 实际 %d: %v", len(wo), wo)
