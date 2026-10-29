@@ -115,7 +115,7 @@ try:
     check("/api/orders/config 返回配置", cfg.get("ok"), cfg)
     c = cfg.get("config", {})
     check("配置含 3 类字段映射", len(c.get("field_mapping", {})) == 3, list(c.get("field_mapping", {})))
-    check("配置含列顺序（工单 19 列）", len(c.get("column_order", {}).get("work_order", [])) == 19)
+    check("配置含列顺序（工单 16 列）", len(c.get("column_order", {}).get("work_order", [])) == 16)
     check("配置含别名表", len(c.get("column_aliases", {})) >= 17, len(c.get("column_aliases", {})))
     check("打标前缀已配置", len(c.get("tag_materials", {}).get("prefixes", [])) == 9)
 

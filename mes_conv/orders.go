@@ -768,7 +768,6 @@ func (c *orderCtx) templateHeader(cols []string) []string {
 var numericTargets = map[string]bool{
 	"订单数量": true, "单价": true, "行号": true,
 	"计划数量": true, "销售订单行号": true, "税率": true,
-	"完成数量": true, "合格数量": true, "报废数量": true,
 }
 
 func toCell(col, v string, isDate bool) interface{} {
