@@ -68,6 +68,9 @@ func loadOrdersConfig() *OrdersConfig {
 		var c OrdersConfig
 		if json.Unmarshal(b, &c) == nil && len(c.FieldMapping) > 0 {
 			c.fillDefaults()
+			// 盘上配置可能比内置默认旧（缺新增的模板列），先向默认对齐再返回，
+			// 否则旧配置会整体覆盖内置默认，导致模板改了输出却跟不上。
+			reconcileConfig(&c)
 			return &c
 		}
 	}
@@ -130,6 +133,92 @@ func (c *OrdersConfig) fillDefaults() {
 	}
 	if c.Settings.TemplateSheetIndex == 0 {
 		c.Settings.TemplateSheetIndex = 0
+	}
+}
+
+// reconcileConfig 让盘上配置的结构性列定义向内置默认（= 当前 MES 模板）对齐：
+//   - ColumnOrder：把内置默认里有、但盘上缺失的列追加到末尾，保留用户已有列的先后顺序；
+//   - TemplateHeaders / RequiredColumns / DateColumns：补齐盘上缺失的键（不覆盖已有值）。
+//
+// 这样「模板变了」时，即使盘上存着一份旧配置，输出也会自动跟上，
+// 不会被旧列集合整体覆盖（之前 工艺路线编码 加进模板却没出现在输出，就是这个坑）。
+// 仅做「追加/补缺」，不删除盘上多出来的列，避免误伤用户合法定制。
+func reconcileConfig(c *OrdersConfig) {
+	d := defaultOrdersConfig()
+
+	// 防御：盘上配置若没写这些分支，先初始化再补列，避免对 nil map 赋值 panic
+	if c.ColumnOrder == nil {
+		c.ColumnOrder = map[string][]string{}
+	}
+	if c.TemplateHeaders == nil {
+		c.TemplateHeaders = map[string]string{}
+	}
+	if c.RequiredColumns == nil {
+		c.RequiredColumns = map[string][]string{}
+	}
+	if c.DateColumns == nil {
+		c.DateColumns = map[string][]string{}
+	}
+
+	// ColumnOrder：追加默认里有、但盘上缺失的列
+	for cat, defCols := range d.ColumnOrder {
+		saved := c.ColumnOrder[cat]
+		if saved == nil {
+			saved = []string{}
+		}
+		seen := make(map[string]bool, len(saved))
+		for _, s := range saved {
+			seen[s] = true
+		}
+		for _, dc := range defCols {
+			if !seen[dc] {
+				saved = append(saved, dc)
+				seen[dc] = true
+			}
+		}
+		c.ColumnOrder[cat] = saved
+	}
+
+	// TemplateHeaders：补齐缺失的表头前缀映射
+	if c.TemplateHeaders == nil {
+		c.TemplateHeaders = map[string]string{}
+	}
+	for k, v := range d.TemplateHeaders {
+		if _, ok := c.TemplateHeaders[k]; !ok {
+			c.TemplateHeaders[k] = v
+		}
+	}
+
+	// RequiredColumns：补齐默认必填列
+	for cat, req := range d.RequiredColumns {
+		cur := c.RequiredColumns[cat]
+		seen := make(map[string]bool, len(cur))
+		for _, s := range cur {
+			seen[s] = true
+		}
+		for _, r := range req {
+			if !seen[r] {
+				cur = append(cur, r)
+				seen[r] = true
+			}
+		}
+		c.RequiredColumns[cat] = cur
+	}
+
+	// DateColumns：补齐默认日期列
+	for cat, dc := range d.DateColumns {
+		cur := c.DateColumns[cat]
+		seen := make(map[string]bool, len(cur))
+		for _, s := range cur {
+			seen[s] = true
+		}
+		for _, r := range dc {
+			if !seen[r] {
+				cur = append(cur, r)
+				seen[r] = true
+			}
+		}
+		c.DateColumns[cat] = cur
 	}
 }
 
