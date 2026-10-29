@@ -1,6 +1,6 @@
-// 验证 webui.html 的 fmt() 占位符替换
+// 验证拆分后的 webui/i18n.js 中 fmt() 占位符替换
 const fs = require('fs');
-const src = fs.readFileSync('webui.html', 'utf8');
+const src = fs.readFileSync('webui/i18n.js', 'utf8');
 
 const tSrc = src.match(/function t\(k\)\{[^\n]*\}/);
 const fmtSrc = src.match(/function fmt\(k,args\)\{[\s\S]*?\n\}/);

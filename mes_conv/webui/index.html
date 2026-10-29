@@ -32,7 +32,7 @@
   </div>
 </header>
 
-<main>
+<main id="mainContent">
   <!-- ===== 首页：选择模块 ===== -->
   <div id="viewHome" class="view">
     <div class="home-intro">
@@ -40,8 +40,8 @@
       <p id="home_desc">三个模块各自独立，配置与输出互不影响</p>
     </div>
     <div class="mod-grid">
-      <div class="mod-card" id="modMaterials">
-        <div class="mod-ico">📦</div>
+      <div class="mod-card" id="modMaterials" role="button" tabindex="0">
+        <div class="mod-ico" aria-hidden="true">📦</div>
         <h3 id="mod_mat_name">物料档案</h3>
         <p id="mod_mat_desc">把鼎新 ERP 导出的物料档（INVMB）转换成 MES 的「物料档案导入模板」，自动做字段映射、单位归一与预检。</p>
         <div class="mod-tags">
@@ -51,8 +51,8 @@
         </div>
         <div class="mod-go" id="mod_mat_go">进入 →</div>
       </div>
-      <div class="mod-card" id="modOrders">
-        <div class="mod-ico">🧾</div>
+      <div class="mod-card" id="modOrders" role="button" tabindex="0">
+        <div class="mod-ico" aria-hidden="true">🧾</div>
         <h3 id="mod_ord_name">订单 / 工单</h3>
         <p id="mod_ord_desc">把鼎新 ERP 导出的订单档与製令（工单）档，转换成 MES 的「销售订单主表 / 销售订单明细 / 工单」三张表，自动回填销售订单行号与打标判定。</p>
         <div class="mod-tags">
@@ -62,8 +62,8 @@
         </div>
         <div class="mod-go" id="mod_ord_go">进入 →</div>
       </div>
-      <div class="mod-card" id="modBom">
-        <div class="mod-ico">🧱</div>
+      <div class="mod-card" id="modBom" role="button" tabindex="0">
+        <div class="mod-ico" aria-hidden="true">🧱</div>
         <h3 id="mod_bom_name">BOM / 用料表</h3>
         <p id="mod_bom_desc">把 MES 抓取的 ERP BOM 大表（BOM抓取导出表）转换成 MES 的「BOM主表 + BOM明细」导入模板，自动生成 BOM 编码与项次。</p>
         <div class="mod-tags">
@@ -74,8 +74,8 @@
         <div class="mod-go" id="mod_bom_go">进入 →</div>
       </div>
     </div>
-    <div class="cfg-entry" id="cfgEntry">
-      <div class="mod-ico">⚙️</div>
+    <div class="cfg-entry" id="cfgEntry" role="button" tabindex="0" aria-disabled="true">
+      <div class="mod-ico" aria-hidden="true">⚙️</div>
       <div>
         <h3 id="cfg_entry_name">配置中心</h3>
         <p id="cfg_entry_desc">字段映射、单位表、字典表、表头别名都在这里维护；操作页面只负责选文件与转换</p>
@@ -87,16 +87,16 @@
   <!-- ===== 模块一：物料档案 ===== -->
   <div id="viewMaterials" class="view" style="display:none">
   <div class="steps">
-    <div class="card" id="srcCard">
+    <div class="card upload-card" id="srcCard" data-upload-card="srcFile">
       <div class="step-no">1</div>
-      <h2 id="step_source">第 1 步 · 选择源文件</h2>
+      <h2><span id="step_source">第 1 步 · 选择源文件</span><span class="field-badge required" id="srcRequired">必填</span></h2>
       <p id="step_source_desc">选择从鼎新 ERP 导出的物料档（.xlsx / .xls / .csv）</p>
       <label class="file-btn"><input type="file" id="srcFile" accept=".xlsx,.xls,.csv,.txt" multiple><span id="srcLabel">选择文件</span></label>
       <div class="file-name" id="srcName"></div>
       <div class="file-list" id="srcList"></div>
       <div class="drop-hint" id="srcDropHint">也可以直接把文件拖到这里；可一次选多个，按列名合并成一份结果</div>
     </div>
-    <div class="card" id="tplCard">
+    <div class="card upload-card" id="tplCard" data-upload-card="tplFile">
       <div class="step-no">2</div>
       <h2 id="step_template">第 2 步 · 输出模板（可选）</h2>
       <p id="step_template_desc">留空使用程序内置的物料档案模板；如需换用其他模板可在此上传（.xlsx）</p>
@@ -188,24 +188,15 @@
 
   <!-- ===== 模块二：订单 / 工单 ===== -->
   <div id="viewOrders" class="view" style="display:none">
-    <div class="steps">
-      <div class="card" id="ordSrcCard">
+    <div class="steps steps-single">
+      <div class="card upload-card" id="ordSrcCard" data-upload-card="ordSrcFile">
         <div class="step-no">1</div>
-        <h2 id="ord_step_source">订单文件（可选）</h2>
-        <p id="ord_step_source_desc">鼎新 ERP 导出的订单档（.xlsx / .xls / .csv），用于生成销售订单主表与明细</p>
+        <h2><span id="ord_step_source">上传订单 / 工单文件</span><span class="field-badge required" id="ordSrcRequired">必填</span></h2>
+        <p id="ord_step_source_desc">把鼎新 ERP 导出的订单档或製令（工单）档直接拖进来，程序会按表头自动识别类型；可一次选多个，订单与工单混在一起也能自动分流，分别按列名合并后一起转换。</p>
         <label class="file-btn"><input type="file" id="ordSrcFile" accept=".xlsx,.xls,.csv,.txt" multiple><span id="ordSrcLabel">选择文件</span></label>
         <div class="file-name" id="ordSrcName"></div>
         <div class="file-list" id="ordSrcList"></div>
-        <div class="drop-hint" id="ordSrcDropHint">也可以直接把文件拖到这里；可一次选多个</div>
-      </div>
-      <div class="card" id="ordWorkCard">
-        <div class="step-no">2</div>
-        <h2 id="ord_step_work">工单文件（可选）</h2>
-        <p id="ord_step_work_desc">鼎新 ERP 导出的製令（工单）档（.xlsx / .xls / .csv），用于生成工单表</p>
-        <label class="file-btn"><input type="file" id="ordWorkFile" accept=".xlsx,.xls,.csv,.txt" multiple><span id="ordWorkLabel">选择文件</span></label>
-        <div class="file-name" id="ordWorkName"></div>
-        <div class="file-list" id="ordWorkList"></div>
-        <div class="drop-hint" id="ordWorkDropHint">也可以直接把文件拖到这里；可一次选多个</div>
+        <div class="drop-hint" id="ordSrcDropHint">也可以直接把文件拖到这里；订单与工单可混在一起，自动识别分流</div>
       </div>
     </div>
 
@@ -279,16 +270,16 @@
   <!-- ===== 模块三：BOM / 用料表 ===== -->
   <div id="viewBom" class="view" style="display:none">
     <div class="steps">
-      <div class="card" id="bomSrcCard">
+      <div class="card upload-card" id="bomSrcCard" data-upload-card="bomSrcFile">
         <div class="step-no">1</div>
-        <h2 id="bom_step_source">BOM 抓取文件</h2>
+        <h2><span id="bom_step_source">BOM 抓取文件</span><span class="field-badge required" id="bomSrcRequired">必填</span></h2>
         <p id="bom_step_source_desc">MES 抓取的 ERP BOM 大表（.xlsx，源工作表名留空自动取第一个）</p>
         <label class="file-btn"><input type="file" id="bomSrcFile" accept=".xlsx" multiple><span id="bomSrcLabel">选择文件</span></label>
         <div class="file-name" id="bomSrcName"></div>
         <div class="file-list" id="bomSrcList"></div>
         <div class="drop-hint" id="bomSrcDropHint">也可以直接把文件拖到这里</div>
       </div>
-      <div class="card" id="bomTplCard">
+      <div class="card upload-card" id="bomTplCard" data-upload-card="bomTplFile">
         <div class="step-no">2</div>
         <h2 id="bom_step_tpl">BOM 导入模板（可选）</h2>
         <p id="bom_step_tpl_desc">留空使用程序内置模板（含「BOM主表」「BOM明细」两张表，数据行会被清空重写）；如需换用其他模板可在此上传</p>
@@ -297,7 +288,7 @@
         <div class="file-list" id="bomTplList"></div>
         <div class="drop-hint" id="bomTplDropHint">也可以直接把文件拖到这里</div>
       </div>
-      <div class="card" id="bomMapCard">
+      <div class="card upload-card" id="bomMapCard" data-upload-card="bomMapFile">
         <div class="step-no">3</div>
         <h2 id="bom_step_map">计量单位映射表（可选）</h2>
         <p id="bom_step_map_desc">首次上传后自动存入配置，之后转换无需再上传；用于核对源單位是否都能对上，不给则跳过该核对</p>
@@ -455,13 +446,13 @@
       <div id="wlWrap"></div>
       <button class="mini-btn" id="addWlBtn">+ 添加一列的允许值</button>
 
-      <div class="block-title"><span>字段长度上限</span>
-        <small>某列写出值超过最大长度时预检告警（不阻断）。例如 MES 部分列有字符数上限，超出会导入失败。</small></div>
+      <div class="block-title"><span id="block_len">字段长度上限</span>
+        <small id="block_len_hint">某列写出值超过最大长度时预检告警（不阻断）。例如 MES 部分列有字符数上限，超出会导入失败。</small></div>
       <div id="lenWrap"></div>
       <button class="mini-btn" id="addLenBtn">+ 添加长度规则</button>
 
-      <div class="block-title"><span>跨字段联动校验</span>
-        <small>当 A 列=某值时，要求 B 列必填。用于捕捉组合错误，例如「序列管理=是」时「序列号规则编码」不能为空。</small></div>
+      <div class="block-title"><span id="block_cross">跨字段联动校验</span>
+        <small id="block_cross_hint">当 A 列=某值时，要求 B 列必填。用于捕捉组合错误，例如「序列管理=是」时「序列号规则编码」不能为空。</small></div>
       <div id="crossWrap"></div>
       <button class="mini-btn" id="addCrossBtn">+ 添加联动规则</button>
     </section>
@@ -602,7 +593,7 @@
 </main>
 
 <div id="helpModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:99;align-items:center;justify-content:center;padding:20px">
-  <div style="background:#fff;border-radius:12px;max-width:760px;width:100%;max-height:84vh;overflow:auto;padding:22px 26px;box-shadow:0 20px 60px rgba(0,0,0,.25)">
+  <div class="modal-panel" style="background:#fff;border-radius:12px;max-width:760px;width:100%;max-height:84vh;overflow:auto;padding:22px 26px;box-shadow:0 20px 60px rgba(0,0,0,.25)">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
       <h3 id="help_title" style="margin:0">使用说明</h3>
       <button class="ghost" id="helpClose">关闭</button>
@@ -612,7 +603,7 @@
 </div>
 
 <div id="aboutModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:99;align-items:center;justify-content:center;padding:20px">
-  <div style="background:#fff;border-radius:12px;max-width:680px;width:100%;max-height:84vh;overflow:auto;padding:22px 26px;box-shadow:0 20px 60px rgba(0,0,0,.25)">
+  <div class="modal-panel" style="background:#fff;border-radius:12px;max-width:680px;width:100%;max-height:84vh;overflow:auto;padding:22px 26px;box-shadow:0 20px 60px rgba(0,0,0,.25)">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
       <h3 id="about_title" style="margin:0">关于本工具</h3>
       <button class="ghost" id="aboutClose">关闭</button>
@@ -623,7 +614,7 @@
 
 <!-- 配置变更确认（保存前 diff） -->
 <div id="diffModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:99;align-items:center;justify-content:center;padding:20px">
-  <div style="background:#fff;border-radius:12px;max-width:720px;width:100%;max-height:84vh;overflow:auto;padding:22px 26px;box-shadow:0 20px 60px rgba(0,0,0,.25)">
+  <div class="modal-panel" style="background:#fff;border-radius:12px;max-width:720px;width:100%;max-height:84vh;overflow:auto;padding:22px 26px;box-shadow:0 20px 60px rgba(0,0,0,.25)">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
       <h3 id="diffTitle" style="margin:0">确认配置变更</h3>
       <button class="ghost" id="diffClose">取消</button>
@@ -639,7 +630,7 @@
 
 <!-- 发现新版本提示 -->
 <div id="updateModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:98;align-items:center;justify-content:center;padding:20px">
-  <div style="background:#fff;border-radius:12px;max-width:520px;width:100%;padding:22px 26px;box-shadow:0 20px 60px rgba(0,0,0,.25)">
+  <div class="modal-panel" style="background:#fff;border-radius:12px;max-width:520px;width:100%;padding:22px 26px;box-shadow:0 20px 60px rgba(0,0,0,.25)">
     <h3 id="updTitle" style="margin:0 0 6px">发现新版本</h3>
     <p class="sys-card-p" id="updText">检测到新版本可用。</p>
     <div id="updNotes" style="max-height:200px;overflow:auto;white-space:pre-wrap;font-size:12.5px;color:#6b7280;background:#f9fafb;border-radius:8px;padding:10px 12px;margin:10px 0;display:none"></div>
@@ -652,7 +643,7 @@
 
 <!-- 口令验证 -->
 <div id="authModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:100;align-items:center;justify-content:center;padding:20px">
-  <div style="background:#fff;border-radius:12px;max-width:430px;width:100%;padding:22px 26px;box-shadow:0 20px 60px rgba(0,0,0,.25)">
+  <div class="modal-panel" style="background:#fff;border-radius:12px;max-width:430px;width:100%;padding:22px 26px;box-shadow:0 20px 60px rgba(0,0,0,.25)">
     <h3 id="authTitle" style="margin:0 0 6px">需要口令</h3>
     <p class="sys-card-p" id="authHint">本工具已开启口令保护，请先输入口令后再操作。</p>
     <input type="password" id="authPwd" autocomplete="current-password" style="width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:8px;font-size:14px">
@@ -664,7 +655,7 @@
 </div>
 
 <div id="welcomeModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:110;align-items:center;justify-content:center;padding:20px">
-  <div style="background:#fff;border-radius:12px;max-width:540px;width:100%;padding:24px 28px;box-shadow:0 20px 60px rgba(0,0,0,.25)">
+  <div class="modal-panel" style="background:#fff;border-radius:12px;max-width:540px;width:100%;padding:24px 28px;box-shadow:0 20px 60px rgba(0,0,0,.25)">
     <h3 id="wcTitle" style="margin:0 0 6px;font-size:17px"></h3>
     <p id="wcDesc" style="margin:0;color:var(--muted);font-size:13px;line-height:1.7"></p>
     <div id="wcLangLabel" style="margin:16px 0 8px;font-size:13px;font-weight:600"></div>

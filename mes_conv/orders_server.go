@@ -63,6 +63,11 @@ func handlerOrdersConvert(w http.ResponseWriter, r *http.Request) {
 	}
 	L := ordersMsgs(lang)
 
+	// 日志与计时提前准备好：文件识别结果要在转换前就写进日志
+	logs := []string{}
+	add := func(s string) { logs = append(logs, time.Now().Format("2006-01-02 15:04:05")+"  "+s) }
+	start := time.Now()
+
 	// 订单文件与工单文件至少给一个
 	dir, err := os.MkdirTemp("", "mesorders-*")
 	if err != nil {
@@ -84,18 +89,53 @@ func handlerOrdersConvert(w http.ResponseWriter, r *http.Request) {
 		cfg = ensureOrdersConfig()
 	}
 
-	// 订单 / 工单两个字段都支持多选：多份时按列名合并成一份再转
-	// （「一次转一周的订单」就是靠这个：把几天的导出一起丢进来）
-	orderPath, orderName, orderNotes, err := collectSources(r, dir, "order", cfg.Settings.TemplateSheetIndex, L)
-	if err != nil {
-		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+	// 兼容「显式」订单 / 工单字段（老接口与脚本调用仍可用）
+	var orderPaths, orderNames, workPaths, workNames []string
+	var orderNotes, workNotes []string
+	if op, on, ons, e1 := collectSources(r, dir, "order", cfg.Settings.TemplateSheetIndex, L); e1 != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": e1.Error()})
+		return
+	} else if op != "" {
+		orderPaths = append(orderPaths, op)
+		orderNames = append(orderNames, on)
+		orderNotes = append(orderNotes, ons...)
+	}
+	if wp, wn, wns, e2 := collectSources(r, dir, "work", cfg.Settings.TemplateSheetIndex, L); e2 != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": e2.Error()})
+		return
+	} else if wp != "" {
+		workPaths = append(workPaths, wp)
+		workNames = append(workNames, wn)
+		workNotes = append(workNotes, wns...)
+	}
+
+	// 统一上传入口：自动识别每个文件是订单还是工单，再分别归位
+	detected := []map[string]string{}
+	classifySourceField(r, dir, cfg, L, &orderPaths, &workPaths, &orderNames, &workNames, &detected)
+	for _, d := range detected {
+		switch d["type"] {
+		case "work":
+			add(fmt.Sprintf(L["o_detect"], d["file"], L["kind_work"]))
+		case "order":
+			add(fmt.Sprintf(L["o_detect"], d["file"], L["kind_order"]))
+		default:
+			add(fmt.Sprintf(L["o_detect_unknown"], d["file"]))
+		}
+	}
+
+	orderPath, orderName, on2, e1 := mergeTempFiles(orderPaths, orderNames, "order", dir, cfg.Settings.TemplateSheetIndex, L)
+	if e1 != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": e1.Error()})
 		return
 	}
-	workPath, workName, workNotes, err := collectSources(r, dir, "work", cfg.Settings.TemplateSheetIndex, L)
-	if err != nil {
-		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+	orderNotes = append(orderNotes, on2...)
+	workPath, workName, wn2, e2 := mergeTempFiles(workPaths, workNames, "work", dir, cfg.Settings.TemplateSheetIndex, L)
+	if e2 != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": e2.Error()})
 		return
 	}
+	workNotes = append(workNotes, wn2...)
+
 	if orderPath == "" && workPath == "" {
 		writeJSON(w, map[string]interface{}{"ok": false, "error": L["e_no_file"]})
 		return
@@ -115,10 +155,6 @@ func handlerOrdersConvert(w http.ResponseWriter, r *http.Request) {
 		outPath = filepath.Join(outDir, base)
 	}
 	logPath := filepath.Join(outDir, strings.TrimSuffix(base, ".xlsx")+".log")
-
-	logs := []string{}
-	add := func(s string) { logs = append(logs, time.Now().Format("2006-01-02 15:04:05")+"  "+s) }
-	start := time.Now()
 
 	// 批量说明（几个文件、各多少行）放在最前面，方便对照
 	for _, n := range append(append([]string{}, orderNotes...), workNotes...) {
@@ -219,6 +255,7 @@ func handlerOrdersConvert(w http.ResponseWriter, r *http.Request) {
 		"notes":       notes,
 		"elapsed":     elapsed,
 		"outDir":      "out",
+		"detected":    detected,
 	})
 }
 

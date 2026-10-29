@@ -15,11 +15,12 @@ const STR = {
     err_timeout:"转换超时（超过 10 分钟）。文件可能过大，可拆分后再试，或查看 out\\ 目录下是否已生成部分结果。",
     err_aborted:"请求已中断。", err_offline:"连不上本地服务，请确认程序仍在运行（看右下角托盘图标），然后刷新页面重试。",
     ord_app_title:"MES 订单 / 工单转换工具", ord_app_subtitle:"鼎新 ERP 订单·製令档 → MES 导入表，一键转换",
-    ord_step_source:"订单文件（可选）", ord_step_source_desc:"鼎新 ERP 导出的订单档（.xlsx），用于生成销售订单主表与明细",
+    ord_step_source:"上传订单 / 工单文件", ord_step_source_desc:"把鼎新 ERP 导出的订单档或製令（工单）档直接拖进来，程序会按表头自动识别类型；可一次选多个，订单与工单混在一起也能自动分流。",
     ord_step_work:"工单文件（可选）", ord_step_work_desc:"鼎新 ERP 导出的製令（工单）档（.xlsx），用于生成工单表",
     ord_choose_file:"选择文件", ord_drop_hint:"也可以直接把文件拖到这里",
     ord_start_btn:"开始转换", ord_converting:"正在转换，请稍候…",
-    ord_no_file:"请先选择订单文件或工单文件（至少一个）",
+    ord_no_file:"请先选择文件（订单或工单至少一个）",
+    ord_detect_label:"自动识别", ord_detect_counts:"订单 %d · 工单 %d",
     ord_result_title:"转换完成！", ord_result_desc:"文件已生成，点击下载即可导入 MES。",
     ord_download:"下载结果文件", ord_open_folder:"打开输出文件夹",
     ord_check_title:"预检结果", ord_history_title:"最近转换", ord_log_title:"转换日志",
@@ -172,11 +173,12 @@ const STR = {
     err_timeout:"轉換逾時（超過 10 分鐘）。檔案可能過大，可拆分後再試，或查看 out\\ 目錄下是否已產生部分結果。",
     err_aborted:"請求已中斷。", err_offline:"連不上本機服務，請確認程式仍在執行（看右下角系統匣圖示），然後重新整理頁面再試。",
     ord_app_title:"MES 訂單 / 工單轉換工具", ord_app_subtitle:"鼎新 ERP 訂單·製令檔 → MES 匯入表，一鍵轉換",
-    ord_step_source:"訂單檔案（可選）", ord_step_source_desc:"鼎新 ERP 匯出的訂單檔（.xlsx），用於產生銷售訂單主表與明細",
+    ord_step_source:"上傳訂單 / 工單檔案", ord_step_source_desc:"把鼎新 ERP 匯出的訂單檔或製令（工單）檔直接拖進來，程式會依表頭自動識別類型；可一次選多個，訂單與工單混在一起也能自動分流。",
     ord_step_work:"工單檔案（可選）", ord_step_work_desc:"鼎新 ERP 匯出的製令（工單）檔（.xlsx），用於產生工單表",
     ord_choose_file:"選擇檔案", ord_drop_hint:"也可以直接把檔案拖到這裡",
     ord_start_btn:"開始轉換", ord_converting:"正在轉換，請稍候…",
-    ord_no_file:"請先選擇訂單檔案或工單檔案（至少一個）",
+    ord_no_file:"請先選擇檔案（訂單或工單至少一個）",
+    ord_detect_label:"自動識別", ord_detect_counts:"訂單 %d · 工單 %d",
     ord_result_title:"轉換完成！", ord_result_desc:"檔案已產生，點擊下載即可匯入 MES。",
     ord_download:"下載結果檔案", ord_open_folder:"開啟輸出資料夾",
     ord_check_title:"預檢結果", ord_history_title:"最近轉換", ord_log_title:"轉換日誌",
@@ -329,11 +331,12 @@ const STR = {
     err_aborted:"Yêu cầu đã bị hủy.", err_offline:"Không kết nối được dịch vụ cục bộ. Hãy kiểm tra chương trình còn chạy không (xem biểu tượng khay dưới phải), rồi tải lại trang.",
     ord_app_title:"Công cụ chuyển đổi đơn hàng / lệnh sản xuất",
     ord_app_subtitle:"Tệp đơn hàng·chế lệnh ERP Đinh Tân → bảng nhập MES, chuyển đổi một chạm",
-    ord_step_source:"Tệp đơn hàng (không bắt buộc)", ord_step_source_desc:"Tệp đơn hàng (.xlsx) xuất từ ERP Đinh Tân, dùng để tạo bảng đơn hàng chính và chi tiết",
+    ord_step_source:"Tải tệp đơn hàng / lệnh sản xuất", ord_step_source_desc:"Kéo thẳng tệp đơn hàng hoặc tệp chế lệnh (lệnh sản xuất) xuất từ ERP Đinh Tân vào đây; chương trình tự nhận diện loại theo tiêu đề cột, gộp nhiều tệp và tự phân luồng.",
     ord_step_work:"Tệp lệnh sản xuất (không bắt buộc)", ord_step_work_desc:"Tệp chế lệnh (.xlsx) xuất từ ERP Đinh Tân, dùng để tạo bảng lệnh sản xuất",
     ord_choose_file:"Chọn tệp", ord_drop_hint:"Cũng có thể kéo tệp vào đây",
     ord_start_btn:"Bắt đầu chuyển đổi", ord_converting:"Đang chuyển đổi, vui lòng chờ…",
-    ord_no_file:"Hãy chọn tệp đơn hàng hoặc tệp lệnh sản xuất (ít nhất một tệp)",
+    ord_no_file:"Hãy chọn tệp (đơn hàng hoặc lệnh sản xuất, ít nhất một tệp)",
+    ord_detect_label:"Tự nhận diện", ord_detect_counts:"đơn hàng %d · lệnh SX %d",
     ord_result_title:"Chuyển đổi hoàn tất!", ord_result_desc:"Tệp đã được tạo, bấm tải xuống để nhập vào MES.",
     ord_download:"Tải tệp kết quả", ord_open_folder:"Mở thư mục kết quả",
     ord_check_title:"Kết quả kiểm tra", ord_history_title:"Chuyển đổi gần đây", ord_log_title:"Nhật ký chuyển đổi",
@@ -487,11 +490,12 @@ const STR = {
     err_aborted:"Request was interrupted.", err_offline:"Cannot reach the local service. Make sure the program is still running (check the tray icon), then reload the page.",
     ord_app_title:"MES Order / Work-Order Converter",
     ord_app_subtitle:"Dingxin ERP order & manufacturing files → MES import tables, one click",
-    ord_step_source:"Order file (optional)", ord_step_source_desc:"Order file (.xlsx) exported from Dingxin ERP — builds the sales order master and detail",
+    ord_step_source:"Upload order / work-order files", ord_step_source_desc:"Drop order files or manufacturing (work-order) files exported from Dingxin ERP here. The type is detected automatically from the header; multiple files are merged and routed automatically.",
     ord_step_work:"Work-order file (optional)", ord_step_work_desc:"Manufacturing order file (.xlsx) exported from Dingxin ERP — builds the work-order table",
     ord_choose_file:"Choose file", ord_drop_hint:"You can also drag the file here",
     ord_start_btn:"Start conversion", ord_converting:"Converting, please wait…",
-    ord_no_file:"Please choose an order file and/or a work-order file (at least one)",
+    ord_no_file:"Please choose at least one file (order or work order)",
+    ord_detect_label:"Auto-detected", ord_detect_counts:"orders %d · work orders %d",
     ord_result_title:"Conversion complete!", ord_result_desc:"The file is ready — download it and import into MES.",
     ord_download:"Download result", ord_open_folder:"Open output folder",
     ord_check_title:"Pre-check results", ord_history_title:"Recent conversions", ord_log_title:"Conversion log",
@@ -708,7 +712,7 @@ function fmt(k,args){
   let i=0;
   return String(v==null?"":v).replace(/%[sd]/g, ()=>(args && i<args.length) ? args[i++] : "");
 }
-function esc(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+function esc(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;"); }
 function clone(o){ return JSON.parse(JSON.stringify(o==null?{}:o)); }
 function opLabel(op){ const m=OPS_LABEL[op]; return m?m[currentLang]:op; }
 function matchLabel(m){ const x=MATCH_LABEL[m]; return x?x[currentLang]:m; }

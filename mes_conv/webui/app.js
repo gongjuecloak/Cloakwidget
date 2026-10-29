@@ -11,6 +11,7 @@ function setFileName(nameId, f){
       +'<button type="button" class="fn-clear" data-clear="1" title="'+esc(t("clear_file"))+'" aria-label="'+esc(t("clear_file"))+'">&times;</button>';
     el.dataset.chosen="1";
   } else { el.textContent=t("no_file"); el.dataset.chosen="0"; }
+  updateActionAvailability();
 }
 function bindFile(inputId,nameId,cardId,onPick,onClear){
   const input=document.getElementById(inputId);
@@ -91,6 +92,7 @@ function makeBusy(btnId,busyKey,idleKey){ return busy=>{
   btn.disabled=busy; btn.setAttribute("aria-busy",busy?"true":"false");
   btn.innerHTML = busy ? '<span class="spinner"></span>'+t(busyKey) : t(idleKey);
   window.__mesBusy=busy;
+  if(!busy) updateActionAvailability();
 }; }
 function fmtSec(ms){
   if(!ms) return "0s";
@@ -156,7 +158,7 @@ function makeLogRenderer(ids){
 const renderLog=makeLogRenderer({box:"logBox",section:"logSection",toggle:"toggleLogBtn"});
 const ordRenderLog=makeLogRenderer({box:"ordLogBox",section:"ordLogSection",toggle:"ordToggleLogBtn"});
 function statCard(title,val){
-  return '<div class="stat"><div class="t">'+title+'</div><div class="v">'+val+'</div></div>';
+  return '<div class="stat"><div class="t">'+esc(title)+'</div><div class="v">'+esc(val)+'</div></div>';
 }
 // 上次转换结果缓存：切换语言时用它重渲染统计卡，无需重新转换
 let lastResult=null;
@@ -469,7 +471,7 @@ function validateTargetInput(input){
   const v=cleanHdr(input.value||"");
   if(v && tplHeaderSet.size>0 && !tplHeaderSet.has(v)){
     input.classList.add("tgt-bad");
-    input.title="目标列不在已加载模板中，将不会写入任何数据（请检查列名拼写）";
+    input.title=t("target_not_in_template");
   } else {
     input.classList.remove("tgt-bad");
     input.title="";
@@ -488,7 +490,7 @@ function suggestUnmapped(headers){
     advFields.push({target:c, source:"", op:"fixed", value:""});
     have.add(c); added++;
   });
-  if(added){ renderTable(); advMsg("已自动补入 "+added+" 个模板新列（默认固定空值，请按需填写来源后保存）","info"); }
+  if(added){ renderTable(); advMsg(fmt("auto_added_cols",[added]),"info"); }
 }
 
 // ---- 字段长度上限 ----
@@ -496,8 +498,8 @@ function renderLen(){
   const wrap=document.getElementById("lenWrap"); if(!wrap) return; wrap.innerHTML="";
   Object.keys(advLen).forEach(col=>{
     const tr=document.createElement("div"); tr.className="pc-line";
-    tr.innerHTML=`<input class="len-col" list="tgtCols" value="${esc(col)}" style="width:200px" placeholder="目标列">
-      <input class="len-max" type="number" min="1" value="${esc(String(advLen[col]))}" style="width:90px" placeholder="最大长度">
+    tr.innerHTML=`<input class="len-col" list="tgtCols" value="${esc(col)}" style="width:200px" placeholder="${esc(t('ph_target'))}">
+      <input class="len-max" type="number" min="1" value="${esc(String(advLen[col]))}" style="width:90px" placeholder="${esc(t('ph_max_len'))}">
       <button class="row-del len-del">✕</button>`;
     tr.querySelectorAll('input').forEach(i=>i.addEventListener('input',syncLen));
     tr.querySelector('.len-del').addEventListener('click',()=>{tr.remove();syncLen();});
@@ -516,8 +518,8 @@ function syncLen(){
 document.getElementById("addLenBtn").addEventListener("click",()=>{
   const wrap=document.getElementById("lenWrap");
   const tr=document.createElement("div"); tr.className="pc-line";
-  tr.innerHTML=`<input class="len-col" list="tgtCols" style="width:200px" placeholder="目标列">
-    <input class="len-max" type="number" min="1" style="width:90px" placeholder="最大长度">
+  tr.innerHTML=`<input class="len-col" list="tgtCols" style="width:200px" placeholder="${esc(t('ph_target'))}">
+    <input class="len-max" type="number" min="1" style="width:90px" placeholder="${esc(t('ph_max_len'))}">
     <button class="row-del len-del">✕</button>`;
   tr.querySelectorAll('input').forEach(i=>i.addEventListener('input',syncLen));
   tr.querySelector('.len-del').addEventListener('click',()=>{tr.remove();syncLen();});
@@ -529,9 +531,9 @@ function renderCross(){
   const wrap=document.getElementById("crossWrap"); if(!wrap) return; wrap.innerHTML="";
   advCross.forEach(cc=>{
     const tr=document.createElement("div"); tr.className="pc-line";
-    tr.innerHTML=`<input class="cx-when" list="tgtCols" value="${esc(cc.when_col||'')}" style="width:170px" placeholder="当列">
-      <span>=</span><input class="cx-val" value="${esc(cc.when_val||'')}" style="width:90px" placeholder="值">
-      <span>则</span><input class="cx-then" list="tgtCols" value="${esc(cc.then_col||'')}" style="width:170px" placeholder="列必填">
+    tr.innerHTML=`<input class="cx-when" list="tgtCols" value="${esc(cc.when_col||'')}" style="width:170px" placeholder="${esc(t('ph_when_col'))}">
+      <span>=</span><input class="cx-val" value="${esc(cc.when_val||'')}" style="width:90px" placeholder="${esc(t('ph_value'))}">
+      <span>${esc(t('ph_then'))}</span><input class="cx-then" list="tgtCols" value="${esc(cc.then_col||'')}" style="width:170px" placeholder="${esc(t('ph_required_col'))}">
       <button class="row-del cx-del">✕</button>`;
     tr.querySelectorAll('input').forEach(i=>i.addEventListener('input',syncCross));
     tr.querySelector('.cx-del').addEventListener('click',()=>{tr.remove();syncCross();});
@@ -551,9 +553,9 @@ function syncCross(){
 document.getElementById("addCrossBtn").addEventListener("click",()=>{
   const wrap=document.getElementById("crossWrap");
   const tr=document.createElement("div"); tr.className="pc-line";
-  tr.innerHTML=`<input class="cx-when" list="tgtCols" style="width:170px" placeholder="当列">
-    <span>=</span><input class="cx-val" style="width:90px" placeholder="值">
-    <span>则</span><input class="cx-then" list="tgtCols" style="width:170px" placeholder="列必填">
+  tr.innerHTML=`<input class="cx-when" list="tgtCols" style="width:170px" placeholder="${esc(t('ph_when_col'))}">
+    <span>=</span><input class="cx-val" style="width:90px" placeholder="${esc(t('ph_value'))}">
+    <span>${esc(t('ph_then'))}</span><input class="cx-then" list="tgtCols" style="width:170px" placeholder="${esc(t('ph_required_col'))}">
     <button class="row-del cx-del">✕</button>`;
   tr.querySelectorAll('input').forEach(i=>i.addEventListener('input',syncCross));
   tr.querySelector('.cx-del').addEventListener('click',()=>{tr.remove();syncCross();});
@@ -566,28 +568,28 @@ async function doPreview(){
   const tpl=document.getElementById("tplFile");
   const wrap=document.getElementById("previewWrap");
   wrap.style.display="block";
-  if(!src.files || src.files.length===0){ wrap.innerHTML='<div class="banner err">请先选择源文件再预览</div>'; return; }
+  if(!src.files || src.files.length===0){ wrap.innerHTML='<div class="banner show err">'+esc(t("preview_need_source"))+'</div>'; return; }
   syncAdvToCfg();
   const fd=new FormData();
   for(const f of src.files) fd.append("source", f);
   if(tpl.files && tpl.files[0]) fd.append("template", tpl.files[0]);   // 可选：不选用内置模板
   fd.append("lang", currentLang);
   fd.append("config", JSON.stringify(cfg));
-  wrap.innerHTML='<div class="loading">正在生成预览…</div>';
+  wrap.innerHTML='<div class="loading">'+esc(t("preview_loading"))+'</div>';
   try{
     const r=await fetch("/api/preview",{method:"POST",body:fd});
     const d=await r.json();
-    if(!d.ok){ wrap.innerHTML='<div class="banner err">预览失败：'+esc(d.error||"未知错误")+'</div>'; return; }
+    if(!d.ok){ wrap.innerHTML='<div class="banner show err">'+esc(t("preview_failed"))+esc(d.error||t("preview_unknown"))+'</div>'; return; }
     wrap.innerHTML=renderPreview(d.samples||{});
-  }catch(e){ wrap.innerHTML='<div class="banner err">预览出错：'+esc(e.message||e)+'</div>'; }
+  }catch(e){ wrap.innerHTML='<div class="banner show err">'+esc(t("preview_error"))+esc(e.message||e)+'</div>'; }
 }
 function renderPreview(samples){
   const cols=Object.keys(samples);
-  if(cols.length===0) return '<div class="banner">预览为空（模板没有可写出的列）</div>';
-  let html='<h3>映射预览（前 5 行样例）</h3><table class="preview-tbl"><thead><tr><th>目标列</th><th>样例值</th></tr></thead><tbody>';
+  if(cols.length===0) return '<div class="banner show">'+esc(t("preview_empty"))+'</div>';
+  let html='<h3>'+esc(t("preview_title"))+'</h3><table class="preview-tbl"><thead><tr><th>'+esc(t("preview_target"))+'</th><th>'+esc(t("preview_sample"))+'</th></tr></thead><tbody>';
   cols.forEach(c=>{
     const vals=(samples[c]||[]);
-    const txt = vals.length? vals.map(v=>esc(v)).join("、") : '（空）';
+    const txt = vals.length? vals.map(v=>esc(v)).join(" · ") : esc(t("empty_value"));
     html+='<tr><td>'+esc(c)+'</td><td>'+txt+'</td></tr>';
   });
   html+='</tbody></table>';
@@ -599,13 +601,13 @@ async function doDiff(){
   const sel=document.getElementById("backupSel");
   const wrap=document.getElementById("diffWrap");
   const name=sel && sel.value;
-  if(!name){ wrap.style.display="block"; wrap.innerHTML='<div class="banner">请先在上方选择一个备份</div>'; return; }
+  if(!name){ wrap.style.display="block"; wrap.innerHTML='<div class="banner show">'+esc(t("diff_pick_backup"))+'</div>'; return; }
   wrap.style.display="block";
-  wrap.innerHTML='<div class="loading">正在对比…</div>';
+  wrap.innerHTML='<div class="loading">'+esc(t("diff_loading"))+'</div>';
   try{
     const r=await fetch("/api/config-backup?name="+encodeURIComponent(name));
     const d=await r.json();
-    if(!d.ok){ wrap.innerHTML='<div class="banner err">读取备份失败：'+esc(d.error||"")+'</div>'; return; }
+    if(!d.ok){ wrap.innerHTML='<div class="banner show err">'+esc(t("diff_read_failed"))+esc(d.error||"")+'</div>'; return; }
     const oldMap={}; (d.fields||[]).forEach(f=>{ oldMap[cleanHdr(f.target)]=f; });
     const newMap={}; advFields.forEach(f=>{ newMap[cleanHdr(f.target)]=f; });
     const added=[], removed=[], changed=[];
@@ -615,14 +617,14 @@ async function doDiff(){
       if(sa!==sb) changed.push(k);
     }});
     Object.keys(oldMap).forEach(k=>{ if(!newMap[k]) removed.push(k); });
-    let html='<h3>配置对比：当前 ↔ '+esc(name)+'</h3>';
-    html+='<div class="diff-line">新增列 '+added.length+' · 删除列 '+removed.length+' · 规则变化 '+changed.length+'</div>';
-    if(added.length) html+='<div class="diff-row add">＋ 新增：'+added.map(esc).join("、")+'</div>';
-    if(removed.length) html+='<div class="diff-row del">－ 删除：'+removed.map(esc).join("、")+'</div>';
-    if(changed.length) html+='<div class="diff-row chg">~ 变化：'+changed.map(esc).join("、")+'</div>';
-    if(!added.length && !removed.length && !changed.length) html+='<div class="diff-row">两版配置字段完全一致</div>';
+    let html='<h3>'+esc(fmt("diff_compare_title",[name]))+'</h3>';
+    html+='<div class="diff-line">'+esc(fmt("diff_compare_summary",[added.length,removed.length,changed.length]))+'</div>';
+    if(added.length) html+='<div class="diff-row add">'+esc(fmt("diff_added_row",[added.join(" · ")]))+'</div>';
+    if(removed.length) html+='<div class="diff-row del">'+esc(fmt("diff_removed_row",[removed.join(" · ")]))+'</div>';
+    if(changed.length) html+='<div class="diff-row chg">'+esc(fmt("diff_changed_row",[changed.join(" · ")]))+'</div>';
+    if(!added.length && !removed.length && !changed.length) html+='<div class="diff-row">'+esc(t("diff_same"))+'</div>';
     wrap.innerHTML=html;
-  }catch(e){ wrap.innerHTML='<div class="banner err">对比出错：'+esc(e.message||e)+'</div>'; }
+  }catch(e){ wrap.innerHTML='<div class="banner show err">'+esc(t("diff_compare_error"))+esc(e.message||e)+'</div>'; }
 }
 
 document.getElementById("previewBtn").addEventListener("click", doPreview);
@@ -977,6 +979,7 @@ const VIEW_IDS={home:"viewHome",materials:"viewMaterials",orders:"viewOrders",bo
 function showModule(name){
   if(!VIEW_IDS[name]) name="home";
   currentModule=name;
+  document.body.dataset.view=name;
   Object.keys(VIEW_IDS).forEach(k=>{
     const el=document.getElementById(VIEW_IDS[k]);
     if(el) el.style.display = (name===k)?"":"none";
@@ -1021,11 +1024,21 @@ function applyModuleChrome(){
   const title=document.getElementById("app_title");
   const sub=document.getElementById("app_subtitle");
   const logo=document.getElementById("appLogo");
-  if(currentModule==="orders"){
+  if(currentModule==="home"){
+    title.textContent=t("home_app_title");
+    sub.textContent=t("home_app_subtitle");
+    logo.textContent="MES";
+    document.title=t("home_app_title");
+  }else if(currentModule==="orders"){
     title.textContent=t("ord_app_title");
     sub.textContent=t("ord_app_subtitle");
     logo.textContent="ORD";
     document.title=t("ord_app_title");
+  }else if(currentModule==="bom"){
+    title.textContent=t("bom_app_title");
+    sub.textContent=t("bom_app_subtitle");
+    logo.textContent="BOM";
+    document.title=t("bom_app_title");
   }else if(currentModule==="config"){
     title.textContent=t("cfg_title");
     sub.textContent=t("cfg_subtitle");
@@ -1042,6 +1055,14 @@ document.getElementById("modMaterials").addEventListener("click",()=>showModule(
 document.getElementById("modOrders").addEventListener("click",()=>showModule("orders"));
 document.getElementById("modBom").addEventListener("click",()=>showModule("bom"));
 document.getElementById("cfgEntry").addEventListener("click",()=>{ if(window.__cfgReady) showModule("config"); });
+['modMaterials','modOrders','modBom','cfgEntry'].forEach(id=>{
+  const el=document.getElementById(id);
+  el.addEventListener('keydown',e=>{
+    if((e.key==='Enter'||e.key===' ') && el.getAttribute('aria-disabled')!=='true'){
+      e.preventDefault(); el.click();
+    }
+  });
+});
 document.getElementById("cfgNavBtn").addEventListener("click",()=>showModule("config"));
 document.getElementById("cfgTabMat").addEventListener("click",()=>showCfgTab("mat"));
 document.getElementById("cfgTabOrd").addEventListener("click",()=>showCfgTab("ord"));
@@ -1070,11 +1091,19 @@ let ordCfg=null, ordCfgLoaded=false, ordLastResult=null;
 
 function ordVal(id){ const e=document.getElementById(id); return e?(e.value||"").trim():""; }
 function ordRenderStats(data){
+  const det=(data&&data.detected)||[];
+  let detCard="";
+  if(det.length){
+    const oc=det.filter(d=>d.type==="order").length;
+    const wc=det.filter(d=>d.type==="work").length;
+    detCard=statCard(t("ord_detect_label"),fmt("ord_detect_counts",[oc,wc]));
+  }
   document.getElementById("ordStats").innerHTML =
     statCard(t("rows_label"),data.rows)
     + statCard(t("elapsed_label"),(data.elapsed||0)+" ms")
     + statCard(t("ord_block_map"),formatDist(data.types))
-    + statCard(t("ord_check_title"),(data.issue_total||0)+"");
+    + statCard(t("ord_check_title"),(data.issue_total||0)+"")
+    + detCard;
 }
 // 预检渲染：复用物料档案那套（makeChecksRenderer），只是元素 id 与文案 key 换成订单的
 const ordRenderChecks=makeChecksRenderer({
@@ -1097,15 +1126,14 @@ document.getElementById("ordRefreshHistBtn").addEventListener("click",loadOrders
 
 // ---- 转换 ----
 async function doOrdersConvert(){
-  const ofs=ordSrcPicker.get();
-  const wfs=ordWorkPicker.get();
-  if(!ofs.length && !wfs.length){ ordShowStatus("err","ord_no_file"); return; }
+  const fs=ordSrcPicker.get();
+  if(!fs.length){ ordShowStatus("err","ord_no_file"); return; }
   ordSetBusy(true); ordShowStatus("","");
   ordStartProgressPoll();
   let doneText="";
   const fd=new FormData();
-  ofs.forEach(f=>fd.append("order",f));
-  wfs.forEach(f=>fd.append("work",f));
+  // 统一入口：全部按 source 上传，后端按表头自动识别订单 / 工单
+  fs.forEach(f=>fd.append("source",f));
   fd.append("config", JSON.stringify(ordCfg||{}));
   fd.append("lang",currentLang);
   try{
@@ -1145,8 +1173,7 @@ document.getElementById("ordCopyLogBtn").addEventListener("click",()=>{
   const txt=document.getElementById("ordLogBox").textContent||"";
   if(navigator.clipboard) navigator.clipboard.writeText(txt);
 });
-bindFile("ordSrcFile","ordSrcName","ordSrcCard",null);
-bindFile("ordWorkFile","ordWorkName","ordWorkCard",null);
+// 订单 / 工单源文件由 bindMultiFile 绑定（见下方 picker），这里不再单独 bindFile
 
 // ==================== BOM / 用料表模块 ====================
 const bomShowStatus=makeStatus("bomBanner"), bomSetBusy=makeBusy("bomStartBtn","bom_converting","bom_start_btn");
@@ -1634,7 +1661,16 @@ const STR2 = {
     wc_tip1:"结果文件会保存到程序目录下的 out 文件夹",
     wc_tip2:"请把程序放在可写目录，不要放进 Program Files 这类需要管理员权限的位置",
     wc_tip3:"程序常驻右下角托盘，关掉浏览器标签页不会退出；要完全关闭请用托盘右键菜单的「退出」",
-    wc_ok:"开始使用",
+    wc_ok:"开始使用", file_required:"必填", home_app_title:"MES 数据转换工具", home_app_subtitle:"鼎新 ERP 数据 → MES 导入模板，本地一键转换", bom_app_title:"MES BOM / 用料表转换工具", bom_app_subtitle:"ERP BOM 抓取表 → MES BOM 导入模板",
+    preview_need_source:"请先选择源文件再预览", preview_loading:"正在生成预览…", preview_failed:"预览失败：", preview_error:"预览出错：", preview_unknown:"未知错误",
+    preview_empty:"预览为空（模板没有可写出的列）", preview_title:"映射预览（前 5 行样例）", preview_target:"目标列", preview_sample:"样例值", empty_value:"（空）",
+    diff_pick_backup:"请先在上方选择一个备份", diff_loading:"正在对比…", diff_read_failed:"读取备份失败：", diff_compare_title:"配置对比：当前 ↔ %s",
+    diff_compare_summary:"新增列 %d · 删除列 %d · 规则变化 %d", diff_added_row:"＋ 新增：%s", diff_removed_row:"－ 删除：%s", diff_changed_row:"~ 变化：%s",
+    diff_same:"两版配置字段完全一致", diff_compare_error:"对比出错：",
+    target_not_in_template:"目标列不在已加载模板中，将不会写入任何数据（请检查列名拼写）", auto_added_cols:"已自动补入 %d 个模板新列（默认固定空值，请按需填写来源后保存）",
+    block_len:"字段长度上限", block_len_hint:"某列写出值超过最大长度时预检告警（不阻断）。例如 MES 部分列有字符数上限，超出会导入失败。", add_len:"+ 添加长度规则",
+    block_cross:"跨字段联动校验", block_cross_hint:"当 A 列=某值时，要求 B 列必填。用于捕捉组合错误。", add_cross:"+ 添加联动规则",
+    ph_target:"目标列", ph_max_len:"最大长度", ph_when_col:"当列", ph_value:"值", ph_then:"则", ph_required_col:"列必填",
   },
   zht:{
     src_drop_hint:"也可以直接把檔案拖到這裡；可一次選多個，按欄名合併成一份結果",
@@ -1689,7 +1725,16 @@ const STR2 = {
     wc_tip1:"結果檔案會儲存到程式目錄下的 out 資料夾",
     wc_tip2:"請把程式放在可寫入的目錄，不要放進 Program Files 這類需要管理員權限的位置",
     wc_tip3:"程式常駐右下角系統匣，關掉瀏覽器分頁不會結束；要完全關閉請用系統匣右鍵選單的「結束」",
-    wc_ok:"開始使用",
+    wc_ok:"開始使用", file_required:"必填", home_app_title:"MES 資料轉換工具", home_app_subtitle:"鼎新 ERP 資料 → MES 匯入範本，本機一鍵轉換", bom_app_title:"MES BOM / 用料表轉換工具", bom_app_subtitle:"ERP BOM 抓取表 → MES BOM 匯入範本",
+    preview_need_source:"請先選擇來源檔案再預覽", preview_loading:"正在產生預覽…", preview_failed:"預覽失敗：", preview_error:"預覽出錯：", preview_unknown:"未知錯誤",
+    preview_empty:"預覽為空（範本沒有可寫出的欄位）", preview_title:"對應預覽（前 5 列範例）", preview_target:"目標欄", preview_sample:"範例值", empty_value:"（空）",
+    diff_pick_backup:"請先在上方選擇一份備份", diff_loading:"正在比對…", diff_read_failed:"讀取備份失敗：", diff_compare_title:"設定比對：目前 ↔ %s",
+    diff_compare_summary:"新增欄 %d · 刪除欄 %d · 規則變更 %d", diff_added_row:"＋ 新增：%s", diff_removed_row:"－ 刪除：%s", diff_changed_row:"~ 變更：%s",
+    diff_same:"兩版設定欄位完全一致", diff_compare_error:"比對出錯：",
+    target_not_in_template:"目標欄不在已載入範本中，不會寫入任何資料（請檢查欄名拼寫）", auto_added_cols:"已自動補入 %d 個範本新欄（預設固定空值，請按需填寫來源後儲存）",
+    block_len:"欄位長度上限", block_len_hint:"某欄輸出值超過最大長度時預檢告警（不阻斷）。", add_len:"+ 新增長度規則",
+    block_cross:"跨欄位連動校驗", block_cross_hint:"當 A 欄=某值時，要求 B 欄必填，用於捕捉組合錯誤。", add_cross:"+ 新增連動規則",
+    ph_target:"目標欄", ph_max_len:"最大長度", ph_when_col:"當欄", ph_value:"值", ph_then:"則", ph_required_col:"欄位必填",
   },
   vi:{
     src_drop_hint:"Cũng có thể kéo tệp vào đây; có thể chọn nhiều tệp và gộp theo tên cột thành một kết quả",
@@ -1744,7 +1789,16 @@ const STR2 = {
     wc_tip1:"Tệp kết quả được lưu vào thư mục out trong thư mục chương trình",
     wc_tip2:"Hãy đặt chương trình ở thư mục ghi được, đừng đặt trong Program Files (cần quyền quản trị)",
     wc_tip3:"Chương trình thường trú ở khay hệ thống; đóng thẻ trình duyệt không thoát chương trình — dùng menu chuột phải ở khay để thoát hẳn",
-    wc_ok:"Bắt đầu",
+    wc_ok:"Bắt đầu", file_required:"Bắt buộc", home_app_title:"Công cụ chuyển đổi dữ liệu MES", home_app_subtitle:"Dữ liệu ERP → Mẫu nhập MES, xử lý cục bộ", bom_app_title:"Công cụ chuyển đổi BOM / định mức MES", bom_app_subtitle:"Bảng ERP BOM → Mẫu nhập BOM MES",
+    preview_need_source:"Hãy chọn tệp nguồn trước khi xem trước", preview_loading:"Đang tạo bản xem trước…", preview_failed:"Không thể xem trước: ", preview_error:"Lỗi xem trước: ", preview_unknown:"Lỗi không xác định",
+    preview_empty:"Bản xem trước trống (mẫu không có cột có thể ghi)", preview_title:"Xem trước ánh xạ (5 dòng đầu)", preview_target:"Cột đích", preview_sample:"Giá trị mẫu", empty_value:"(trống)",
+    diff_pick_backup:"Hãy chọn một bản sao lưu ở trên", diff_loading:"Đang so sánh…", diff_read_failed:"Không thể đọc bản sao lưu: ", diff_compare_title:"So sánh cấu hình: hiện tại ↔ %s",
+    diff_compare_summary:"Thêm %d cột · Xóa %d cột · Đổi %d quy tắc", diff_added_row:"＋ Thêm: %s", diff_removed_row:"－ Xóa: %s", diff_changed_row:"~ Thay đổi: %s",
+    diff_same:"Hai cấu hình có cùng trường", diff_compare_error:"Lỗi so sánh: ",
+    target_not_in_template:"Cột đích không có trong mẫu đã nạp nên sẽ không ghi dữ liệu (hãy kiểm tra tên cột)", auto_added_cols:"Đã thêm tự động %d cột mới từ mẫu (mặc định để trống; hãy chọn nguồn rồi lưu)",
+    block_len:"Giới hạn độ dài trường", block_len_hint:"Cảnh báo trước khi nhập nếu giá trị vượt quá độ dài tối đa (không chặn chuyển đổi).", add_len:"+ Thêm quy tắc độ dài",
+    block_cross:"Kiểm tra liên kết giữa các trường", block_cross_hint:"Khi cột A có một giá trị, yêu cầu cột B không được để trống.", add_cross:"+ Thêm quy tắc liên kết",
+    ph_target:"Cột đích", ph_max_len:"Độ dài tối đa", ph_when_col:"Khi cột", ph_value:"Giá trị", ph_then:"thì", ph_required_col:"Cột bắt buộc",
   },
   en:{
     src_drop_hint:"You can also drag files here; select multiple files and they are merged by column name",
@@ -1799,7 +1853,16 @@ const STR2 = {
     wc_tip1:"Output files are saved to the out folder next to the program",
     wc_tip2:"Keep the program in a writable folder — not Program Files, which needs administrator rights",
     wc_tip3:"The program stays in the system tray; closing the browser tab does not quit it — use the tray menu to exit",
-    wc_ok:"Get started",
+    wc_ok:"Get started", file_required:"Required", home_app_title:"MES Data Converter", home_app_subtitle:"ERP data → MES import templates, converted locally", bom_app_title:"MES BOM Converter", bom_app_subtitle:"ERP BOM extract → MES BOM import template",
+    preview_need_source:"Select a source file before previewing", preview_loading:"Building preview…", preview_failed:"Preview failed: ", preview_error:"Preview error: ", preview_unknown:"Unknown error",
+    preview_empty:"Preview is empty (the template has no writable columns)", preview_title:"Mapping preview (first 5 rows)", preview_target:"Target column", preview_sample:"Sample values", empty_value:"(empty)",
+    diff_pick_backup:"Select a backup above first", diff_loading:"Comparing…", diff_read_failed:"Could not read backup: ", diff_compare_title:"Config comparison: current ↔ %s",
+    diff_compare_summary:"%d added · %d removed · %d rule changes", diff_added_row:"＋ Added: %s", diff_removed_row:"－ Removed: %s", diff_changed_row:"~ Changed: %s",
+    diff_same:"Both configs contain the same fields", diff_compare_error:"Comparison error: ",
+    target_not_in_template:"This target column is not in the loaded template, so no data will be written (check the column name)", auto_added_cols:"Added %d new template columns automatically (blank by default; choose sources and save)",
+    block_len:"Field length limits", block_len_hint:"Warn before import when an output value exceeds the maximum length (conversion is not blocked).", add_len:"+ Add length rule",
+    block_cross:"Cross-field validation", block_cross_hint:"When column A has a given value, require column B to be filled.", add_cross:"+ Add validation rule",
+    ph_target:"Target column", ph_max_len:"Maximum length", ph_when_col:"When column", ph_value:"Value", ph_then:"then", ph_required_col:"Required column",
   }
 };
 Object.keys(STR2).forEach(l=>{ STR[l]=Object.assign(STR[l]||{}, STR2[l]); });
@@ -1807,6 +1870,7 @@ Object.keys(STR2).forEach(l=>{ STR[l]=Object.assign(STR[l]||{}, STR2[l]); });
 // 新增的静态文案挂到既有 TEXT_MAP 上（id -> 文案 key）
 Object.assign(TEXT_MAP, {
   step_source_desc:"step_source_desc",
+  srcRequired:"file_required", bomSrcRequired:"file_required", ordSrcRequired:"file_required",
   srcDropHint:"src_drop_hint", ordSrcDropHint:"ord_drop_hint_multi", ordWorkDropHint:"ord_drop_hint_multi",
   ord_step_source_desc:"ord_step_source_desc", ord_step_work_desc:"ord_step_work_desc",
   cfgTabSys:"cfg_tab_sys",
@@ -1818,6 +1882,8 @@ Object.assign(TEXT_MAP, {
   sys_auto_title:"sys_auto_title", sys_auto_desc:"sys_auto_desc", sys_auto_sw:"sys_auto_sw",
   sys_block_tpl:"sys_block_tpl", sys_block_tpl_hint:"sys_block_tpl_hint",
   sys_block_diag:"sys_block_diag", sys_block_diag_hint:"sys_block_diag_hint",
+  block_len:"block_len", block_len_hint:"block_len_hint", addLenBtn:"add_len",
+  block_cross:"block_cross", block_cross_hint:"block_cross_hint", addCrossBtn:"add_cross",
   sysLanSave:"sys_save", sysPwdSave:"sys_pwd_save", sysPwdClear:"sys_pwd_clear", sysAutoSave:"sys_save",
   sysSrcSave:"sys_save",
   sysTplReset:"sys_tpl_reset", sysTplRefresh:"sys_refresh",
@@ -1832,10 +1898,13 @@ const PH_MAP = { sysPwdNew:"sys_pwd_new_ph", sysPwdOld:"sys_pwd_old_ph", authPwd
 const _applyLangBase = applyLang;
 applyLang = function(){
   _applyLangBase();
+  if(typeof currentModule!=="undefined") applyModuleChrome();
   Object.keys(PH_MAP).forEach(id=>{ const el=document.getElementById(id); if(el) el.placeholder=t(PH_MAP[id]); });
+  updateActionAvailability();
   if(lastResult) renderDonut("donutWrap", lastResult.data);
   if(ordLastResult) renderDonut("ordDonutWrap", ordLastResult.data);
   if(typeof currentModule!=="undefined" && currentModule==="config" && cfgTab==="sys") loadSysInfo();
+  if(typeof currentModule!=="undefined" && currentModule==="config" && cfgTab==="mat" && advLoaded){ renderLen(); renderCross(); }
 };
 
 // ---------------------------------------------------------------- 口令锁
@@ -1917,16 +1986,47 @@ function renderFileSet(nameId, listId, files){
   if(!files || !files.length){
     nameEl.textContent=t("no_file"); nameEl.dataset.chosen="0";
     if(listEl) listEl.innerHTML="";
+    updateActionAvailability();
     return;
   }
   const head = files.length===1 ? t("file_chosen")+files[0].name : fmt("src_multi",[files.length]);
   nameEl.innerHTML=esc(head)
     +'<button type="button" class="fn-clear" data-clear="1" title="'+esc(t("clear_file"))+'" aria-label="'+esc(t("clear_file"))+'">&times;</button>';
   nameEl.dataset.chosen="1";
+  updateActionAvailability();
   if(!listEl) return;
   const shown=files.slice(0,8).map((f,i)=>'<div class="fl-item"><span class="fl-n">'+(i+1)+'.</span>'+esc(f.name)+'</div>').join("");
   listEl.innerHTML = shown + (files.length>8 ? '<div class="fl-item">'+esc(fmt("src_more",[files.length-8]))+'</div>' : "");
 }
+
+function updateActionAvailability(){
+  const chosen=id=>{ const el=document.getElementById(id); return !!el && el.dataset.chosen==="1"; };
+  const set=(id,on,hint)=>{
+    const b=document.getElementById(id); if(!b) return;
+    b.disabled=!on;
+    b.setAttribute("aria-disabled",on?"false":"true");
+    b.title=on?"":hint;
+  };
+  const materialReady=chosen("srcName");
+  const orderReady=chosen("ordSrcName");
+  const bomReady=chosen("bomSrcName");
+  set("startBtn",materialReady,t("err_no_src"));
+  set("previewBtn",materialReady,t("preview_need_source"));
+  set("ordStartBtn",orderReady,t("ord_no_file"));
+  set("bomStartBtn",bomReady,t("bom_no_src"));
+  [["srcCard","srcName"],["tplCard","tplName"],["ordSrcCard","ordSrcName"],
+   ["bomSrcCard","bomSrcName"],["bomTplCard","bomTplName"],["bomMapCard","bomMapName"]].forEach(pair=>{
+    const card=document.getElementById(pair[0]); if(card) card.classList.toggle("has-files",chosen(pair[1]));
+  });
+}
+
+document.querySelectorAll("[data-upload-card]").forEach(card=>{
+  card.addEventListener("click",e=>{
+    if(e.target.closest("label,button,input,a,select,textarea")) return;
+    const input=document.getElementById(card.dataset.uploadCard);
+    if(input && !input.disabled) input.click();
+  });
+});
 function bindMultiFile(inputId,nameId,listId,cardId,onPick,onClear){
   const input=document.getElementById(inputId);
   const card=document.getElementById(cardId);
@@ -1951,8 +2051,9 @@ function bindMultiFile(inputId,nameId,listId,cardId,onPick,onClear){
 const srcPicker = bindMultiFile("srcFile","srcName","srcList","srcCard",
   fs=>{ if(fs.length) loadSourceHeaders(fs[0]); else { srcHeaders=[]; renderDatalist("srcCols",[],false); } },
   ()=>{ srcHeaders=[]; renderDatalist("srcCols",[],false); });
+// 订单 / 工单统一入口：一个上传框，后端按表头自动识别类型
 const ordSrcPicker = bindMultiFile("ordSrcFile","ordSrcName","ordSrcList","ordSrcCard", null, null);
-const ordWorkPicker = bindMultiFile("ordWorkFile","ordWorkName","ordWorkList","ordWorkCard", null, null);
+updateActionAvailability();
 
 // ---------------------------------------------------------------- 结果小图表
 function donutSVG(parts, size){
@@ -2486,10 +2587,13 @@ async function maybeShowWelcome(){
     if(ql && STR[ql]) currentLang=ql;
   }catch(e){}
   applyLang();
+  applyModuleChrome();
   try{ const r=await fetch("/api/config"); if(!r.ok) throw new Error("HTTP "+r.status); cfg=await r.json(); }
   catch(e){ window.__cfgFail=true; cfg={fields:[],unit_map:{},dicts:{},value_whitelist:{}}; }
   if(!cfg.value_whitelist) cfg.value_whitelist={};
   applyCfgGuard(); window.__cfgReady=true; document.getElementById("cfgNavBtn").disabled=false;
+  document.getElementById("cfgEntry").setAttribute("aria-disabled","false");
+  updateActionAvailability();
   showStatus("","");
   loadHistory();
   refreshBackups();

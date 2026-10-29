@@ -1140,38 +1140,14 @@ func saveUpload(f io.ReadCloser, path string) error {
 //   - 多个：按列名合并成一份临时 xlsx（表头自动探测，各文件列顺序不同也能对齐）
 //
 // 返回：落盘路径、显示用名称、写进日志的说明行、错误。
-func collectSources(r *http.Request, dir, field string, sheetIdx int, L map[string]string) (string, string, []string, error) {
-	heads := r.MultipartForm.File[field]
-	if len(heads) == 0 {
+// mergeTempFiles 把若干已落盘的临时源档（路径列表）合并成一份。
+// 只有 1 份时直接返回原位；多于 1 份时按列名合并后写出 merged 文件。
+func mergeTempFiles(paths, names []string, field, dir string, sheetIdx int, L map[string]string) (string, string, []string, error) {
+	if len(paths) == 0 {
 		return "", "", nil, nil
 	}
-	if len(heads) == 1 {
-		path := filepath.Join(dir, field+".xlsx")
-		f, err := heads[0].Open()
-		if err != nil {
-			return "", "", nil, err
-		}
-		defer f.Close()
-		if err := saveUpload(f, path); err != nil {
-			return "", "", nil, err
-		}
-		return path, heads[0].Filename, nil, nil
-	}
-
-	var paths, names []string
-	for i, h := range heads {
-		p := filepath.Join(dir, fmt.Sprintf("%s_%d.xlsx", field, i))
-		f, err := h.Open()
-		if err != nil {
-			return "", "", nil, err
-		}
-		err = saveUpload(f, p)
-		f.Close()
-		if err != nil {
-			return "", "", nil, err
-		}
-		paths = append(paths, p)
-		names = append(names, h.Filename)
+	if len(paths) == 1 {
+		return paths[0], names[0], nil, nil
 	}
 	mg, err := mergeSourceGrids(paths, names, sheetIdx, true)
 	if err != nil {
@@ -1187,6 +1163,67 @@ func collectSources(r *http.Request, dir, field string, sheetIdx int, L map[stri
 	}
 	notes = append(notes, mg.Notes...)
 	return merged, fmt.Sprintf(L["note_batch_name"], mg.Files), notes, nil
+}
+
+func collectSources(r *http.Request, dir, field string, sheetIdx int, L map[string]string) (string, string, []string, error) {
+	heads := r.MultipartForm.File[field]
+	if len(heads) == 0 {
+		return "", "", nil, nil
+	}
+	var paths, names []string
+	for i, h := range heads {
+		p := filepath.Join(dir, fmt.Sprintf("%s_%d.xlsx", field, i))
+		f, err := h.Open()
+		if err != nil {
+			return "", "", nil, err
+		}
+		err = saveUpload(f, p)
+		f.Close()
+		if err != nil {
+			return "", "", nil, err
+		}
+		paths = append(paths, p)
+		names = append(names, h.Filename)
+	}
+	return mergeTempFiles(paths, names, field, dir, sheetIdx, L)
+}
+
+// classifySourceField 读取 `source` 表单字段里的每个文件，按表头自动判定是订单还是工单，
+// 把落盘路径分别追加进 orderPaths / workPaths，并把识别结果记进 detected。
+// 无法判定的一律按「订单」兜底（缺列时转换会给出明确报错，不会静默错配）。
+func classifySourceField(r *http.Request, dir string, cfg *OrdersConfig, L map[string]string,
+	orderPaths, workPaths *[]string, orderNames, workNames *[]string, detected *[]map[string]string) {
+	for i, h := range r.MultipartForm.File["source"] {
+		ext := filepath.Ext(h.Filename)
+		p := filepath.Join(dir, fmt.Sprintf("src_%d%s", i, ext))
+		f, err := h.Open()
+		if err != nil {
+			continue
+		}
+		if err := saveUpload(f, p); err != nil {
+			f.Close()
+			continue
+		}
+		f.Close()
+
+		kind := ""
+		if g, e := readGridAuto(p); e == nil {
+			kind = detectSourceKind(g, cfg.ColumnAliases)
+		}
+		recorded := kind
+		if recorded == "" {
+			recorded = "unknown"
+		}
+		*detected = append(*detected, map[string]string{"file": h.Filename, "type": recorded})
+		if kind == "work" {
+			*workPaths = append(*workPaths, p)
+			*workNames = append(*workNames, h.Filename)
+		} else {
+			// 订单；无特征（unknown）也先按订单处理，缺列时转换阶段会给明确报错
+			*orderPaths = append(*orderPaths, p)
+			*orderNames = append(*orderNames, h.Filename)
+		}
+	}
 }
 
 type HistoryItem struct {

@@ -286,6 +286,50 @@ func ensureColumns(g *sheetGrid, required []string, aliases map[string][]string)
 	return missing
 }
 
+// ---------- 订单 / 工单自动识别 ----------
+
+// 判别特征列：源档表头里出现越多，越像该类别。
+// 訂單單號 + 品號是「销售订单」的硬特征；製令編號 + 產品品號是「工单」的硬特征。
+var orderSignalCols = []string{
+	"訂單單號", "品號", "訂單數量", "客戶編號", "客戶簡稱",
+	"交貨日期", "單價", "幣別", "訂單日期",
+}
+var workSignalCols = []string{
+	"製令編號", "產品品號", "預計產量", "生產線別", "預計開工日",
+	"預計完工日", "製令數量", "預計生產量", "工單備註",
+}
+
+// detectSourceKind 按表头判定源档属于哪一类。
+// 返回 "order"（销售订单）/ "work"（工单）/ ""（无足够特征无法判定）。
+// 用归一化列名匹配（繁简混用、带 * 前缀、空白都能兜住），与转换主流程同一套口径。
+func detectSourceKind(g *sheetGrid, aliases map[string][]string) string {
+	os, ws := 0, 0
+	for _, c := range orderSignalCols {
+		if resolveColIndex(g, c, aliases) >= 0 {
+			os++
+		}
+	}
+	for _, c := range workSignalCols {
+		if resolveColIndex(g, c, aliases) >= 0 {
+			ws++
+		}
+	}
+	switch {
+	case ws > os:
+		return "work"
+	case os > 0:
+		return "order"
+	}
+	// 评分打平或都为 0 时，再用各自的「唯一硬特征」兜底一次
+	if resolveColIndex(g, "製令編號", aliases) >= 0 {
+		return "work"
+	}
+	if resolveColIndex(g, "訂單單號", aliases) >= 0 {
+		return "order"
+	}
+	return ""
+}
+
 // colBind 「列下标 -> 目标列」的绑定。字段映射先解析成下标，
 // 逐行套用时就只剩一次数组取值。
 type colBind struct {
