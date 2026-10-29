@@ -7,15 +7,24 @@ mes_conv/backup/
 mes_conv/configs/
 # 运行期自动更新状态（记录上次检查时间，避免每次启动都打 GitHub）
 mes_conv/autoupdate.json
+# 更新状态机：待确认启动 / 已确认版本 / 回滚记录（运行期状态，每台机器不同）
+mes_conv/update_state.json
+# 更新目录锁与「落位失败待重试」标记
+mes_conv/update.lock
+mes_conv/pending_apply.json
+# 旧版本 exe 归档（启动自检通过后从 .old / .bad 归档过来，体积以 MB 计）
+mes_conv/previous/
 # 上次运行的版本号（用于「刚升级过就弹一次更新日志」，运行期状态）
 mes_conv/last_version.txt
-# 配置原子写入的临时文件
+# 配置原子写入的临时文件（os.CreateTemp 生成的隐藏唯一名）
 mes_conv/*.json.tmp
+mes_conv/.*.json.*.tmp
 # 镜像访问令牌（运行期由客户端自动协商写入，不入库）
 mes_mirror_token
 # 就地更新时的临时文件
 *.new
 *.old
+*.bad
 # 更新落位记录（记录下次启动要清理的旧 exe，运行期状态）
 pending_update.txt
 _pkg/
@@ -44,6 +53,10 @@ MES物料档案转换工具_分享版/welcomed
 MES物料档案转换工具_分享版/tpl_baseline.json
 MES物料档案转换工具_分享版/autoupdate.json
 MES物料档案转换工具_分享版/last_version.txt
+MES物料档案转换工具_分享版/update_state.json
+MES物料档案转换工具_分享版/update.lock
+MES物料档案转换工具_分享版/pending_apply.json
+MES物料档案转换工具_分享版/previous/
 
 # 分享用的打包产物（内含 exe，同样不入库）
 /MES物料档案转换工具_*.zip

@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 )
 
@@ -159,12 +160,37 @@ func mergeMissingMap(cur, def map[string]string) (map[string]string, int) {
 	return cur, added
 }
 
+// configWriteMu 串行化同进程内的配置写盘。
+// 配置是「按需重读」的（/api/config、转换入口都会走 ensure*Config），
+// 两个标签页同时保存、或「保存」撞上「启动迁移」时，会真的并发写同一份文件。
+var configWriteMu sync.Mutex
+
 // writeConfigFile 原子写配置文件：先写同目录临时文件再 rename，
 // 避免「写到一半程序被杀 / 拔电」留下半截 JSON（那会被下一次启动判成损坏）。
+//
+// 临时文件名必须每次唯一：以前固定写成 path+".tmp"，并发写时两个 goroutine
+// 会往同一个临时文件里写，再把半截内容 rename 上线 —— 配置文件就这么坏掉的。
 func writeConfigFile(path string, data []byte) error {
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
+	configWriteMu.Lock()
+	defer configWriteMu.Unlock()
+
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
+	}
+	f, err := os.CreateTemp(dir, "."+filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	_, werr := f.Write(data)
+	cerr := f.Close()
+	if werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		_ = os.Remove(tmp)
+		return werr
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		_ = os.Remove(tmp)

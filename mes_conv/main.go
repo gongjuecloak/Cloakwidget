@@ -89,6 +89,11 @@ func main() {
 		return
 	}
 
+	// 更新兜底：上一次更新落位后若没能通过启动自检，这里直接回退到旧版本并重启。
+	// 必须放在 ensureConfig 之前——万一新版本的配置迁移本身有问题，
+	// 先退回一个确定能用的版本，别把配置和程序一起卡死。
+	prepareUpdateBoot()
+
 	// 首次运行确保配置文件存在（两个模块各一份）
 	ensureConfig()
 	ensureOrdersConfig()
@@ -97,10 +102,8 @@ func main() {
 	// 弹一次「这个版本改了什么」（更新日志编译在 exe 里，内网机器也看得到）。
 	updatedFrom = trackVersion()
 
-	// 清理上一轮自动更新遗留的旧 exe。
-	// 「就地更新」受 Windows 限制：exe 运行中既不能删也不能改名（常被杀软锁住），
-	// 所以更新时把新版本落成新文件名、旧文件留到下次启动再删——那时它已不被占用。
-	cleanupOldExe()
+	// 注意：旧 exe 不在这里清理。它可能是新版本起不来时唯一的回退副本，
+	// 要等服务真正起来（markBootOK）之后才归档到 previous/。
 
 	// 单实例：已有实例在运行就直接打开它的界面并退出，避免两个托盘图标 / 两个服务。
 	// -nosingle 时跳过（调试/验证用：可以在另一个端口独立跑一份，不去打扰用户正在用的那个）。
@@ -118,11 +121,21 @@ func main() {
 		return
 	}
 
+	// 走到这里说明单实例锁拿到了、确实要起服务，记一次「启动尝试」。
+	// 起不来时，下次启动就能据此判定为失败并自动回滚。
+	beginUpdateBoot()
+
 	// 启动 HTTP 服务（跑在后台 goroutine，前台留给托盘）
 	actualPort, started := serveAsync(*port)
 	if !started {
+		// 服务没起来就不确认本次更新：下次启动会按「未通过自检」自动回退
+		appLog("服务启动失败，本次更新未确认（下次启动将自动回退到旧版本）")
 		return
 	}
+
+	// 自检通过：确认本次更新，并把旧 exe 归档到 previous/（保留最近 2 份，可手工回退）
+	markBootOK()
+	cleanupOldExe()
 
 	// 后台静默自动更新：启动后稍等再查 GitHub，不阻塞启动；查不到 / 无更新都不影响使用
 	go autoUpdate()

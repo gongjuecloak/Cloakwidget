@@ -69,8 +69,15 @@ type Config struct {
 	CrossChecks []CrossCheck `json:"cross_checks,omitempty"`
 }
 
+// exeDirOverride 仅供测试注入工作目录（生产环境恒为空）。
+// 更新状态机、归档、锁文件都落在 exeDir()，测试必须能把它们关进临时目录。
+var exeDirOverride string
+
 // exeDir 返回可执行文件所在目录（配置文件放在这里）
 func exeDir() string {
+	if exeDirOverride != "" {
+		return exeDirOverride
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		return "."

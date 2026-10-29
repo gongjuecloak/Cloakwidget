@@ -2,6 +2,21 @@
 
 版本号在 `mes_conv/version.go`，本文件按版本倒序记录。
 
+## v1.18.0
+
+更新链路补上「起不来怎么办」的兜底 —— 以前一键更新是能把现场搞死的：
+
+- **旧 exe 不再秒删**：`cleanupOldExe` 从启动早期挪到 `serveAsync` 成功之后，且不再 `os.Remove`，改为归档到 `previous/`（保留最近 2 份）。旧 exe 是新版本起不来时唯一的回退副本，删早了就退无可退。
+- **启动自检 + 自动回滚**（`update_state.go`）：落位成功登记 `pending{from,to,mode,target,backup}`；真正起服务前 `beginUpdateBoot` 置 `tries=1`；`serveAsync` 成功才 `markBootOK` 确认。下次启动发现 pending 未确认（`tries>=1`）即判定上次没起来，把旧 exe 换回去并带 `MES_UPDATE_ROLLBACK=1` 重启，界面照常可用。
+  - `tries` 不在 `prepareUpdateBoot` 里自增：被单实例分支挡回去的那次（用户双击了两次）没真启动，不能算失败，否则会误回滚一个根本没跑过的版本。
+  - 回滚发生在上一个（已退出的）进程里，提示通过 `update_state.json` 的 `rollback` / `rollback_at` 带进重启后的进程，显示在「关于」黄条里（只显示 7 天内）。
+  - 回滚失败（旧文件丢失 / 被占用）只记说明、不阻塞启动。
+- **更新互斥**：进程内 `updateGateMu`（`TryLock`）+ 目录锁 `update.lock`（`O_EXCL`，15 分钟残留可接管）。以前自动更新与手动「立即更新」并发时，后到的会先 `os.Remove(backup)` 把对方刚留的回滚副本删掉；共享盘上多台机器同跑也会互相覆盖 `.part` / `pending_update.txt`。
+- **节流修正**：`resolveUpdate` 增加 `reachable` 返回值。连不上任何更新源时不再写 24h 时间戳，改为 5 / 15 / 60 分钟退避（`autoupdate.json` 的 `fails` / `next`）；拿到应答才写 `last`。以前一次网络抖动就是一天不再检查更新。
+- **就地替换失败留标记**：`pending_apply.json` 记录待重试版本，下次启动跳过节流直接再试一次，不用重装。
+- **配置原子写的临时文件名改为唯一**（`os.CreateTemp` + 同名互斥）：配置是按需重读的，两个标签页同时保存会往同一个 `path+".tmp"` 里写，把半截 JSON rename 上线。
+- 新增 `update_state_test.go`（12 项）：首次尝试不回滚、确认后不回滚、就地/并存两种回滚、版本不匹配清理、回滚失败不阻塞、归档保留 2 份、目录锁互斥与陈旧锁接管、并发写配置不产生坏 JSON、退避与节流。
+
 ## v1.17.0
 
 配置随版本演进不再「静默失配」，并把更新内容内置进程序：

@@ -476,32 +476,39 @@ func reportCheckin() {
 //   - auto   （默认）镜像优先；镜像不可达/无新版时回退 GitHub
 //   - github 只查 GitHub（适合能直连外网的机器）
 //   - mirror 只查镜像、不回退（适合内网无法访问 GitHub 的机器，避免每次白等超时）
-func resolveUpdate() (*updateManifest, string) {
+func resolveUpdate() (*updateManifest, string, bool) {
 	src := srcAuto
 	if s := sysSettings(); s.UpdateSource != "" {
 		src = normalizeUpdateSource(s.UpdateSource)
 	}
 	mirrorOK := updateMirrorBase != "" && src != srcGithub
 	githubOK := src != srcMirror
+	// reachable 表示「至少有一个更新源正常应答」。
+	// 调用方靠它区分「确实没有新版」和「网络没打通」——后者不该写 24h 节流，
+	// 否则一次抖动就让机器一天内不再检查更新。
+	reachable := false
 
 	if mirrorOK {
-		if m, err := fetchManifest(mirrorAppBase() + "/version.json?channel=" + url.QueryEscape(updateChannel())); err == nil &&
-			versionLess(appVersion, m.Version) {
-			// 强校验：清单 exe 的 SHA256 与当前运行文件一致，说明实为同一构建，绝不提示升级
-			if m.Exe.SHA256 != "" && strings.EqualFold(m.Exe.SHA256, runningExeSHA256()) {
-				m = nil
-			}
-			if m != nil {
-				return m, mirrorAppBase()
+		if m, err := fetchManifest(mirrorAppBase() + "/version.json?channel=" + url.QueryEscape(updateChannel())); err == nil {
+			reachable = true
+			if versionLess(appVersion, m.Version) {
+				// 强校验：清单 exe 的 SHA256 与当前运行文件一致，说明实为同一构建，绝不提示升级
+				if m.Exe.SHA256 != "" && strings.EqualFold(m.Exe.SHA256, runningExeSHA256()) {
+					m = nil
+				}
+				if m != nil {
+					return m, mirrorAppBase(), true
+				}
 			}
 		}
 		if src == srcMirror {
-			return nil, "" // 只用镜像：镜像没有新版 / 不可达，就不更新了
+			return nil, "", reachable // 只用镜像：镜像没有新版 / 不可达，就不更新了
 		}
 	}
 	if githubOK {
 		rel, err := fetchLatestRelease()
 		if err == nil {
+			reachable = true
 			for _, a := range rel.Assets {
 				if strings.EqualFold(a.Name, "version.json") {
 					if m, e := fetchManifest(a.URL); e == nil &&
@@ -509,13 +516,13 @@ func resolveUpdate() (*updateManifest, string) {
 						if m.Exe.SHA256 != "" && strings.EqualFold(m.Exe.SHA256, runningExeSHA256()) {
 							continue
 						}
-						return m, "" // 用清单里的 GitHub 下载地址
+						return m, "", true // 用清单里的 GitHub 下载地址
 					}
 				}
 			}
 		}
 	}
-	return nil, ""
+	return nil, "", reachable
 }
 
 // handlerUpdate 检查更新（手动点按钮）
@@ -526,7 +533,11 @@ func handlerUpdate(w http.ResponseWriter, r *http.Request) {
 	// 顺手向镜像登记本机，让控制台能看到现场机器的更新状态（best-effort）
 	go reportCheckin()
 
-	m, base := resolveUpdate()
+	m, base, reachable := resolveUpdate()
+	if !reachable {
+		// 没有任何更新源应答：下面会按「已是最新」回话，这里至少让日志能区分
+		appLog("检查更新：更新源均不可达（当前 v%s），按已是最新处理", appVersion)
+	}
 	latest := appVersion
 	has := false
 	var dl string
@@ -640,9 +651,15 @@ func sha256File(path string) (string, error) {
 // pendingUpdateFile 记录「上次更新遗留、需在下次启动时清理的旧文件名」。
 func pendingUpdateFile() string { return filepath.Join(exeDir(), "pending_update.txt") }
 
-// cleanupOldExe 清理上一轮更新遗留的旧 exe。
-// 只在启动早期调用——此时本进程是刚启动的，别的旧进程早已退出，文件不再被锁。
-// 删不掉就跳过（下次启动还会再试），绝不影响启动。
+// pendingApplyFile 记录「上次落位失败、需要重试」的更新。
+// 没有它的话，就地替换一旦被占用挡下，这条更新就彻底丢了：
+// 下次启动还是旧版，而且 24h 节流内也不会再检查，用户以为「已经是最新」。
+func pendingApplyFile() string { return filepath.Join(exeDir(), "pending_apply.json") }
+
+// cleanupOldExe 处理上一轮更新遗留的旧 exe：归档到 previous/ 而不是直接删除。
+// **只在启动自检通过之后调用**（main.go 里在 serveAsync 成功后才调）——
+// 旧 exe 是新版本起不来时唯一的回退副本，删早了就退无可退。
+// 归档失败就跳过（下次启动还会再试），绝不影响启动。
 func cleanupOldExe() {
 	f, err := os.Open(pendingUpdateFile())
 	if err != nil {
@@ -655,11 +672,10 @@ func cleanupOldExe() {
 	}
 	old := filepath.Join(exeDir(), name)
 	if _, err := os.Stat(old); err == nil {
-		if err := os.Remove(old); err != nil {
-			appLog("旧版本文件暂无法清理（可能被占用），下次启动再试：%s", name)
+		if err := archiveOldExe(old); err != nil {
+			appLog("旧版本文件暂无法归档（可能被占用），下次启动再试：%s", name)
 			return // 保留 pending 文件，等下次
 		}
-		appLog("已清理上一版本的 exe：%s", name)
 	}
 	_ = os.Remove(pendingUpdateFile())
 }
@@ -683,6 +699,18 @@ func readAllAndClose(f *os.File) []byte {
 }
 
 func applyUpdateFromManifest(m *updateManifest, base string) (string, error) {
+	// 同进程内只有一个更新流程（自动更新与手动「立即更新」可能同时触发）；
+	// 目录锁再挡住共享盘上其他机器。两者都在最外层，任何一步失败都不会碰到现有文件。
+	if !updateGateMu.TryLock() {
+		return "", errors.New("已有更新正在进行中，请稍候再试")
+	}
+	defer updateGateMu.Unlock()
+	releaseLock, err := acquireUpdateFileLock()
+	if err != nil {
+		return "", err
+	}
+	defer releaseLock()
+
 	var dlURL string
 	if base != "" {
 		dlURL = strings.TrimRight(base, "/") + "/" + m.Exe.Name
@@ -722,12 +750,18 @@ func applyUpdateFromManifest(m *updateManifest, base string) (string, error) {
 		// Windows 允许重命名正在运行的 exe（仅禁止删除），故先把它挪到 .old，
 		// 再把新文件落到原名，最后重启新进程；旧的 .old 下次启动清理。
 		backup := target + ".old"
-		_ = os.Remove(backup)
+		// 上一次更新可能留下同名的 .old（还没归档）：先归档而不是删掉，
+		// 那份才是「万一这次也不行」时能退回去的版本。
+		if fileExists(backup) {
+			_ = archiveOldExe(backup)
+		}
 		if rerr := os.Rename(cur, backup); rerr != nil {
 			// 极端情况（被占用 / 特殊路径解析异常）无法挪动运行时 exe：
 			// 退回「下次启动再替换」，本次不破坏当前进程，提示用户重启即可生效。
 			_ = os.Remove(tmp)
-			return "", fmt.Errorf("无法就地替换正在运行的程序（%v）；请关闭程序后重新启动以完成更新", rerr)
+			// 留下待重试标记：否则下次启动还是旧版，而且再也不会提示更新
+			_ = os.WriteFile(pendingApplyFile(), []byte(m.Version), 0644)
+			return "", fmt.Errorf("无法就地替换正在运行的程序（%v）；已记为待重试，下次启动会自动再试一次", rerr)
 		}
 		if err := moveFile(tmp, target); err != nil {
 			_ = os.Rename(backup, cur) // 落位失败：把 .old 还原，避免程序缺失
@@ -735,6 +769,8 @@ func applyUpdateFromManifest(m *updateManifest, base string) (string, error) {
 			return "", fmt.Errorf("新版本落位失败：%w", err)
 		}
 		_ = os.WriteFile(pendingUpdateFile(), []byte(filepath.Base(backup)), 0644)
+		recordUpdatePending("inplace", filepath.Base(target), filepath.Base(backup), m.Version)
+		_ = os.Remove(pendingApplyFile())
 		appLog("新版本已就位（就地替换）：%s（重启后生效）", m.Exe.Name)
 		return target, nil
 	}
@@ -750,6 +786,8 @@ func applyUpdateFromManifest(m *updateManifest, base string) (string, error) {
 	}
 	if curName := filepath.Base(cur); curName != "" && curName != filepath.Base(target) {
 		_ = os.WriteFile(pendingUpdateFile(), []byte(curName), 0644)
+		recordUpdatePending("newfile", filepath.Base(target), curName, m.Version)
+		_ = os.Remove(pendingApplyFile())
 		appLog("新版本已就位：%s（下次启动生效，并自动清理旧文件 %s）", m.Exe.Name, curName)
 	} else {
 		_ = os.Remove(pendingUpdateFile())
@@ -770,10 +808,14 @@ func sameFile(a, b string) bool {
 	return os.SameFile(fa, fb)
 }
 
+// relaunchFn 供测试替换（生产环境就是 relaunchSelf —— 它会 os.Exit，没法在单测里跑）
+var relaunchFn = relaunchSelf
+
 // relaunchSelf 启动新 exe 并退出当前进程。
 // 先释放单实例锁，让新进程能立即拿到锁；用一次性环境变量告知新进程「这是重启，别把自己当重复实例」。
 // target 为空时回退到 os.Executable()。
-func relaunchSelf(target string) {
+// extraEnv 用于追加场景标记（如回滚时的 MES_UPDATE_ROLLBACK=1），便于新进程在日志里区分。
+func relaunchSelf(target string, extraEnv ...string) {
 	if target == "" {
 		if e, err := os.Executable(); err == nil {
 			target = e
@@ -787,6 +829,7 @@ func relaunchSelf(target string) {
 		cmd.Dir = wd
 	}
 	cmd.Env = append(os.Environ(), "MES_UPDATE_RESTART=1")
+	cmd.Env = append(cmd.Env, extraEnv...)
 	releaseSingleInstance()
 	if err := cmd.Start(); err != nil {
 		appLog("重启失败：%v（保留当前进程）", err)
@@ -800,23 +843,58 @@ func autoUpdateStatePath() string {
 	return filepath.Join(exeDir(), "autoupdate.json")
 }
 
-func autoUpdateCheckedRecently() bool {
-	b, err := os.ReadFile(autoUpdateStatePath())
-	if err != nil {
-		return false
-	}
-	var s struct {
-		Last int64 `json:"last"`
-	}
-	if json.Unmarshal(b, &s) != nil {
-		return false
-	}
-	return time.Now().Unix()-s.Last < 24*3600
+// updateCheckState 自动检查更新的节流状态。
+// Last 只在「真的拿到了应答」时才写；连不上更新源时只写 Next（短退避），
+// 这样一次网络抖动不会让机器 24 小时内不再检查更新。
+type updateCheckState struct {
+	Last  int64 `json:"last"`
+	Fails int   `json:"fails,omitempty"`
+	Next  int64 `json:"next,omitempty"`
 }
 
-func autoUpdateMarkChecked() {
+func loadUpdateCheckState() updateCheckState {
+	var s updateCheckState
+	if b, err := os.ReadFile(autoUpdateStatePath()); err == nil && len(b) > 0 {
+		_ = json.Unmarshal(b, &s)
+	}
+	return s
+}
+
+func saveUpdateCheckState(s updateCheckState) {
 	_ = os.WriteFile(autoUpdateStatePath(),
-		[]byte(fmt.Sprintf(`{"last":%d}`, time.Now().Unix())), 0644)
+		[]byte(fmt.Sprintf(`{"last":%d,"fails":%d,"next":%d}`, s.Last, s.Fails, s.Next)), 0644)
+}
+
+func autoUpdateCheckedRecently() bool {
+	s := loadUpdateCheckState()
+	now := time.Now().Unix()
+	if s.Next > now {
+		return true // 失败后的退避窗口内
+	}
+	return s.Last > 0 && now-s.Last < 24*3600
+}
+
+// autoUpdateMarkChecked 检查成功（无论有没有新版），重置退避并进入 24h 节流
+func autoUpdateMarkChecked() {
+	s := loadUpdateCheckState()
+	s.Last = time.Now().Unix()
+	s.Fails = 0
+	s.Next = 0
+	saveUpdateCheckState(s)
+}
+
+// autoUpdateMarkFailed 更新源不可达：按 5 / 15 / 60 分钟退避，不算「检查过」
+func autoUpdateMarkFailed() int {
+	backoff := []int64{300, 900, 3600}
+	s := loadUpdateCheckState()
+	s.Fails++
+	step := backoff[len(backoff)-1]
+	if s.Fails-1 < len(backoff) {
+		step = backoff[s.Fails-1]
+	}
+	s.Next = time.Now().Unix() + step
+	saveUpdateCheckState(s)
+	return s.Fails
 }
 
 // autoUpdate 后台静默检查并就地更新 exe；更新在下次启动生效（不强制重启，避免打断正在用的用户）。
@@ -826,11 +904,19 @@ func autoUpdate() {
 	time.Sleep(3 * time.Second)
 	// 启动即向镜像登记本机（best-effort，失败不影响使用）
 	reportCheckin()
-	if autoUpdateCheckedRecently() {
+	// 上一次落位失败过（exe 被占用等）：这次不看 24h 节流，直接再试一次
+	retryPending := fileExists(pendingApplyFile())
+	if !retryPending && autoUpdateCheckedRecently() {
+		return
+	}
+	m, base, reachable := resolveUpdate()
+	if !reachable {
+		// 一个更新源都没应答：不能记成「已检查」，否则一次网络抖动就是一天不再查
+		n := autoUpdateMarkFailed()
+		appLog("自动更新：更新源暂时不可达（第 %d 次），稍后重试", n)
 		return
 	}
 	autoUpdateMarkChecked()
-	m, base := resolveUpdate()
 	if m == nil {
 		return
 	}
@@ -871,11 +957,15 @@ func moveFile(src, dst string) error {
 func handlerUpdateApply(w http.ResponseWriter, r *http.Request) {
 	lang := reqLang(r)
 	L := msgs(lang)
-	m, base := resolveUpdate()
+	m, base, reachable := resolveUpdate()
 	if m == nil {
+		msg := fmt.Sprintf(L["msg_update_latest"], appVersion)
+		if !reachable {
+			appLog("手动更新：更新源均不可达，按已是最新处理")
+		}
 		writeJSON(w, map[string]interface{}{
-			"ok": true, "restart": false,
-			"message": fmt.Sprintf(L["msg_update_latest"], appVersion),
+			"ok": true, "restart": false, "reachable": reachable,
+			"message": msg,
 		})
 		return
 	}

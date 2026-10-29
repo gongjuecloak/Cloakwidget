@@ -2,6 +2,40 @@
   "note": "程序内置的更新日志。发版时在 versions 顶部加一条，并把 version 改成新版本号；notes 按语言分组，缺的语言回退到 zh。",
   "versions": [
     {
+      "version": "1.18.0",
+      "date": "2026-10-29",
+      "notes": {
+        "zh": [
+          "更新前先留退路：旧版本程序不再在重启第一步就被删掉，而是等新版本真正启动成功后才归档到 previous/（保留 2 份，可手工换回）。",
+          "新版本起不来会自动回退：落位后先登记「待确认启动」，服务起不来则下次启动自动换回旧版本并重启，界面照常可用；回退记录会显示在「关于」里。",
+          "自动更新与手动「立即更新」不再能同时执行（以前两个流程会互删对方刚留下的回滚副本）；共享盘上多台机器同时更新也会排队等待。",
+          "连不上更新源不再算「已检查」：改为 5 / 15 / 60 分钟退避重试，网络恢复后当天就能继续收到更新（以前会静默 24 小时）。",
+          "就地替换被占用挡下时会留下待重试标记，下次启动自动再试，不用重装。"
+        ],
+        "zht": [
+          "更新前先留退路：舊版程式不再在重啟第一步就被刪掉，而是等新版本真正啟動成功後才歸檔到 previous/（保留 2 份，可手動換回）。",
+          "新版本起不來會自動回退：落位後先登記「待確認啟動」，服務起不來則下次啟動自動換回舊版並重啟，介面照常可用；回退記錄會顯示在「關於」裡。",
+          "自動更新與手動「立即更新」不再能同時執行（以前兩個流程會互刪對方剛留下的回滾副本）；共享碟上多台機器同時更新也會排隊等待。",
+          "連不上更新源不再算「已檢查」：改為 5 / 15 / 60 分鐘退避重試，網路恢復後當天就能繼續收到更新（以前會靜默 24 小時）。",
+          "就地替換被佔用擋下時會留下待重試標記，下次啟動自動再試，不用重裝。"
+        ],
+        "vi": [
+          "Luôn giữ đường lùi: tệp exe cũ không còn bị xóa ngay khi khởi động lại, mà chỉ được lưu trữ vào previous/ sau khi bản mới khởi động thành công (giữ 2 bản để khôi phục thủ công).",
+          "Bản mới không khởi động được sẽ tự động quay lui: sau khi cập nhật sẽ ghi nhận \"chờ xác nhận\", nếu dịch vụ không lên thì lần khởi động sau tự đổi lại bản cũ và chạy tiếp; lịch sử quay lui hiển thị trong \"Giới thiệu\".",
+          "Cập nhật tự động và nút \"Cập nhật ngay\" không còn chạy chồng nhau (trước đây hai luồng xóa mất bản sao lưu của nhau); nhiều máy dùng chung thư mạng cũng sẽ xếp hàng.",
+          "Không kết nối được nguồn cập nhật không còn bị coi là \"đã kiểm tra\": sẽ thử lại sau 5 / 15 / 60 phút, mạng có lại là nhận được cập nhật ngay trong ngày (trước đây im lặng 24 giờ).",
+          "Khi thay thế tại chỗ bị chặn (tệp đang bị chiếm), sẽ ghi lại để thử lại ở lần khởi động sau, không cần cài lại."
+        ],
+        "en": [
+          "A way back before every update: the old exe is no longer deleted on the first restart — it is archived to previous/ only after the new build actually starts (last 2 kept, for manual restore).",
+          "Automatic rollback when the new build will not start: the update is recorded as \"pending confirmation\"; if the service fails to come up, the next launch swaps the old exe back and restarts. The rollback is shown in About.",
+          "Background and manual updates can no longer run at the same time (they used to delete each other's rollback copy); machines sharing a network folder now queue up.",
+          "An unreachable update source no longer counts as \"checked\": retries back off 5 / 15 / 60 minutes, so updates resume the same day instead of going silent for 24 hours.",
+          "A blocked in-place replace now leaves a retry marker and is retried on the next launch — no reinstall needed."
+        ]
+      }
+    },
+    {
       "version": "1.17.0",
       "date": "2026-10-29",
       "notes": {
