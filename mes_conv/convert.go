@@ -160,6 +160,14 @@ func Convert(cfg *Config, srcPath, tplPath, outPath, lang string) (*Report, erro
 		}
 	}
 
+	// ---- 源表指纹 ----
+	// 选错文件（把订单表当物料档、把 BOM 表当物料档）以前也能"成功"：
+	// 照样生成一份必填列全空的 xlsx，日志还写「转换完成 ✓」，用户到 MES 导入才发现整批是空的。
+	// 一个映射源列都对不上，基本可以断定文件选错了，直接拦在这里。
+	if want, hit := sourceHit(cfg, mbIdx); want > 0 && hit == 0 {
+		return nil, fmt.Errorf(L["err_src_mismatch"], want, headerPreview(sheader, 6))
+	}
+
 	get := func(row []string, mb string) string {
 		j, ok := mbIdx[mb]
 		if !ok || j >= len(row) {
@@ -598,4 +606,42 @@ func translateUnitKeys(s string, m map[string]string, allow, keys []string) (str
 		}
 	}
 	return s, false
+}
+
+// sourceHit 统计配置引用的源列里，有多少个真的出现在源表表头上。
+// 返回（引用的源列数, 命中数）；want==0 说明这套配置不依赖源列（全是 fixed/rownum），无从判断。
+func sourceHit(cfg *Config, idx map[string]int) (int, int) {
+	seen := make(map[string]bool, len(cfg.Fields))
+	want, hit := 0, 0
+	for _, f := range cfg.Fields {
+		s := strings.TrimSpace(f.Source)
+		if s == "" || seen[s] {
+			continue
+		}
+		seen[s] = true
+		want++
+		if _, ok := idx[s]; ok {
+			hit++
+		}
+	}
+	return want, hit
+}
+
+// headerPreview 取表头前 n 个非空列，用于「你给的这个文件长这样」的提示。
+func headerPreview(headers []string, n int) string {
+	out := make([]string, 0, n)
+	for _, h := range headers {
+		h = strings.TrimSpace(h)
+		if h == "" {
+			continue
+		}
+		out = append(out, h)
+		if len(out) >= n {
+			break
+		}
+	}
+	if len(out) == 0 {
+		return "-"
+	}
+	return strings.Join(out, "、")
 }

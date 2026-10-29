@@ -79,6 +79,22 @@ async function loadTemplateHeaders(f){
 bindFile("tplFile","tplName","tplCard",loadTemplateHeaders,
   ()=>{ renderDatalist("tgtCols",[],true); });
 
+// 输出模板折叠：默认收起成一行链接，选过自定义模板就自动展开并保持展开
+(function(){
+  const btn=document.getElementById("tplFoldBtn");
+  const wrap=document.getElementById("tplWrap");
+  const card=document.getElementById("tplCard");
+  const inp=document.getElementById("tplFile");
+  if(!btn||!wrap) return;
+  const setOpen=(open)=>{
+    wrap.style.display = open ? "" : "none";
+    btn.setAttribute("aria-expanded", open?"true":"false");
+    if(card) card.classList.toggle("open", !!open);
+  };
+  btn.addEventListener("click",()=>setOpen(wrap.style.display==="none"));
+  if(inp) inp.addEventListener("change",()=>{ if(inp.files && inp.files.length) setOpen(true); });
+})();
+
 // ---- 状态条 ----
 // ---- 通用工厂：状态条 / 忙碌按钮 / 进度条（物料与订单模块共用） ----
 function makeStatus(id){ return (type,key)=>{
@@ -181,14 +197,17 @@ function makeChecksRenderer(c){
     const wrap=document.getElementById(c.wrap);
     const body=document.getElementById(c.body);
     const sum=document.getElementById(c.sum);
+    const tgl=document.getElementById(c.toggle);
     sec.classList.add("show");
     ul.innerHTML=""; body.innerHTML="";
     const errs=data.errors||[], warns=data.warnings||[], issues=data.issues||[];
     const count=(errs.length+warns.length) || (data.issue_total||0);
+    sum.className="check-chip show "+(count>0?"bad":"ok");
     sum.textContent = count>0 ? fmt(c.summaryFmt,[count]) : t(c.okKey);
     if(count===0 && issues.length===0){
       ul.innerHTML='<li class="check-ok">'+t(c.okKey)+'</li>';
       wrap.style.display="none";
+      if(tgl) tgl.style.display="none";
       return;
     }
     errs.forEach(x=>ul.insertAdjacentHTML("beforeend",'<li class="err">✕ '+esc(x)+'</li>'));
@@ -197,24 +216,40 @@ function makeChecksRenderer(c){
     // 本次转换：提示内容由后端按「转换时的语言」生成，若界面语言已切换则加一行说明
     if(fromHistory){
       ul.insertAdjacentHTML("beforeend",
-        '<li style="color:#6b7280;font-size:12px;margin-top:6px;list-style:none">'+
-        esc(fmt("hist_report_hint",[data.time||""]))+'</li>');
+        '<li class="check-note">'+esc(fmt("hist_report_hint",[data.time||""]))+'</li>');
     } else {
       const last=c.lastResult();
       if(last && last.lang!==currentLang){
         ul.insertAdjacentHTML("beforeend",
-          '<li style="color:#6b7280;font-size:12px;margin-top:6px;list-style:none">'+esc(t("check_lang_hint"))+'</li>');
+          '<li class="check-note">'+esc(t("check_lang_hint"))+'</li>');
       }
     }
+    // 明细表格默认收起：摘要已经说明有几条，逐行铺开会把结果区撑得很长。
+    // 但 error 级问题默认展开——那些是真会导致 MES 导入失败的，必须一眼看见。
     if(issues.length){
-      wrap.style.display="block";
       body.innerHTML = issues.map(it=>'<tr><td>'+(it.row||"")+'</td><td>'+esc(it.col||"")+'</td><td>'+
         (it.level==="error"?'<span style="color:#dc2626">':'<span style="color:#b45309">')+esc(it.msg||"")+'</span></td></tr>').join("");
-    } else { wrap.style.display="none"; }
+      const hasErr=issues.some(it=>it.level==="error");
+      const setOpen=open=>{
+        wrap.style.display=open?"block":"none";
+        if(tgl){
+          tgl.textContent=open?t("check_less"):fmt("check_more",[issues.length]);
+          tgl.setAttribute("aria-expanded",open?"true":"false");
+        }
+      };
+      if(tgl){
+        tgl.style.display="";
+        tgl.onclick=()=>setOpen(wrap.style.display==="none");
+      }
+      setOpen(hasErr);
+    } else {
+      wrap.style.display="none";
+      if(tgl) tgl.style.display="none";
+    }
   };
 }
 const renderChecks=makeChecksRenderer({
-  sec:"checkSection", list:"checkList", wrap:"issueWrap", body:"issueBody", sum:"check_summary",
+  sec:"checkSection", list:"checkList", wrap:"issueWrap", body:"issueBody", sum:"check_summary", toggle:"checkToggleBtn",
   summaryFmt:"check_summary", okKey:"check_ok", lastResult:()=>lastResult });
 
 // ---- 转换 ----
@@ -282,7 +317,13 @@ function makeHistoryLoader(c){
       const items=(d.items||[]).slice(0,10);
       sec.classList.add("show");
       if(!items.length){
-        body.innerHTML='<tr><td colspan="5" style="text-align:center;color:#6b7280">'+t(c.k.none)+'</td></tr>';
+        // 空状态除了「没有记录」还得给出下一步：第一次用的人就停在这一屏。
+        body.innerHTML='<tr><td colspan="5"><div class="hist-empty">'
+          +'<b>'+esc(t("hist_empty_title"))+'</b>'
+          +'<span>'+esc(t(c.hint||"hist_empty_hint"))+'</span>'
+          +'<button type="button" class="linkbtn" data-help="1">'+esc(t("help_btn"))+'</button>'
+          +'</div></td></tr>';
+        body.querySelectorAll("button[data-help]").forEach(b=>b.addEventListener("click",()=>openHelp()));
         return;
       }
       body.innerHTML = items.map(it=>{
@@ -884,12 +925,32 @@ async function openChangelog(fromVersion){
     }).join("");
   }catch(e){ body.innerHTML='<p style="color:#dc2626">'+esc(e.message)+'</p>'; }
 }
+// 升级提示条：刚升级过时在页面顶部提示一行，点开才看详情。
+// 以前是启动 3 秒后直接弹整屏更新日志，把首页全挡住，用户得先关一次才能干活。
+function showUpdNote(from,to){
+  const box=document.getElementById("updNote");
+  if(!box) return;
+  const txt=document.getElementById("updNoteText");
+  const link=document.getElementById("updNoteView");
+  const x=document.getElementById("updNoteClose");
+  // 本地演练 / 同版本重启时 from 可能等于 to，别再显示成「从 v1.18.0 更新到 v1.18.0」
+  const same=!from || String(from)===String(to);
+  if(txt) txt.textContent = same ? fmt("cl_note_newver",[String(to||"")])
+                                 : fmt("cl_note_updated",[String(from||""),String(to||"")]);
+  if(link) link.textContent=t("cl_note_view");
+  if(x){ x.title=t("cl_close"); x.setAttribute("aria-label",t("cl_close")); }
+  box.classList.add("show");
+  if(link) link.onclick=()=>{ box.classList.remove("show"); openChangelog(from); };
+  if(x) x.onclick=()=>{ box.classList.remove("show"); };
+}
+
 if(document.getElementById("clClose")) document.getElementById("clClose").addEventListener("click",()=>hideModal("clModal"));
 if(document.getElementById("clModal")) document.getElementById("clModal").addEventListener("click",e=>{ if(e.target.id==="clModal") hideModal("clModal"); });
-document.getElementById("helpBtn").addEventListener("click",()=>{
+function openHelp(){
   document.getElementById("helpBody").innerHTML=t("help_body");
   showModal("helpModal");
-});
+}
+document.getElementById("helpBtn").addEventListener("click",openHelp);
 document.getElementById("helpClose").addEventListener("click",()=>hideModal("helpModal"));
 document.getElementById("helpModal").addEventListener("click",e=>{ if(e.target.id==="helpModal") hideModal("helpModal"); });
 
@@ -899,18 +960,23 @@ document.getElementById("aboutBtn").addEventListener("click",async()=>{
   showModal("aboutModal");
   try{
     const r=await fetch("/api/about"); const d=await r.json();
-    const row=(k,v)=>'<tr><td style="padding:6px 16px 6px 0;color:#6b7280;white-space:nowrap;vertical-align:top">'+esc(k)+
-      '</td><td style="padding:6px 0;word-break:break-all">'+esc(v==null||v===""?"-":String(v))+'</td></tr>';
-    let html='<table style="width:100%;border-collapse:collapse;font-size:14px">';
+    // 路径类字段给两个小按钮：复制、打开所在目录（长路径在这儿换行断开，手抄基本没戏）
+    const tiny=(cls,label,attr,val)=>'<button type="button" class="tiny-btn '+cls+'" data-'+attr+'="'+esc(val)+'">'+esc(label)+'</button>';
+    const copyOf=v=>tiny("js-copy",t("about_copy"),"copy",v==null?"":String(v));
+    const openOf=w=>tiny("js-open",t("about_open"),"dir",w);
+    const row=(k,v,acts)=>'<tr><td class="about-k">'+esc(k)+
+      '</td><td class="about-v">'+esc(v==null||v===""?"-":String(v))+
+      '</td><td class="about-act">'+(acts||"")+'</td></tr>';
+    let html='<table class="about-tbl">';
     html+=row(t("about_version"), (d.app||"")+" v"+(d.version||""));
     html+=row(t("about_build"), d.build_time);
     html+=row(t("about_runtime"), d.runtime);
     html+=row(t("about_addr"), d.addr);
-    html+=row(t("about_exe"), d.exe_path);
-    html+=row(t("about_config"), d.config);
-    html+=row(t("about_log"), d.log);
-    html+=row(t("about_out"), d.out);
-    html+=row(t("about_backup"), d.backup);
+    html+=row(t("about_exe"), d.exe_path, copyOf(d.exe_path));
+    html+=row(t("about_config"), d.config, copyOf(d.config)+openOf("config"));
+    html+=row(t("about_log"), d.log, copyOf(d.log)+openOf("logs"));
+    html+=row(t("about_out"), d.out, copyOf(d.out)+openOf("out"));
+    html+=row(t("about_backup"), d.backup, copyOf(d.backup)+openOf("backup"));
     html+='</table>';
     // 配置迁移 / 损坏备份之类的说明：让用户知道程序动过哪些配置
     const cfgNotes=(d&&d.config_notes)||[];
@@ -922,6 +988,27 @@ document.getElementById("aboutBtn").addEventListener("click",async()=>{
     body.innerHTML=html;
     const clBtn=document.getElementById("aboutChangelogBtn");
     if(clBtn) clBtn.addEventListener("click",()=>openChangelog(""));
+    // 路径复制 / 打开所在目录
+    body.querySelectorAll(".js-copy").forEach(b=>{
+      b.addEventListener("click",async()=>{
+        const v=b.getAttribute("data-copy")||"";
+        try{
+          if(navigator.clipboard && window.isSecureContext){ await navigator.clipboard.writeText(v); }
+          else{
+            const ta=document.createElement("textarea");
+            ta.value=v; ta.style.position="fixed"; ta.style.opacity="0";
+            document.body.appendChild(ta); ta.select(); document.execCommand("copy"); document.body.removeChild(ta);
+          }
+          b.textContent=t("about_copied");
+        }catch(e){ b.textContent=t("about_copy"); }
+        setTimeout(()=>{ b.textContent=t("about_copy"); },1200);
+      });
+    });
+    body.querySelectorAll(".js-open").forEach(b=>{
+      b.addEventListener("click",()=>{
+        fetch("/api/open-folder?dir="+encodeURIComponent(b.getAttribute("data-dir")||"")).catch(()=>{});
+      });
+    });
   }catch(e){ body.innerHTML='<p style="color:#dc2626">'+esc(e.message)+'</p>'; }
 });
 document.getElementById("aboutClose").addEventListener("click",()=>hideModal("aboutModal"));
@@ -1033,9 +1120,64 @@ function showModule(name){
   if(name==="bom"){
     if(!bomCfgLoaded) loadBomCfg();
   }
+  if(name==="home"){
+    refreshRecent();
+  }
   if(name==="config"){
     showCfgTab(cfgTab,true);
   }
+}
+
+// ---- 首页「最近一次转换」卡片 ----
+// 物料与订单各自维护一份 history.json，这里合并后取最新的一条：
+// 用户回到首页就能看到上次转了哪个文件、有没有问题，不用先点进模块翻历史。
+async function refreshRecent(){
+  const card=document.getElementById("recentCard");
+  if(!card) return;
+  const grab=async(url,mod)=>{
+    try{
+      const r=await fetch(url);
+      const d=await r.json();
+      const it=(d.items||[])[0];
+      return it?Object.assign({mod:mod},it):null;
+    }catch(e){ return null; }
+  };
+  const [mat,ord]=await Promise.all([grab("/api/history","materials"),grab("/api/orders/history","orders")]);
+  // time 是 "YYYY-MM-DD HH:mm:ss"，直接按字典序比就是时间序
+  const newest=[mat,ord].filter(Boolean).sort((a,b)=>String(b.time||"").localeCompare(String(a.time||"")))[0];
+  const badge=document.getElementById("rcBadge");
+  const title=document.getElementById("rcTitle");
+  const meta=document.getElementById("rcMeta");
+  const btnGo=document.getElementById("rcGoBtn");
+  const btnStart=document.getElementById("rcStartBtn");
+  const btnOut=document.getElementById("rcOpenBtn");
+  card.style.display="";
+  if(!newest){
+    badge.textContent="MES";
+    title.textContent=t("hist_empty_title");
+    meta.textContent=t("home_recent_none");
+    btnGo.style.display="none";
+    btnOut.style.display="none";
+    // 第一次打开时这张卡不该只是「没有记录」，得给一个明确的落点
+    if(btnStart){
+      btnStart.style.display="";
+      btnStart.onclick=()=>showModule("materials");
+    }
+    return;
+  }
+  if(btnStart) btnStart.style.display="none";
+  const isOrd=newest.mod==="orders";
+  badge.textContent=isOrd?"ORD":"MES";
+  title.textContent=newest.file||"—";
+  const n=(newest.issues||0)+(newest.warnings||0);
+  const state=n>0
+    ? '<span class="rc-state bad">'+esc(fmt("home_recent_bad",[n]))+'</span>'
+    : '<span class="rc-state ok">'+esc(t("home_recent_ok"))+'</span>';
+  meta.innerHTML=esc(fmt("home_recent_meta",[isOrd?t("mod_ord_name"):t("mod_mat_name"),newest.rows||0,newest.time||""]))+' · '+state;
+  btnGo.style.display="";
+  btnOut.style.display="";
+  btnGo.onclick=()=>showModule(newest.mod);
+  btnOut.onclick=async()=>{ try{ await fetch("/api/open-folder"); }catch(e){} };
 }
 
 // ---------- 配置中心：两个模块的配置集中在这里维护 ----------
@@ -1102,6 +1244,28 @@ document.getElementById("cfgEntry").addEventListener("click",()=>{ if(window.__c
   });
 });
 document.getElementById("cfgNavBtn").addEventListener("click",()=>showModule("config"));
+// 窄屏「⋯」菜单：点开/收起，点外面或按 Esc 关闭
+(function(){
+  const more=document.getElementById("navMore");
+  const menu=document.getElementById("navMenu");
+  if(!more||!menu) return;
+  const close=()=>{ menu.classList.remove("open"); more.setAttribute("aria-expanded","false"); };
+  more.addEventListener("click",e=>{
+    e.stopPropagation();
+    const open=menu.classList.toggle("open");
+    more.setAttribute("aria-expanded",open?"true":"false");
+  });
+  menu.addEventListener("click",e=>{
+    const b=e.target.closest("button");
+    if(b && b.id!=="navMore") close();
+  });
+  document.addEventListener("click",e=>{
+    if(!menu.classList.contains("open")) return;
+    if(menu.contains(e.target)||more.contains(e.target)) return;
+    close();
+  });
+  document.addEventListener("keydown",e=>{ if(e.key==="Escape") close(); });
+})();
 document.getElementById("cfgTabMat").addEventListener("click",()=>showCfgTab("mat"));
 document.getElementById("cfgTabOrd").addEventListener("click",()=>showCfgTab("ord"));
 document.getElementById("cfgTabBom").addEventListener("click",()=>showCfgTab("bom"));
@@ -1111,6 +1275,8 @@ document.getElementById("backHomeBtn").addEventListener("click",()=>{
   if(currentModule==="config" && (window.__dirty.mat||window.__dirty.ord) && !confirm(t("cfg_leave_confirm"))) return;
   showModule("home");
 });
+refreshRecent();
+
 // 切语言后订单模块要跟着重渲染（配置编辑器是动态生成的，不会自己更新）
 document.getElementById("langSel").addEventListener("change",()=>{
   if(ordCfgLoaded){ const bak=ordCfg; ordCfg=collectOrdCfg(); ordRenderCfg(); ordCfg=bak; }
@@ -1122,6 +1288,7 @@ document.getElementById("langSel").addEventListener("change",()=>{
     ordRenderStats(ordLastResult.data);
     ordRenderChecks(ordLastResult.data);
   }
+  refreshRecent();
 });
 
 // ==================== 订单 / 工单模块 ====================
@@ -1145,10 +1312,11 @@ function ordRenderStats(data){
 }
 // 预检渲染：复用物料档案那套（makeChecksRenderer），只是元素 id 与文案 key 换成订单的
 const ordRenderChecks=makeChecksRenderer({
-  sec:"ordCheckSection", list:"ordCheckList", wrap:"ordIssueWrap", body:"ordIssueBody", sum:"ordCheckSummary",
+  sec:"ordCheckSection", list:"ordCheckList", wrap:"ordIssueWrap", body:"ordIssueBody", sum:"ordCheckSummary", toggle:"ordCheckToggleBtn",
   summaryFmt:"ord_check_summary", okKey:"ord_all_ok", lastResult:()=>ordLastResult });
 const loadOrdersHistory=makeHistoryLoader({
   url:"/api/orders/history", body:"ordHistBody", sec:"ordHistSection", btnCls:"jsordview", view:ordViewReport,
+  hint:"ord_hist_empty_hint",
   k:{none:"ord_hist_none", bad:"ord_hist_bad", ok:"ord_hist_ok", dl:"ord_hist_dl"} });
 async function ordViewReport(id,noScroll){
   if(!id) return;
@@ -1693,12 +1861,13 @@ const STR2 = {
     tbl_drag_hint:"拖动左侧 ⠿ 调整顺序（顺序即输出列顺序）",
     auth_title:"需要口令", auth_hint:"本工具已开启口令保护，请先输入口令后再操作。",
     auth_ok:"进入", auth_bad:"口令不正确", auth_pwd_ph:"请输入口令", need_auth:"需要口令才能操作",
-    wc_title:"欢迎使用 MES 物料档案转换工具",
-    wc_desc:"第一次运行，先花 10 秒了解三件事。",
+    wc_title:"欢迎使用 MES 数据转换工具",
+    wc_desc:"第一次用？三步就能跑完一份文件。",
     wc_lang:"界面语言",
-    wc_tip1:"结果文件会保存到程序目录下的 out 文件夹",
-    wc_tip2:"请把程序放在可写目录，不要放进 Program Files 这类需要管理员权限的位置",
-    wc_tip3:"程序常驻右下角托盘，关掉浏览器标签页不会退出；要完全关闭请用托盘右键菜单的「退出」",
+    wc_tip1:"把鼎新导出的 Excel 拖进来 —— 物料档、订单、工单、BOM 都行，程序自己分辨类型",
+    wc_tip2:"点「开始转换」。输出模板已内置，不用另外准备文件",
+    wc_tip3:"结果存到程序目录的 out 文件夹，结果页可以直接下载或打开文件夹",
+    wc_note:"程序常驻右下角托盘，关掉浏览器标签页不等于退出；请放在可写目录，不要放进 Program Files。",
     wc_ok:"开始使用", file_required:"必填", home_app_title:"MES 数据转换工具", home_app_subtitle:"鼎新 ERP 数据 → MES 导入模板，本地一键转换", bom_app_title:"MES BOM / 用料表转换工具", bom_app_subtitle:"ERP BOM 抓取表 → MES BOM 导入模板",
     preview_need_source:"请先选择源文件再预览", preview_loading:"正在生成预览…", preview_failed:"预览失败：", preview_error:"预览出错：", preview_unknown:"未知错误",
     preview_empty:"预览为空（模板没有可写出的列）", preview_title:"映射预览（前 5 行样例）", preview_target:"目标列", preview_sample:"样例值", empty_value:"（空）",
@@ -1757,12 +1926,13 @@ const STR2 = {
     tbl_drag_hint:"拖曳左側 ⠿ 調整順序（順序即輸出欄順序）",
     auth_title:"需要密碼", auth_hint:"本工具已開啟密碼保護，請先輸入密碼後再操作。",
     auth_ok:"進入", auth_bad:"密碼不正確", auth_pwd_ph:"請輸入密碼", need_auth:"需要密碼才能操作",
-    wc_title:"歡迎使用 MES 物料檔案轉換工具",
-    wc_desc:"第一次執行，先花 10 秒了解三件事。",
+    wc_title:"歡迎使用 MES 資料轉換工具",
+    wc_desc:"第一次用？三步就能跑完一份檔案。",
     wc_lang:"介面語言",
-    wc_tip1:"結果檔案會儲存到程式目錄下的 out 資料夾",
-    wc_tip2:"請把程式放在可寫入的目錄，不要放進 Program Files 這類需要管理員權限的位置",
-    wc_tip3:"程式常駐右下角系統匣，關掉瀏覽器分頁不會結束；要完全關閉請用系統匣右鍵選單的「結束」",
+    wc_tip1:"把鼎新匯出的 Excel 拖進來 —— 物料檔、訂單、工單、BOM 都可以，程式會自己分辨類型",
+    wc_tip2:"點「開始轉換」。輸出範本已內建，不用另外準備檔案",
+    wc_tip3:"結果存到程式目錄的 out 資料夾，結果頁可以直接下載或開啟資料夾",
+    wc_note:"程式常駐右下角系統匣，關掉瀏覽器分頁不等於結束；請放在可寫入的目錄，不要放進 Program Files。",
     wc_ok:"開始使用", file_required:"必填", home_app_title:"MES 資料轉換工具", home_app_subtitle:"鼎新 ERP 資料 → MES 匯入範本，本機一鍵轉換", bom_app_title:"MES BOM / 用料表轉換工具", bom_app_subtitle:"ERP BOM 抓取表 → MES BOM 匯入範本",
     preview_need_source:"請先選擇來源檔案再預覽", preview_loading:"正在產生預覽…", preview_failed:"預覽失敗：", preview_error:"預覽出錯：", preview_unknown:"未知錯誤",
     preview_empty:"預覽為空（範本沒有可寫出的欄位）", preview_title:"對應預覽（前 5 列範例）", preview_target:"目標欄", preview_sample:"範例值", empty_value:"（空）",
@@ -1821,12 +1991,13 @@ const STR2 = {
     tbl_drag_hint:"Kéo ⠿ bên trái để đổi thứ tự (thứ tự = thứ tự cột đầu ra)",
     auth_title:"Cần mật khẩu", auth_hint:"Công cụ đã bật bảo vệ bằng mật khẩu. Hãy nhập mật khẩu để tiếp tục.",
     auth_ok:"Tiếp tục", auth_bad:"Mật khẩu không đúng", auth_pwd_ph:"Nhập mật khẩu", need_auth:"Cần mật khẩu",
-    wc_title:"Chào mừng dùng công cụ chuyển đổi hồ sơ vật tư MES",
-    wc_desc:"Lần chạy đầu tiên — dành 10 giây để biết ba điều sau.",
+    wc_title:"Chào mừng dùng công cụ chuyển đổi dữ liệu MES",
+    wc_desc:"Lần đầu dùng? Ba bước là chạy xong một tệp.",
     wc_lang:"Ngôn ngữ giao diện",
-    wc_tip1:"Tệp kết quả được lưu vào thư mục out trong thư mục chương trình",
-    wc_tip2:"Hãy đặt chương trình ở thư mục ghi được, đừng đặt trong Program Files (cần quyền quản trị)",
-    wc_tip3:"Chương trình thường trú ở khay hệ thống; đóng thẻ trình duyệt không thoát chương trình — dùng menu chuột phải ở khay để thoát hẳn",
+    wc_tip1:"Kéo tệp Excel xuất từ ERP vào — hồ sơ vật tư, đơn hàng, lệnh sản xuất, BOM đều được, chương trình tự nhận loại",
+    wc_tip2:"Bấm 「Bắt đầu chuyển đổi」. Mẫu đầu ra đã có sẵn, không cần chuẩn bị tệp mẫu",
+    wc_tip3:"Kết quả lưu vào thư mục out cạnh chương trình; trang kết quả có thể tải về hoặc mở thư mục",
+    wc_note:"Chương trình thường trú ở khay hệ thống, đóng thẻ trình duyệt không phải là thoát; hãy đặt ở thư mục ghi được, đừng đặt trong Program Files.",
     wc_ok:"Bắt đầu", file_required:"Bắt buộc", home_app_title:"Công cụ chuyển đổi dữ liệu MES", home_app_subtitle:"Dữ liệu ERP → Mẫu nhập MES, xử lý cục bộ", bom_app_title:"Công cụ chuyển đổi BOM / định mức MES", bom_app_subtitle:"Bảng ERP BOM → Mẫu nhập BOM MES",
     preview_need_source:"Hãy chọn tệp nguồn trước khi xem trước", preview_loading:"Đang tạo bản xem trước…", preview_failed:"Không thể xem trước: ", preview_error:"Lỗi xem trước: ", preview_unknown:"Lỗi không xác định",
     preview_empty:"Bản xem trước trống (mẫu không có cột có thể ghi)", preview_title:"Xem trước ánh xạ (5 dòng đầu)", preview_target:"Cột đích", preview_sample:"Giá trị mẫu", empty_value:"(trống)",
@@ -1885,12 +2056,13 @@ const STR2 = {
     tbl_drag_hint:"Drag ⠿ on the left to reorder (order = output column order)",
     auth_title:"Password required", auth_hint:"This tool is password-protected. Enter the password to continue.",
     auth_ok:"Continue", auth_bad:"Wrong password", auth_pwd_ph:"Enter password", need_auth:"A password is required",
-    wc_title:"Welcome to MES Material Master Converter",
-    wc_desc:"First run — 10 seconds on the three things worth knowing.",
+    wc_title:"Welcome to MES Data Converter",
+    wc_desc:"First time? Three steps and one file is done.",
     wc_lang:"Interface language",
-    wc_tip1:"Output files are saved to the out folder next to the program",
-    wc_tip2:"Keep the program in a writable folder — not Program Files, which needs administrator rights",
-    wc_tip3:"The program stays in the system tray; closing the browser tab does not quit it — use the tray menu to exit",
+    wc_tip1:"Drag in the Excel exported from ERP — material master, orders, work orders or BOM all work, the tool detects the type",
+    wc_tip2:"Click Convert. The output template is built in — nothing else to prepare",
+    wc_tip3:"Results go to the out folder next to the program; download or open the folder from the result page",
+    wc_note:"The program lives in the system tray — closing the browser tab does not quit it. Keep it in a writable folder, not Program Files.",
     wc_ok:"Get started", file_required:"Required", home_app_title:"MES Data Converter", home_app_subtitle:"ERP data → MES import templates, converted locally", bom_app_title:"MES BOM Converter", bom_app_subtitle:"ERP BOM extract → MES BOM import template",
     preview_need_source:"Select a source file before previewing", preview_loading:"Building preview…", preview_failed:"Preview failed: ", preview_error:"Preview error: ", preview_unknown:"Unknown error",
     preview_empty:"Preview is empty (the template has no writable columns)", preview_title:"Mapping preview (first 5 rows)", preview_target:"Target column", preview_sample:"Sample values", empty_value:"(empty)",
@@ -2540,12 +2712,14 @@ async function loadStats(){
     const r=await fetch("/api/stats");
     const d=await r.json();
     if(!d.ok) return;
-    if(sec) sec.classList.add("show");   // .history 默认隐藏，拿到数据才亮出来
+    // 没有记录时整块不亮：一个只写「还没有转换记录」的空盒子除了占掉半屏没有别的信息，
+    // 「最近转换」那边的空状态已经说过一次了。
     if(!d.runs){
-      grid.innerHTML='<div class="stat" style="grid-column:1/-1">'+esc(t("stats_none"))+'</div>';
-      bars.innerHTML=""; labels.innerHTML="";
+      if(sec) sec.classList.remove("show");
+      grid.innerHTML=""; bars.innerHTML=""; labels.innerHTML="";
       return;
     }
+    if(sec) sec.classList.add("show");   // .history 默认隐藏，拿到数据才亮出来
     grid.innerHTML =
       statCard(t("stats_runs"), d.runs)
       + statCard(t("stats_rows"), d.rows)
@@ -2780,7 +2954,7 @@ document.querySelector(".cfg-tabs").addEventListener("keydown",e=>{
         try{ seen=localStorage.getItem("cl_seen")||""; }catch(e){}
         if(seen!==cur){
           try{ localStorage.setItem("cl_seen",cur); }catch(e){}
-          openChangelog(d.updated_from);
+          showUpdNote(d.updated_from,d.current);
         }
       }
     }catch(e){}

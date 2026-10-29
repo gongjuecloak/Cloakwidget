@@ -24,7 +24,9 @@
   main{width:100%;max-width:1180px;margin:0 auto;padding:32px 24px 72px}
   .steps{display:grid;grid-template-columns:1fr 1fr;gap:18px}
   @media(max-width:640px){.steps{grid-template-columns:1fr}}
-  .card{min-height:226px;background:rgba(255,255,255,.96);border:1px solid rgba(208,215,226,.92);border-radius:18px;padding:25px;box-shadow:var(--shadow-sm);position:relative;overflow:hidden;transition:border-color .18s,box-shadow .18s,transform .18s}
+  /* 高度交给内容决定：以前固定 min-height:226px，只有一个复选框的卡片（BOM 归一化选项）
+     会被撑成一块 226px 的空盒子，看起来像没加载出来。需要等高的场景由 grid stretch 负责。 */
+  .card{background:rgba(255,255,255,.96);border:1px solid rgba(208,215,226,.92);border-radius:18px;padding:25px;box-shadow:var(--shadow-sm);position:relative;overflow:hidden;transition:border-color .18s,box-shadow .18s,transform .18s}
   .card::before{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:linear-gradient(90deg,var(--primary),#2e90fa);opacity:.88}
   .card:hover{border-color:#b8c8e3;box-shadow:var(--shadow);transform:translateY(-1px)}
   .card.drag{border:2px dashed var(--primary);background:var(--primary-soft);box-shadow:0 0 0 4px rgba(23,92,211,.08)}
@@ -42,14 +44,20 @@
     background:transparent;color:var(--muted);font-family:inherit;font-size:15px;line-height:1.3;cursor:pointer;transition:.15s}
   .fn-clear:hover{background:#fee2e2;color:#dc2626}
   .drop-hint{margin-top:8px;font-size:12px;color:var(--muted)}
-  .actions{display:flex;justify-content:center;align-items:center;gap:8px;width:max-content;max-width:100%;margin:24px auto;padding:7px;background:rgba(255,255,255,.82);border:1px solid var(--line);border-radius:15px;box-shadow:var(--shadow-sm);backdrop-filter:blur(10px)}
+  /* 主按钮跟卡片流右边缘对齐（以前是居中悬浮的胶囊条，和左对齐的卡片脱节） */
+  .actions{display:flex;justify-content:flex-end;align-items:center;gap:16px;max-width:100%;margin:22px 0 26px}
   .primary{display:inline-flex;align-items:center;justify-content:center;text-align:center;background:linear-gradient(135deg,var(--primary),#2970ff);color:#fff;border:none;border-radius:10px;
     min-height:44px;padding:11px 30px;font-size:15px;font-weight:700;cursor:pointer;transition:.15s;text-decoration:none;box-shadow:0 5px 14px rgba(23,92,211,.2)}
   .primary:hover{background:linear-gradient(135deg,var(--primary-d),var(--primary));transform:translateY(-1px);box-shadow:0 8px 18px rgba(23,92,211,.24)}
   .primary:disabled{opacity:.48;cursor:not-allowed;transform:none;box-shadow:none}
   .ghost{background:#fff;border:1px solid var(--line);color:#344054;border-radius:9px;padding:8px 14px;font-size:13px;cursor:pointer;text-decoration:none;display:inline-block;transition:.15s}
   .ghost:hover{background:#f8fafc;border-color:#b8c2d1;color:var(--ink)}
-  .banner{border-radius:12px;padding:14px 18px;font-size:14px;margin-bottom:18px;display:none}
+  /* 次要操作：文字链。灰底 ghost 放在主按钮旁边容易被误认成 disabled */
+  .linkbtn{background:none;border:none;padding:8px 2px;color:var(--primary);font-weight:600;text-decoration:underline;
+    text-underline-offset:4px;text-decoration-thickness:1px;cursor:pointer;border-radius:6px}
+  .linkbtn:hover{background:none;border:none;color:var(--primary-d)}
+  .linkbtn:disabled{color:var(--muted);text-decoration:none;cursor:not-allowed}
+  .banner{border-radius:12px;padding:14px 18px;font-size:14px;margin-bottom:18px;display:none;white-space:pre-line;line-height:1.65}
   .banner.show{display:block}
   .banner.ok{background:var(--okbg);color:var(--ok);border:1px solid #a7f3d0}
   .banner.err{background:var(--errbg);color:var(--err);border:1px solid #fecaca}
@@ -162,6 +170,7 @@
   .back-btn{background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.4);color:#fff;border-radius:8px;
     padding:7px 14px;font-size:13px;cursor:pointer}
   .back-btn:hover{background:rgba(255,255,255,.3)}
+  .back-btn .bk-arrow{margin-right:5px}
   .opt-badge{font-size:11.5px;font-weight:400;color:var(--muted);margin-left:6px}
   .adv-sub{font-size:13px;font-weight:700;margin:16px 0 6px;color:var(--ink)}
   .adv-sub small{font-weight:400;color:var(--muted);font-size:12px;margin-left:6px}
@@ -229,9 +238,13 @@
   .wc-lang{padding:6px 14px;border:1px solid var(--line);border-radius:999px;background:#fff;font-size:13px;cursor:pointer;color:var(--ink)}
   .wc-lang:hover{border-color:var(--muted)}
   .wc-lang.on{border-color:var(--primary);background:#eff6ff;color:var(--primary);font-weight:600}
-  .wc-tips{margin:16px 0 0;display:flex;flex-direction:column;gap:9px}
-  .wc-tips>div{position:relative;padding-left:20px;font-size:13px;line-height:1.7}
-  .wc-tips>div::before{content:"";position:absolute;left:4px;top:7px;width:6px;height:6px;border-radius:50%;background:var(--primary)}
+  .wc-tips{margin:16px 0 0;display:flex;flex-direction:column;gap:9px;counter-reset:wc}
+  .wc-tips>div{position:relative;padding-left:26px;font-size:13px;line-height:1.7}
+  .wc-tips>div::before{content:counter(wc);counter-increment:wc;position:absolute;left:0;top:3px;
+    width:18px;height:18px;border-radius:50%;background:var(--primary-soft);color:var(--primary);
+    border:1px solid #dbeafe;font-size:11px;font-weight:700;line-height:16px;text-align:center}
+  .wc-note{margin:14px 0 0;padding-top:12px;border-top:1px dashed var(--line);
+    font-size:12px;line-height:1.65;color:var(--muted)}
 
 /* ---- 目标列即时校验（P1） ---- */
 input.tgt-bad{border-color:var(--err) !important;background:#fff3f2}
@@ -262,10 +275,15 @@ button,select,input,textarea{font:inherit}
 button{max-width:100%}
 .field-badge{display:inline-flex;align-items:center;margin-left:8px;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:650;vertical-align:2px;white-space:nowrap}
 .field-badge.required{background:#fff1f0;color:#b42318;border:1px solid #fecdca}
+.field-badge.optional{background:#f4f6f9;color:var(--muted);border:1px solid var(--line)}
 .view,.mod-grid,.steps,.mod-card,.card,.cfg-entry{min-width:0}
 .mod-card p,.cfg-entry p,.card p{overflow-wrap:anywhere}
 .mod-tag{max-width:100%;overflow-wrap:anywhere}
-.upload-card{cursor:pointer}
+.upload-card{cursor:pointer;display:flex;flex-direction:column}
+/* 同一行两张上传卡被 grid 拉成等高后，把「拖拽提示」压到底部，避免短卡下半截空着 */
+.upload-card .drop-hint{margin-top:auto;padding-top:10px}
+/* flex 列容器默认 align-items:stretch，会把「选择文件」拉成整行宽的一条 */
+.upload-card .file-btn{align-self:flex-start}
 .upload-card .file-btn,.upload-card button,.upload-card input{cursor:pointer}
 .upload-card:focus-within{border-color:#84adff;box-shadow:0 0 0 4px rgba(23,92,211,.09),var(--shadow-sm)}
 .file-name[data-chosen="1"]{display:inline-flex;align-items:center;max-width:100%;padding:5px 9px;border-radius:8px;background:#eff6ff;color:#1849a9}
@@ -316,8 +334,9 @@ footer{padding:24px 16px 30px}
   .card{min-height:0;padding:22px 19px}
   .card p{margin-right:34px}
   .step-no{right:18px;top:18px}
-  .actions{width:100%;flex-wrap:wrap}
-  .actions .primary,.actions .ghost{flex:1 1 150px}
+  .actions{width:100%;flex-wrap:wrap;justify-content:flex-end;gap:10px}
+  .actions .primary{flex:1 1 150px}
+  .actions .linkbtn{flex:0 0 auto}
   .stats{grid-template-columns:1fr}
   .result,.log-section,.history,.check-section{padding:20px 16px}
   .cfg-tabs{width:100%;display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -349,3 +368,156 @@ footer{padding:24px 16px 30px}
 /* 订单 / 工单统一上传入口：单张卡片占满整行 */
 .steps-single{grid-template-columns:minmax(0,1fr)}
 .steps-single .card{min-height:0}
+
+/* ---- 升级提示条：替代原来那种一启动就盖住整屏的更新日志弹窗 ---- */
+.upd-note{display:none;align-items:center;gap:10px;margin:0 0 20px;padding:10px 14px;border-radius:12px;
+  background:var(--primary-soft);border:1px solid #d1e0ff;color:var(--primary-d);font-size:13px;line-height:1.55}
+.upd-note.show{display:flex}
+.upd-note .un-text{flex:1;min-width:0;overflow-wrap:anywhere}
+.upd-note .un-link{background:none;border:none;padding:0;color:var(--primary);font:inherit;font-weight:700;
+  cursor:pointer;white-space:nowrap;text-decoration:underline;text-underline-offset:3px}
+.upd-note .un-link:hover{color:var(--primary-d)}
+.upd-note .un-x{background:none;border:none;padding:2px 6px;margin-left:2px;border-radius:6px;color:var(--muted);
+  font-size:17px;line-height:1;cursor:pointer;flex:0 0 auto}
+.upd-note .un-x:hover{background:#dbeafe;color:var(--primary-d)}
+@media(max-width:720px){.upd-note{flex-wrap:wrap;padding:10px 12px}.upd-note .un-text{flex:1 1 140px}}
+
+/* ---- 系统页卡片：把地址/状态挪到开关上方，保存按钮统一贴底对齐 ---- */
+.sys-card{display:flex;flex-direction:column}
+.sys-card .sys-addr{order:1;margin:6px 0 12px}
+.sys-card .pc-line{order:2;margin-top:auto}
+
+/* 上传卡为奇数个时（BOM 页 3 张），最后一张占满整行，避免右边空一半 */
+@media(min-width:641px){
+  .steps>.card:last-child:nth-child(odd){grid-column:1/-1}
+}
+
+/* ---- 模块卡图标：内联 SVG 线性图标（替换 emoji，跨系统渲染一致） ---- */
+.mod-ico svg{width:26px;height:26px;display:block}
+.cfg-entry .mod-ico svg{width:20px;height:20px}
+
+/* ---- 首页「最近一次转换」卡片（填掉模块卡下方的大片空白） ---- */
+.recent-card{margin-top:18px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+  background:rgba(255,255,255,.9);border:1px solid var(--line);border-radius:14px;padding:15px 18px;box-shadow:var(--shadow-sm)}
+.rc-main{display:flex;align-items:center;gap:14px;min-width:0;flex:1 1 320px}
+.rc-badge{width:40px;height:40px;border-radius:12px;background:var(--primary-soft);color:var(--primary);border:1px solid #dbeafe;
+  display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;letter-spacing:.3px;flex:0 0 auto}
+.rc-text{min-width:0}
+.rc-text h3{margin:0 0 3px;font-size:14px;font-weight:700;overflow-wrap:anywhere}
+.rc-text p{margin:0;font-size:12.5px;color:var(--muted);overflow-wrap:anywhere}
+.rc-text p b{font-weight:650;color:var(--ink)}
+.rc-state{font-weight:650}
+.rc-state.ok{color:var(--ok)}
+.rc-state.bad{color:var(--warn)}
+.rc-actions{display:flex;gap:8px;flex-wrap:wrap;margin-left:auto}
+@media(max-width:720px){.rc-actions{margin-left:0;width:100%}.rc-actions .ghost{flex:1 1 130px;text-align:center}}
+
+/* ---- 预检结果：摘要 chip + 可折叠明细 ---- */
+.check-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.check-chip{display:none;font-size:12px;font-weight:650;padding:3px 10px;border-radius:999px;
+  background:#f1f5f9;color:var(--muted);white-space:nowrap}
+.check-chip.show{display:inline-block}
+.check-chip.ok{background:var(--okbg);color:var(--ok);border:1px solid #a7f3d0}
+.check-chip.bad{background:var(--warnbg);color:var(--warn);border:1px solid #fde68a}
+/* 说明性 li 不该有边框：原来继承 li 的 1px 实线，看起来像个输入框 */
+.check-list li{border-color:transparent}
+.check-list li.check-note{padding:0;margin:8px 0 0;border:0;background:none;font-size:12px;color:var(--muted);line-height:1.6}
+
+/* ---- 配置中心：字段映射表定宽 ----
+   不定宽时浏览器按内容分配，参数设置列被挤成「去首尾 / 空格」两行，说明列却占掉三分之一屏 */
+#fieldTable{table-layout:fixed}
+#fieldTable .fc-drag{width:34px}
+#fieldTable .fc-target{width:15%}
+#fieldTable .fc-source{width:14%}
+#fieldTable .fc-op{width:12%}
+#fieldTable .fc-param{width:31%}
+#fieldTable .fc-desc{width:22%}
+#fieldTable .fc-act{width:56px}
+#fieldTable td:last-child{text-align:center;padding-left:0;padding-right:0}
+#fieldTable td.param-cell{padding:6px 8px}
+/* 参数设置列里的多选组允许换行，但不再把单个标签折成两截 */
+#fieldTable .param-cell .pc-line{gap:6px 10px}
+#fieldTable .param-cell label{white-space:nowrap}
+
+/* ---- 配置表格里的删除按钮：hover / 聚焦才出现 ----
+   39 行字段映射每行一个红叉，视觉噪音盖过了内容本身。只作用于单元格内的按钮，
+   字典卡片的「删除字典」不在此列（它不在 td 里，否则会永久隐身）。 */
+#cfgPaneMat td .row-del,#cfgPaneOrd td .row-del,#cfgPaneBom td .row-del{opacity:0;transition:opacity .12s}
+#cfgPaneMat tr:hover td .row-del,#cfgPaneOrd tr:hover td .row-del,#cfgPaneBom tr:hover td .row-del,
+#cfgPaneMat tr:focus-within td .row-del,#cfgPaneOrd tr:focus-within td .row-del,#cfgPaneBom tr:focus-within td .row-del{opacity:1}
+@media(hover:none){
+  #cfgPaneMat td .row-del,#cfgPaneOrd td .row-del,#cfgPaneBom td .row-del{opacity:1}
+}
+
+/* ---- 关于弹窗：路径行的小按钮 ---- */
+.about-tbl{width:100%;border-collapse:collapse;font-size:14px}
+.about-k{padding:6px 16px 6px 0;color:var(--muted);white-space:nowrap;vertical-align:top}
+.about-v{padding:6px 0;word-break:break-all}
+.tiny-btn{margin-left:8px;padding:2px 8px;font-size:11.5px;border-radius:6px;border:1px solid var(--line);
+  background:#fff;color:var(--muted);cursor:pointer;white-space:nowrap;vertical-align:1px;font-family:inherit}
+.tiny-btn:hover{border-color:#84adff;color:var(--primary);background:var(--primary-soft)}
+
+/* ---- 顶栏右侧：窄屏把语言/配置/说明/关于收进「⋯」菜单 ---- */
+.nav-right{display:flex;align-items:center;gap:8px;min-width:0;position:relative}
+.nav-more{display:none;width:38px;height:38px;padding:0;border-radius:10px;cursor:pointer;
+  border:1px solid rgba(255,255,255,.32);background:rgba(255,255,255,.16);color:#fff;
+  font-size:17px;line-height:1;align-items:center;justify-content:center;font-family:inherit}
+.nav-more:hover{background:rgba(255,255,255,.28)}
+@media(max-width:720px){
+  header{flex-wrap:nowrap}
+  .brand{width:auto;flex:1 1 auto;min-width:0}
+  .nav-more{display:inline-flex;flex:0 0 auto}
+  .lang{position:absolute;top:calc(100% + 8px);right:12px;z-index:60;display:none;
+    flex-direction:column;align-items:stretch;gap:8px;width:min(86vw,264px);max-width:none;
+    background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);padding:12px}
+  .lang.open{display:flex}
+  .lang>#lang_label{display:block;color:var(--muted);font-size:12px;margin:0;font-weight:600}
+  .lang .ghost,.lang .back-btn{color:var(--ink);background:#fff;border-color:var(--line);
+    justify-content:flex-start;text-align:left;min-height:38px;flex:0 0 auto;font-size:13px;margin:0!important;padding:9px 12px}
+  .lang select{width:100%;max-width:none}
+  /* 窄屏顶栏：返回只留箭头、标题单行省略、副标题隐藏，否则「← 返回」会被挤成竖排三行 */
+  header #backText{display:none}
+  header .back-btn .bk-arrow{margin-right:0}
+  header .back-btn{padding:0;min-width:36px;height:36px;display:inline-flex;
+    align-items:center;justify-content:center;font-size:15px}
+  header .brand{gap:10px}
+  header .brand>div:last-child{min-width:0}
+  header #app_title{font-size:14.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0}
+  header #app_subtitle{display:none}
+}
+/* fixed 布局下 td 的 min-width 依然会强行撑列，`.param-cell{min-width:280px}` 会把「说明」列挤成竖排 */
+#fieldTable .param-cell{min-width:0}
+#fieldTable td input,#fieldTable td select,#fieldTable td textarea{max-width:100%}
+/* 操作列单独成列，否则长路径折行后按钮会掉到下一行、对不齐 */
+.about-act{white-space:nowrap;text-align:right;padding:6px 0 6px 10px;vertical-align:top;width:1%}
+.about-k{width:1%}
+.about-act .tiny-btn:first-child{margin-left:0}
+/* 面板是白底，select 原来的边框是「半透明白」，在白底上等于没有框 */
+@media(max-width:720px){
+  .lang select{appearance:auto;border-color:var(--line);background:#fff;color:var(--ink);box-shadow:none}
+}
+/* BOM 页三张上传卡：宽屏三等分，比「最后一张占满整行、右半边全空」更紧凑 */
+@supports selector(:has(*)){
+  @media(min-width:1024px){
+    .steps:has(>.card:nth-child(3)){grid-template-columns:repeat(3,minmax(0,1fr))}
+    .steps:has(>.card:nth-child(3))>.card:last-child:nth-child(odd){grid-column:auto}
+  }
+}
+
+/* ---- 历史表空状态：除了「还没有记录」，还要给下一步 ---- */
+.hist-empty{display:flex;flex-direction:column;align-items:center;gap:7px;
+  padding:24px 12px;text-align:center;color:var(--muted);font-size:13px;line-height:1.65}
+.hist-empty b{font-size:14px;font-weight:650;color:var(--ink)}
+.hist-empty span{max-width:420px}
+.hist-empty .linkbtn{font-size:12.5px}
+
+/* ---- 输出模板折叠条：从「第 2 步」降级成一行，别让新手以为还得自己准备模板 ---- */
+.tpl-card .tpl-body{margin-top:2px}
+.tpl-card .tpl-body .file-btn{margin-top:4px}
+.tpl-card .tpl-cur{margin-top:12px;font-size:12.5px;color:var(--muted)}
+.tpl-card.open .tpl-cur{display:none}
+.tpl-card .tpl-more{margin-top:auto;align-self:flex-start;font-size:13px;padding:10px 0 0}
+.tpl-card.open .tpl-more{margin-top:10px;padding-top:0}
+#tplBtnOpen{display:none}
+.tpl-card.open #tplBtnClosed{display:none}
+.tpl-card.open #tplBtnOpen{display:inline}

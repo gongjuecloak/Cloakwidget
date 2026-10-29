@@ -101,7 +101,9 @@ var logI18n = map[string]map[string]string{
 		"err_tpl_header": "读模板表头失败",
 		"err_open_src":   "打开源文件失败",
 		"err_no_data":    "源文件无数据行",
-		"err_save":       "保存输出文件失败",
+		"err_src_mismatch": "这个文件不像是物料档案：%d 个源列（如 MB001）一个都没找到，已停止转换。\n" +
+			"文件里的表头是：%s。\n如果是订单或工单，请到「订单 / 工单」模块；如果是 BOM 用料表，请到「BOM / 用料表」模块。",
+		"err_save": "保存输出文件失败",
 	},
 	"zht": {
 		"start":    "開始轉換",
@@ -134,7 +136,9 @@ var logI18n = map[string]map[string]string{
 		"err_tpl_header": "讀取範本表頭失敗",
 		"err_open_src":   "開啟來源檔案失敗",
 		"err_no_data":    "來源檔案無資料列",
-		"err_save":       "儲存輸出檔案失敗",
+		"err_src_mismatch": "這個檔案不像是物料檔案：%d 個來源欄（如 MB001）一個都沒找到，已停止轉換。\n" +
+			"檔案裡的表頭是：%s。\n如果是訂單或工單，請到「訂單 / 工單」模組；如果是 BOM 用料表，請到「BOM / 用料表」模組。",
+		"err_save": "儲存輸出檔案失敗",
 	},
 	"vi": {
 		"start":    "Bắt đầu chuyển đổi",
@@ -167,7 +171,9 @@ var logI18n = map[string]map[string]string{
 		"err_tpl_header": "Đọc tiêu đề tệp mẫu thất bại",
 		"err_open_src":   "Mở tệp nguồn thất bại",
 		"err_no_data":    "Tệp nguồn không có dòng dữ liệu",
-		"err_save":       "Lưu tệp kết quả thất bại",
+		"err_src_mismatch": "Tệp này không giống hồ sơ vật tư: không tìm thấy cột nguồn nào trong %d cột cần thiết (ví dụ MB001) nên đã dừng chuyển đổi.\n" +
+			"Tiêu đề cột trong tệp là: %s.\nNếu là đơn hàng hoặc lệnh sản xuất, hãy dùng mô-đun 「Đơn hàng / Lệnh SX」; nếu là bảng BOM, hãy dùng mô-đun 「BOM / Bảng vật tư」.",
+		"err_save": "Lưu tệp kết quả thất bại",
 	},
 	"en": {
 		"start":    "Conversion started",
@@ -200,7 +206,9 @@ var logI18n = map[string]map[string]string{
 		"err_tpl_header": "Failed to read template header",
 		"err_open_src":   "Failed to open source file",
 		"err_no_data":    "No data rows in source file",
-		"err_save":       "Failed to save output file",
+		"err_src_mismatch": "This file does not look like a material master: none of the %d source columns (e.g. MB001) were found, so the conversion was stopped.\n" +
+			"Column headers in the file: %s.\nIf it is an order or work order, use the Orders / Work orders module; if it is a BOM sheet, use the BOM module.",
+		"err_save": "Failed to save output file",
 	},
 }
 
@@ -1340,8 +1348,23 @@ func handlerReport(w http.ResponseWriter, r *http.Request) {
 
 // ---------- 打开输出文件夹 ----------
 
+// which 参数让「关于」里的每个目录都能直接跳过去（默认仍是 out/）
 func handlerOpenFolder(w http.ResponseWriter, r *http.Request) {
-	dir, err := openOutFolder()
+	var dir string
+	var err error
+	switch r.URL.Query().Get("dir") {
+	case "", "out":
+		dir, err = openOutFolder()
+	case "config":
+		dir, err = openDir(exeDir())
+	case "logs":
+		dir, err = openDir(filepath.Join(exeDir(), "logs"))
+	case "backup":
+		dir, err = openDir(filepath.Join(exeDir(), "backup"))
+	default:
+		writeJSON(w, map[string]interface{}{"ok": false, "error": "unknown dir"})
+		return
+	}
 	if err != nil {
 		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
 		return
@@ -1351,7 +1374,11 @@ func handlerOpenFolder(w http.ResponseWriter, r *http.Request) {
 
 // openOutFolder 确保 out/ 目录存在，并用系统文件管理器打开它（界面按钮与托盘菜单共用）。
 func openOutFolder() (string, error) {
-	dir := filepath.Join(exeDir(), "out")
+	return openDir(filepath.Join(exeDir(), "out"))
+}
+
+// openDir 目录不存在就建出来，再用系统文件管理器打开（explorer 的退出码不可靠，忽略）。
+func openDir(dir string) (string, error) {
 	if !fileExists(dir) {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return dir, err
@@ -1366,7 +1393,6 @@ func openOutFolder() (string, error) {
 	default:
 		cmd = exec.Command("xdg-open", dir)
 	}
-	// explorer 的退出码不可靠（常常非 0），忽略
 	_ = cmd.Start()
 	return dir, nil
 }

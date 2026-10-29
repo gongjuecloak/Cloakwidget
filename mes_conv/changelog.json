@@ -2,6 +2,48 @@
   "note": "程序内置的更新日志。发版时在 versions 顶部加一条，并把 version 改成新版本号；notes 按语言分组，缺的语言回退到 zh。",
   "versions": [
     {
+      "version": "1.18.1",
+      "date": "2026-10-29",
+      "notes": {
+        "zh": [
+          "选错文件不再假装成功：上传的表格表头与当前模块配置的源列完全对不上时（比如把订单表传到物料页），程序会直接拦下，列出识别到的表头并提示换到对应模块。以前会照常显示「转换完成」并生成一份必填列全空的表格，导进 MES 才发现没数据。",
+          "界面零碎毛病一并修掉：BOM 页被卡片最小高度撑出的空白、更新日志弹窗挡住整屏（改为页面顶部一条可关闭提示）、物料页主按钮孤悬、系统页按钮高低不齐。",
+          "配置表格不再被长说明挤变形：列宽固定；说明列在窄屏折行，而不是把相邻列压成竖排。行内删除按钮改为悬停显示，触屏设备常显。",
+          "窄屏顶栏从约 150px 压到 88px：返回按钮只留箭头，语言切换与额外入口收进「更多」下拉。",
+          "面向前几次使用的人：首次启动引导改成三步，新增「最近一次转换」入口，空页面给出下一步该点哪里；模板说明收进卡片内折叠，选过文件会自动展开。",
+          "预检结果按严重程度折叠：错误默认展开、说明性条目收起，重复提示合并成一条；多行错误提示不再挤成一行。",
+          "模块图标去掉 emoji 换成线性图标；「关于」里的输出 / 配置 / 日志 / 备份路径可直接打开对应文件夹。"
+        ],
+        "zht": [
+          "選錯檔案不再假裝成功：上傳的表格表頭與目前模組設定的來源欄完全不對應時（例如把訂單表傳到物料頁），程式會直接攔下，列出辨識到的表頭並提示換到對應模組。以前會照常顯示「轉換完成」並產生一份必填欄全空的表格，匯入 MES 才發現沒資料。",
+          "介面零碎毛病一併修掉：BOM 頁被卡片最小高度撐出的空白、更新日誌彈窗擋住整個螢幕（改為頁面頂端一條可關閉提示）、物料頁主按鈕孤立、系統頁按鈕高低不齊。",
+          "設定表格不再被長說明擠變形：欄寬固定；說明欄在窄螢幕時折行，而不是把相鄰欄壓成直排。列內刪除按鈕改為滑鼠移入才顯示，觸控裝置常駐顯示。",
+          "窄螢幕頂欄從約 150px 壓到 88px：返回按鈕只留箭頭，語言切換與額外入口收進「更多」下拉。",
+          "面向前幾次使用的人：首次啟動引導改成三步，新增「最近一次轉換」入口，空白頁面給出下一步該點哪裡；範本說明收進卡片內折疊，選過檔案會自動展開。",
+          "預檢結果依嚴重程度折疊：錯誤預設展開、說明性項目收起，重複提示合併為一條；多行錯誤提示不再擠成一行。",
+          "模組圖示去掉 emoji 換成線性圖示；「關於」裡的輸出 / 設定 / 日誌 / 備份路徑可直接開啟對應資料夾。"
+        ],
+        "en": [
+          "No more false success on the wrong file: when the uploaded sheet shares no header with the source columns configured for the current module (an order sheet dropped on the material page, for instance), the converter now refuses up front, shows the headers it found and points to the right module. Before, it reported \"conversion complete\" and wrote an xlsx whose required columns were all empty — the problem only surfaced at MES import.",
+          "UI rough edges fixed: the dead space under the BOM cards, the changelog dialog covering the whole screen (now a dismissible strip at the top of the page), the stranded primary button on the material page, and misaligned buttons on the system page.",
+          "The config table no longer collapses under long descriptions: fixed column widths, descriptions wrap on narrow screens instead of squeezing neighbouring columns into vertical text. Row delete buttons appear on hover and stay visible on touch devices.",
+          "Narrow-screen header cut from about 150px to 88px: the back button keeps only its arrow, and the language switch plus extra entries move into a More menu.",
+          "Better for first-time users: the welcome flow is now three steps, a recent-conversion card was added, empty pages say what to click next, and the template help folds inside its card and expands once a file is picked.",
+          "Pre-check results fold by severity: errors expanded, informational notes collapsed, duplicates merged; multi-line errors are no longer squeezed onto one line.",
+          "Module icons use line icons instead of emoji; the output / config / log / backup paths in About open the matching folder directly."
+        ],
+        "vi": [
+          "Chọn nhầm tệp không còn báo thành công giả: nếu tiêu đề bảng tải lên không khớp cột nguồn nào của mô-đun hiện tại (ví dụ đưa bảng đơn hàng vào trang vật tư), chương trình sẽ chặn ngay, hiển thị các tiêu đề đọc được và gợi ý chuyển sang mô-đun tương ứng. Trước đây vẫn báo \"chuyển đổi hoàn tất\" và tạo tệp có các cột bắt buộc trống, chỉ phát hiện khi nhập vào MES.",
+          "Sửa các lỗi giao diện nhỏ: khoảng trắng thừa dưới thẻ BOM, hộp thoại nhật ký cập nhật che kín màn hình (nay là dải thông báo có thể đóng ở đầu trang), nút chính trên trang vật tư bị lệch, nút trên trang hệ thống không thẳng hàng.",
+          "Bảng cấu hình không còn bị mô tả dài làm biến dạng: độ rộng cột cố định, mô tả tự xuống dòng thay vì ép cột bên cạnh thành chữ dọc. Nút xóa trong dòng hiện khi rê chuột và luôn hiện trên màn hình cảm ứng.",
+          "Thanh trên cùng trên màn hình hẹp giảm từ khoảng 150px xuống 88px: nút quay lại chỉ còn mũi tên, chuyển ngôn ngữ và mục phụ gom vào menu \"Thêm\".",
+          "Thân thiện hơn với người mới: hướng dẫn lần đầu chia ba bước, thêm thẻ chuyển đổi gần nhất, trang trống chỉ rõ nên bấm gì tiếp theo; phần gợi ý mẫu gấp trong thẻ và tự mở khi đã chọn tệp.",
+          "Kết quả kiểm tra trước được gấp theo mức độ: lỗi mở sẵn, ghi chú thu gọn, thông báo trùng được gộp; lỗi nhiều dòng không còn bị dồn thành một dòng.",
+          "Biểu tượng mô-đun dùng icon nét thay cho emoji; đường dẫn đầu ra / cấu hình / nhật ký / sao lưu trong \"Giới thiệu\" mở thẳng thư mục tương ứng."
+        ]
+      }
+    },
+    {
       "version": "1.18.0",
       "date": "2026-10-29",
       "notes": {

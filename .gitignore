@@ -117,3 +117,6 @@ mirror/.env
 # ============ 发布清单（构建产物，每次构建重新生成，不入库） ============
 version.json
 version.sig
+
+# 根目录误生成的配置副本（真实配置在 mes_conv/ 下，别入库）
+/orders.json

@@ -17,22 +17,32 @@
       <p id="app_subtitle">鼎新 ERP 物料档 → MES 导入模板，一键转换</p>
     </div>
   </div>
-  <div class="lang">
-    <button id="backHomeBtn" class="back-btn" style="display:none">← 返回</button>
-    <label id="lang_label" for="langSel">语言</label>
-    <select id="langSel">
-      <option value="zh">简体中文</option>
-      <option value="zht">繁體中文</option>
-      <option value="vi">Tiếng Việt</option>
-      <option value="en">English</option>
-    </select>
-    <button id="cfgNavBtn" class="ghost" style="margin-left:12px" disabled>⚙ 配置</button>
-    <button id="helpBtn" class="ghost">? 使用说明</button>
-    <button id="aboutBtn" class="ghost">关于</button>
+  <div class="nav-right">
+    <button id="backHomeBtn" class="back-btn" style="display:none" title="返回首页"><span class="bk-arrow" aria-hidden="true">←</span><span id="backText">返回</span></button>
+    <!-- 窄屏下把语言/配置/说明/关于收进这个菜单，否则五个按钮要占两行半 -->
+    <button type="button" id="navMore" class="nav-more" aria-expanded="false" aria-controls="navMenu" aria-label="更多菜单">⋯</button>
+    <div class="lang" id="navMenu">
+      <label id="lang_label" for="langSel">语言</label>
+      <select id="langSel">
+        <option value="zh">简体中文</option>
+        <option value="zht">繁體中文</option>
+        <option value="vi">Tiếng Việt</option>
+        <option value="en">English</option>
+      </select>
+      <button id="cfgNavBtn" class="ghost" style="margin-left:12px" disabled>配置</button>
+      <button id="helpBtn" class="ghost">使用说明</button>
+      <button id="aboutBtn" class="ghost">关于</button>
+    </div>
   </div>
 </header>
 
 <main id="mainContent">
+  <!-- 升级后的「有新内容」提示条：不再用整屏弹窗打断操作，点「查看更新内容」才展开详情 -->
+  <div id="updNote" class="upd-note" role="status" aria-live="polite">
+    <span class="un-text" id="updNoteText"></span>
+    <button type="button" class="un-link" id="updNoteView">查看更新内容</button>
+    <button type="button" class="un-x" id="updNoteClose" aria-label="关闭">×</button>
+  </div>
   <!-- ===== 首页：选择模块 ===== -->
   <div id="viewHome" class="view">
     <div class="home-intro">
@@ -41,7 +51,7 @@
     </div>
     <div class="mod-grid">
       <div class="mod-card" id="modMaterials" role="button" tabindex="0">
-        <div class="mod-ico" aria-hidden="true">📦</div>
+        <div class="mod-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M16.5 9.4 7.5 4.21"/><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div>
         <h3 id="mod_mat_name">物料档案</h3>
         <p id="mod_mat_desc">把鼎新 ERP 导出的物料档（INVMB）转换成 MES 的「物料档案导入模板」，自动做字段映射、单位归一与预检。</p>
         <div class="mod-tags">
@@ -52,7 +62,7 @@
         <div class="mod-go" id="mod_mat_go">进入 →</div>
       </div>
       <div class="mod-card" id="modOrders" role="button" tabindex="0">
-        <div class="mod-ico" aria-hidden="true">🧾</div>
+        <div class="mod-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></svg></div>
         <h3 id="mod_ord_name">订单 / 工单</h3>
         <p id="mod_ord_desc">把鼎新 ERP 导出的订单档与製令（工单）档，转换成 MES 的「销售订单主表 / 销售订单明细 / 工单」三张表，自动回填销售订单行号与打标判定。</p>
         <div class="mod-tags">
@@ -63,7 +73,7 @@
         <div class="mod-go" id="mod_ord_go">进入 →</div>
       </div>
       <div class="mod-card" id="modBom" role="button" tabindex="0">
-        <div class="mod-ico" aria-hidden="true">🧱</div>
+        <div class="mod-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></svg></div>
         <h3 id="mod_bom_name">BOM / 用料表</h3>
         <p id="mod_bom_desc">把 MES 抓取的 ERP BOM 大表（BOM抓取导出表）转换成 MES 的「BOM主表 + BOM明细」导入模板，自动生成 BOM 编码与项次。</p>
         <div class="mod-tags">
@@ -75,12 +85,28 @@
       </div>
     </div>
     <div class="cfg-entry" id="cfgEntry" role="button" tabindex="0" aria-disabled="true">
-      <div class="mod-ico" aria-hidden="true">⚙️</div>
+      <div class="mod-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="16" x2="16" y1="18" y2="22"/></svg></div>
       <div>
         <h3 id="cfg_entry_name">配置中心</h3>
         <p id="cfg_entry_desc">字段映射、单位表、字典表、表头别名都在这里维护；操作页面只负责选文件与转换</p>
       </div>
       <div class="mod-go" id="cfg_entry_go">进入 →</div>
+    </div>
+
+    <!-- 模块卡下方的空白区：显示上一次转换的结果，省掉「去哪个模块找历史」这一步 -->
+    <div class="recent-card" id="recentCard">
+      <div class="rc-main">
+        <span class="rc-badge" id="rcBadge">MES</span>
+        <div class="rc-text">
+          <h3 id="rcTitle">最近一次转换</h3>
+          <p id="rcMeta">—</p>
+        </div>
+      </div>
+      <div class="rc-actions">
+        <button type="button" class="primary" id="rcStartBtn" style="display:none">从物料档案开始</button>
+        <button type="button" class="ghost" id="rcGoBtn">进入该模块</button>
+        <button type="button" class="ghost" id="rcOpenBtn">打开输出目录</button>
+      </div>
     </div>
   </div>
 
@@ -96,19 +122,24 @@
       <div class="file-list" id="srcList"></div>
       <div class="drop-hint" id="srcDropHint">也可以直接把文件拖到这里；可一次选多个，按列名合并成一份结果</div>
     </div>
-    <div class="card upload-card" id="tplCard" data-upload-card="tplFile">
+    <!-- 模板已内置，这张卡不做成和「第 1 步」平级的必做项，默认只露一行，点开才出现上传区 -->
+    <div class="card upload-card tpl-card" id="tplCard" data-upload-card="tplFile">
       <div class="step-no">2</div>
-      <h2 id="step_template">第 2 步 · 输出模板（可选）</h2>
-      <p id="step_template_desc">留空使用程序内置的物料档案模板；如需换用其他模板可在此上传（.xlsx）</p>
-      <label class="file-btn"><input type="file" id="tplFile" accept=".xlsx"><span id="tplLabel">选择文件</span></label>
-      <div class="file-name" id="tplName"></div>
-      <div class="drop-hint" id="tplDropHint">也可以直接把文件拖到这里</div>
+      <h2><span id="step_template">输出模板</span><span class="field-badge optional" id="tplBadge">可选</span></h2>
+      <p id="step_template_desc">留空使用程序内置的物料档案模板</p>
+      <div class="tpl-cur" id="tplCur">当前：内置模板</div>
+      <div class="tpl-body" id="tplWrap" style="display:none">
+        <label class="file-btn"><input type="file" id="tplFile" accept=".xlsx"><span id="tplLabel">选择文件</span></label>
+        <div class="file-name" id="tplName"></div>
+        <div class="drop-hint" id="tplDropHint">也可以直接把文件拖到这里</div>
+      </div>
+      <button type="button" class="linkbtn tpl-more" id="tplFoldBtn" aria-expanded="false"><span id="tplBtnClosed">更换模板</span><span id="tplBtnOpen">收起</span></button>
     </div>
   </div>
 
   <div class="actions">
     <button id="startBtn" class="primary">开始转换</button>
-    <button id="previewBtn" class="ghost">预览映射结果</button>
+    <button id="previewBtn" class="linkbtn">预览映射结果</button>
   </div>
 
   <div id="progressWrap" style="display:none;margin:14px 0 0">
@@ -137,7 +168,10 @@
   <section id="checkSection" class="check-section">
     <div class="section-title">
       <h3 id="check_title">预检结果</h3>
-      <span class="ghost" id="check_summary"></span>
+      <div class="check-tools">
+        <span class="check-chip" id="check_summary"></span>
+        <button type="button" class="linkbtn" id="checkToggleBtn" style="display:none"></button>
+      </div>
     </div>
     <ul class="check-list" id="checkList"></ul>
     <div id="issueWrap" class="scrollbox" style="display:none">
@@ -228,7 +262,10 @@
     <section id="ordCheckSection" class="check-section">
       <div class="section-title">
         <h3 id="ord_check_title">预检结果</h3>
-        <span class="ghost" id="ordCheckSummary"></span>
+        <div class="check-tools">
+          <span class="check-chip" id="ordCheckSummary"></span>
+          <button type="button" class="linkbtn" id="ordCheckToggleBtn" style="display:none"></button>
+        </div>
       </div>
       <ul class="check-list" id="ordCheckList"></ul>
       <div id="ordIssueWrap" class="scrollbox" style="display:none">
@@ -419,6 +456,10 @@
       <div class="block-title"><span id="block_fields">字段映射</span>
         <small id="block_fields_hint">每一行 = 一个目标列怎么填</small></div>
       <table id="fieldTable">
+        <colgroup>
+          <col class="fc-drag"><col class="fc-target"><col class="fc-source"><col class="fc-op">
+          <col class="fc-param"><col class="fc-desc"><col class="fc-act">
+        </colgroup>
         <thead><tr>
           <th id="th_target">目标列</th><th id="th_source">源列(MBxxx)</th>
           <th id="th_op">填充方式</th><th id="th_param">参数设置</th>
@@ -677,6 +718,7 @@
       <div id="wcTip2"></div>
       <div id="wcTip3"></div>
     </div>
+    <div id="wcNote" class="wc-note"></div>
     <div id="wcMsg" class="adv-msg"></div>
     <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
       <button class="primary" id="wcOk"></button>
