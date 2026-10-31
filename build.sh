@@ -106,7 +106,7 @@ fi
 # 若分享版里残留旧的 webui.html，程序会把它当作「磁盘覆盖」优先读取，务必清掉。
 rm -f "$SHARE/webui.html"
 echo "  已同步：$EXE_NAME / mapping.json"
-echo "  提示：分享版的 README.md 是手写文档，脚本不覆盖"
+echo "  提示：分享版目录是本地构建产物，不提交仓库"
 
 echo
 echo "完成 ✓  版本 $VER  构建时间 $BT"

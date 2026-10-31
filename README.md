@@ -55,7 +55,7 @@ verify_orders_http.py             订单模块 HTTP 端到端验证
 verify_render_v13.py              无头浏览器渲染验证（三视图 + 四语）
 verify_v16.js                     v1.6.0 前端行为验证（批量多选 / diff / 字段表工具 / 图表 / 系统页签）
 _fmttest/                         格式与系统设置回归（dup / tpl / sys / batch / 伪装格式比对）
-MES物料档案转换工具_分享版/        发给别人的成品（exe + 使用说明）
+MES物料档案转换工具_分享版/        本地构建生成的分享成品（不提交仓库）
 build.py                          **历史文件**：Go 版之前的 Python 原型，仅作参考
 ```
 
