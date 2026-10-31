@@ -154,7 +154,7 @@ jobs:
               },
           }
           # 更新说明：从 mes_conv/changelog.json 取该版本条目（多语言）。
-          # 客户端在「内网镜像、连不上 GitHub」时，就靠清单里的 notes 显示改了什么。
+          # 客户端直接用清单里的 notes 显示更新内容，少发一次 GitHub API 请求。
           try:
               with open("mes_conv/changelog.json", encoding="utf-8") as f:
                   data = json.load(f)
@@ -174,14 +174,13 @@ jobs:
 
       - name: 签名 version.json（Ed25519，建立供应链信任根）
         # 用仓库 secret MES_SIGN_PRIVATE_KEY 签清单。值为 base64 的 ed25519 私钥
-        # （32 字节 seed 或 64 字节 seed||pub）。客户端内置对应公钥验签。
-        # 未配置该 secret 时跳过签名（客户端按未签名清单处理）。
+        # （32 字节 seed 或 64 字节 seed||pub）。客户端强制验签，缺失即停止发布。
         env:
           MES_PRIV: ${{ secrets.MES_SIGN_PRIVATE_KEY }}
         run: |
           if [ -z "$MES_PRIV" ]; then
-            echo "未配置 MES_SIGN_PRIVATE_KEY，跳过清单签名（客户端将按未签名处理）"
-            exit 0
+            echo "未配置 MES_SIGN_PRIVATE_KEY，拒绝发布未签名更新"
+            exit 1
           fi
           python3 - <<'PY'
           import base64, os, subprocess, sys
@@ -220,25 +219,3 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: 同步更新镜像服务
-        # Release 发布后，立刻通知自建镜像把新版本拉过去并预热缓存，
-        # 这样客户端下一次检查更新就能马上拿到新包，不用等镜像缓存自然过期。
-        # 镜像服务地址与admin token 由仓库变量 / 机密提供；未配置则跳过（不影响发版）。
-        env:
-          MIRROR_URL: ${{ vars.MES_MIRROR_URL }}
-          MIRROR_ADMIN_TOKEN: ${{ secrets.MIRROR_ADMIN_TOKEN }}
-        run: |
-          if [ -z "$MIRROR_URL" ] || [ -z "$MIRROR_ADMIN_TOKEN" ]; then
-            echo "未配置 MES_MIRROR_URL / MIRROR_ADMIN_TOKEN，跳过镜像同步（不影响发版）"
-            exit 0
-          fi
-          echo "通知镜像刷新：$MIRROR_URL"
-          code=$(curl -s -o /tmp/refresh.out -w "%{http_code}" -X POST \
-            "$MIRROR_URL/admin/refresh?admin_token=$MIRROR_ADMIN_TOKEN" || echo "000")
-          cat /tmp/refresh.out || true
-          echo
-          case "$code" in
-            2*) echo "镜像已刷新（HTTP $code）" ;;
-            *)  echo "镜像刷新返回 HTTP $code（镜像侧可能未部署 / token 不匹配，不阻断发版）" ;;
-          esac

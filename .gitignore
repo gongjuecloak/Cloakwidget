@@ -19,8 +19,6 @@ mes_conv/last_version.txt
 # 配置原子写入的临时文件（os.CreateTemp 生成的隐藏唯一名）
 mes_conv/*.json.tmp
 mes_conv/.*.json.*.tmp
-# 镜像访问令牌（运行期由客户端自动协商写入，不入库）
-mes_mirror_token
 # 就地更新时的临时文件
 *.new
 *.old
@@ -108,13 +106,8 @@ mes_conv/appicon_preview.png
 # sign.ps1 生成的公开证书，仅本机/本开发者相关；如需内部分发信任，单独传即可。
 签名证书.cer
 
-# ============ 镜像服务：真实密钥配置（绝不入库） ============
-# .env.example 是样例（已入库，可安全提交）；真实 .env 含 MIRROR_ADMIN_TOKEN 等密钥，必须忽略。
-# 防止把密钥误提交到公开仓库。
-.env
-mirror/.env
-
 # ============ 发布清单（构建产物，每次构建重新生成，不入库） ============
+.env
 version.json
 version.sig
 

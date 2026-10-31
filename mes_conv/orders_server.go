@@ -113,7 +113,10 @@ func handlerOrdersConvert(w http.ResponseWriter, r *http.Request) {
 
 	// 统一上传入口：自动识别每个文件是订单还是工单，再分别归位
 	detected := []map[string]string{}
-	classifySourceField(r, dir, cfg, L, &orderPaths, &workPaths, &orderNames, &workNames, &detected)
+	if err := classifySourceField(r, dir, cfg, &orderPaths, &workPaths, &orderNames, &workNames, &detected); err != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+		return
+	}
 	for _, d := range detected {
 		switch d["type"] {
 		case "work":

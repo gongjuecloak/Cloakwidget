@@ -8,10 +8,10 @@
 说明：
   - exe 的 sha256 / size 直接取自 --exe 指向的真实构建产物（务必先 build）。
   - version.json 的 exe.name 用「发布资产名」（ASCII，如 MES-Converter-vX.Y.Z.exe），
-    与 GitHub Release / 镜像上的资产名保持一致；exe.url 用 GitHub 下载地址兜底。
+    与 GitHub Release 上的资产名保持一致；exe.url 是 GitHub 下载地址。
   - 若提供 --key（Ed25519 私钥 PEM/原始字节路径）或环境变量 MES_SIGN_PRIVATE_KEY，
-    则对 version.json 签名为 version.sig；否则只生成未签名清单
-    （客户端默认 MES_UPDATE_REQUIRE_SIG 未开启时放行，仅记警告）。
+    则对 version.json 签名为 version.sig；否则只生成本地调试用的未签名清单。
+    正式发布必须带签名，否则客户端会拒绝更新。
 """
 import argparse
 import hashlib
@@ -60,8 +60,7 @@ def sign_ed25519(data: bytes, key_path: str) -> bytes:
 def load_notes(ver, path=None):
     """从 changelog.json 取该版本的更新说明（多语言）。
 
-    清单里带上 notes 之后，客户端在「内网镜像、连不上 GitHub」的环境里
-    也能把「这个版本改了什么」显示在更新弹窗里。
+    清单里带上 notes 后，客户端不必再请求 Release 正文即可显示更新内容。
     """
     cands = [path] if path else ["mes_conv/changelog.json", "changelog.json"]
     for p in cands:
@@ -129,12 +128,12 @@ def main():
                 f.write(sig)
             print("已签名 version.sig ({} 字节)".format(len(sig)))
         except Exception as e:
-            print("签名失败（将保留未签名清单）：{}".format(e))
+            print("签名失败（清单仅可用于本地调试）：{}".format(e))
     else:
         # 无私钥：删除可能存在的旧签名，避免客户端验签失败
         if os.path.exists("version.sig"):
             os.remove("version.sig")
-            print("未提供私钥：已删除旧 version.sig（清单将以未签名方式被客户端接受）")
+            print("未提供私钥：已删除旧 version.sig（清单仅可用于本地调试）")
 
 
 if __name__ == "__main__":

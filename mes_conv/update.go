@@ -4,8 +4,8 @@ package main
 // 检查更新 + 自动更新
 //
 // 信任模型（v1.9.0 起）：
-//   更新来源 = 「内网镜像」优先，GitHub Releases 兜底。
-//   两个来源都通过同一个 version.json 清单来描述版本：含版本号、exe 文件名、
+//   更新来源 = GitHub Releases。
+//   version.json 清单描述版本：含版本号、exe 文件名、
 //   SHA256 与大小。客户端拉到清单后，先比对版本，再下载 exe，下载完必须校验
 //   SHA256 与清单一致才允许替换 —— 不一致一律中止，绝不拿来历不明的文件覆盖自己。
 //
@@ -13,17 +13,13 @@ package main
 // 若攻击者能同时改 exe 与清单里的哈希，仍能骗过校验。故 CI 用 Ed25519 私钥对
 // version.json 签名（version.sig），客户端用内置公钥验签：
 //   验签通过 → 清单可信 → 其中的 SHA256 才是真正的信任锚点 → 下载 exe 后校验哈希。
-//   验签失败/无签名且要求强制 → 拒绝更新（宁可留在旧版，也不装来路不明的包）。
-//   默认「验签通过才更新；无签名时按未签名处理但记警告」，可用环境变量
-//   MES_UPDATE_REQUIRE_SIG=1 强制「必须有签名」，进一步收口。
+//   验签失败或无签名 → 拒绝更新（宁可留在旧版，也不装来路不明的包）。
 //
 // 网络/限流/无外网：任一环节失败都只是「查不到更新」，绝不能影响工具本身使用。
 // ============================================================================
 
 import (
-	"bytes"
 	"crypto/ed25519"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -32,11 +28,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -45,38 +39,9 @@ import (
 // releaseRepo 发布页所在仓库
 const releaseRepo = "gongjuecloak/Cloakwidget"
 
-// updateMirrorBase 更新镜像基址（工厂工位机优先从这里拉）。
-// 可用环境变量 MES_UPDATE_MIRROR 覆盖（例如内网 HTTP 或共享盘映射，或带子路径 /mirror）。
-// 默认指向自有服务器上的镜像服务（经 Cloudflare 反代）；若该地址不可达，自动回退 GitHub。
-// x.lzplus.top 现已不再托管 Mastodon，镜像可直接走根路径反代（x.lzplus.top → 127.0.0.1:18080），无需子路径。
-// 若仍想用子路径或内网地址，可用环境变量 MES_UPDATE_MIRROR 覆盖。
-var updateMirrorBase = "https://x.lzplus.top"
-
-// mirrorAppPath 本应用在镜像上的命名空间（通用更新平台按 app_id 隔离多应用）。
-// 新客户端走 /mes-converter/version.json；镜像同时保留根路径默认应用兜底（老客户端兼容）。
-// 要让另一个工具也用这个镜像自助更新，只需把它的 app_id 配进镜像 apps.json，
-// 并在该工具里复制下面这组 per-app 旋钮（releaseRepo / updateMirrorBase / mirrorAppPath / manifestPubKeyB64）。
-const mirrorAppPath = "/mes-converter"
-
-// mirrorAppBase 镜像上「本应用」的基址：基址 + 命名空间。
-func mirrorAppBase() string {
-	return strings.TrimRight(updateMirrorBase, "/") + mirrorAppPath
-}
-
-// mirrorAppID 本应用在镜像上的 app_id（由命名空间推导，与镜像 apps.json 的键一致）。
-func mirrorAppID() string {
-	return strings.Trim(mirrorAppPath, "/")
-}
-
 // manifestPubKeyB64 Ed25519 公钥（base64，32 字节 raw）。CI 用对应私钥签 version.json，
 // 客户端据此验签，建立供应链信任根。私钥存于仓库 secret MES_SIGN_PRIVATE_KEY，勿入库。
 const manifestPubKeyB64 = "89ymVon//tfWP9d+KzKZxg3oCBUT+w31nUqZN5LBML0="
-
-// requireSig 是否强制「清单必须有签名」。默认否（无签名清单放行但记警告）；
-// 置 MES_UPDATE_REQUIRE_SIG=1 则无签名直接拒更新，进一步收口。
-func requireSig() bool {
-	return strings.TrimSpace(os.Getenv("MES_UPDATE_REQUIRE_SIG")) == "1"
-}
 
 // verifyManifestSig 用内置公钥校验 version.sig 是否为 version.json 原始字节的合法签名。
 // 返回 (是否验签通过, 是否有签名文件)。
@@ -92,99 +57,6 @@ func verifyManifestSig(manifest, sig []byte) (ok bool, hasSig bool) {
 		return false, true
 	}
 	return ed25519.Verify(ed25519.PublicKey(pub), manifest, sig), true
-}
-
-func init() {
-	if v := strings.TrimSpace(os.Getenv("MES_UPDATE_MIRROR")); v != "" {
-		updateMirrorBase = strings.TrimRight(v, "/")
-	}
-	loadMirrorToken()
-}
-
-// ---- 镜像访问令牌（一次性旋转） ----
-// 客户端本地保存当前令牌；镜像要求拉取带令牌，成功一次即旋转（响应头 X-Next-Token），
-// 下次用新令牌。无令牌/失效时以 enroll 密钥自注册，重新拿到令牌。工厂机无外网、只能走镜像，
-// 故必须能自注册成功；公网客户端拿不到令牌也会回退 GitHub。
-var mirrorToken string
-
-func mirrorTokenPath() string { return filepath.Join(exeDir(), "mes_mirror_token") }
-
-func loadMirrorToken() {
-	if b, err := os.ReadFile(mirrorTokenPath()); err == nil {
-		if s := strings.TrimSpace(string(b)); s != "" {
-			mirrorToken = s
-		}
-	}
-}
-
-func saveMirrorToken(t string) {
-	mirrorToken = t
-	_ = os.WriteFile(mirrorTokenPath(), []byte(t), 0600)
-}
-
-func mirrorEnrollSecret() string {
-	if v := strings.TrimSpace(os.Getenv("MES_MIRROR_SECRET")); v != "" {
-		return v
-	}
-	return "mes-mirror-internal"
-}
-
-func isMirrorURL(raw string) bool {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return false
-	}
-	mu, err := url.Parse(updateMirrorBase)
-	if err != nil {
-		return false
-	}
-	return u.Host == mu.Host
-}
-
-// mirrorURLWith 给镜像请求附加令牌 / enroll 参数；非镜像地址原样返回。
-// 令牌优先通过 Authorization: Bearer 头传递（见 fetchBytes），仅当
-// useBearerAuth 为 false 时才回退到旧的 ?token= 形式。
-func mirrorURLWith(raw, token string, enroll bool) string {
-	if !isMirrorURL(raw) {
-		return raw
-	}
-	q := url.Values{}
-	// Bearer 模式下令牌不放进 URL
-	if token != "" && !useBearerAuth() {
-		q.Set("token", token)
-	}
-	if enroll {
-		q.Set("enroll", "1")
-		q.Set("secret", mirrorEnrollSecret())
-	}
-	if len(q) == 0 {
-		return raw
-	}
-	sep := "?"
-	if strings.Contains(raw, "?") {
-		sep = "&"
-	}
-	return raw + sep + q.Encode()
-}
-
-// useBearerAuth 默认走标准 Authorization 头；设 MES_MIRROR_BEARER=0 可退回旧的
-// ?token= 形式（仅用于兼容尚未升级的镜像服务）。
-func useBearerAuth() bool {
-	return strings.TrimSpace(os.Getenv("MES_MIRROR_BEARER")) != "0"
-}
-
-func captureNextToken(resp *http.Response) {
-	if nt := resp.Header.Get("X-Next-Token"); nt != "" {
-		saveMirrorToken(nt)
-	}
-}
-
-func randHex(n int) string {
-	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		return ""
-	}
-	return hex.EncodeToString(b)
 }
 
 // parseVer 把 "v1.5.0" / "1.5" / "1.6.0-beta" 解析成三段数字
@@ -216,7 +88,7 @@ func versionLess(cur, latest string) bool {
 }
 
 // runningExeSHA256 计算当前运行中的 exe 文件的 SHA256。
-// 用于「防误报升级」：若镜像清单描述的 exe 哈希与正在运行的文件完全一致，
+// 用于「防误报升级」：若发布清单描述的 exe 哈希与正在运行的文件完全一致，
 // 说明两者其实是同一个构建，即便版本号比对异常也绝不提示升级。
 func runningExeSHA256() string {
 	p, err := os.Executable()
@@ -309,7 +181,7 @@ func fetchLatestRelease() (*ghRelease, error) {
 type updateManifest struct {
 	Version string `json:"version"`
 	// Notes 更新说明（多语言，可选）。构建时从 mes_conv/changelog.json 里取该版本的条目。
-	// 内网镜像环境拿不到 GitHub Release 正文，就靠这个把「改了什么」显示给用户。
+	// 客户端优先用它显示更新内容，避免再发一次 GitHub API 请求。
 	Notes map[string][]string `json:"notes,omitempty"`
 	Exe   struct {
 		Name   string `json:"name"`   // 如 MES-Converter-v1.9.0.exe
@@ -324,71 +196,41 @@ func manifestSigURL(manifestURL string) string {
 	return strings.Replace(manifestURL, "version.json", "version.sig", 1)
 }
 
-// fetchBytes GET 一个 URL 的原始字节（带令牌 / 401 自注册重试逻辑同 fetchManifest）。
+// fetchBytes GET 一个 URL 的原始字节，最多读取 1 MiB。
 func fetchBytes(rawURL string, timeout time.Duration) ([]byte, int, error) {
-	do := func(token string, enroll bool) ([]byte, int, error) {
-		req, err := http.NewRequest(http.MethodGet, mirrorURLWith(rawURL, token, enroll), nil)
-		if err != nil {
-			return nil, 0, err
-		}
-		req.Header.Set("User-Agent", "MESConverter/"+appVersion)
-		if isMirrorURL(rawURL) {
-			// 令牌走标准 Authorization 头（不再塞进 URL，避免令牌进日志/浏览器历史）
-			if enroll {
-				req.Header.Set("X-Access-Token", token)
-			} else if token != "" {
-				req.Header.Set("Authorization", "Bearer "+token)
-			}
-		}
-		cli := &http.Client{Timeout: timeout}
-		resp, err := cli.Do(req)
-		if err != nil {
-			return nil, 0, err
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			return nil, resp.StatusCode, fmt.Errorf("HTTP %d", resp.StatusCode)
-		}
-		b, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-		captureNextToken(resp)
-		return b, resp.StatusCode, err
+	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, 0, err
 	}
-	b, code, err := do(mirrorToken, false)
-	if err == nil {
-		return b, code, nil
+	req.Header.Set("User-Agent", "MESConverter/"+appVersion)
+	resp, err := (&http.Client{Timeout: timeout}).Do(req)
+	if err != nil {
+		return nil, 0, err
 	}
-	if code == http.StatusUnauthorized && isMirrorURL(rawURL) {
-		newTok := randHex(16)
-		saveMirrorToken(newTok)
-		if b2, _, e2 := do(newTok, true); e2 == nil {
-			return b2, http.StatusOK, nil
-		}
-		return nil, code, fmt.Errorf("镜像鉴权失败（已尝试自注册）：%v", err)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, resp.StatusCode, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
-	return nil, code, err
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	return b, resp.StatusCode, err
 }
 
-// fetchManifest 拉取并解析 version.json。带较短超时（镜像不可达要快点回退）。
+// fetchManifest 拉取并解析 version.json。
 // 先取清单原始字节与同目录的 version.sig，用内置 Ed25519 公钥验签：
-// 验签通过才解析使用；无签名时按未签名处理（除非强制要求签名）。
+// 验签通过才解析使用；无签名或验签失败都拒绝更新。
 func fetchManifest(rawURL string) (*updateManifest, error) {
 	raw, _, err := fetchBytes(rawURL, 6*time.Second)
 	if err != nil {
 		return nil, err
 	}
-	// 取签名（best-effort：404/不可达即视为无签名）
+	// 签名与清单必须同时存在。
 	sig, _, _ := fetchBytes(manifestSigURL(rawURL), 4*time.Second)
 	verified, hasSig := verifyManifestSig(raw, sig)
-	switch {
-	case verified:
-		// 验签通过，继续
-	case hasSig:
+	if hasSig && !verified {
 		return nil, errors.New("更新清单签名校验失败，已拒绝更新（来源可能被篡改）")
-	default:
-		if requireSig() {
-			return nil, errors.New("更新清单无签名，且已启用强制验签，拒绝更新")
-		}
-		appLog("更新清单未签名（仍按 SHA256 校验）；如需强制验签请设 MES_UPDATE_REQUIRE_SIG=1")
+	}
+	if !hasSig {
+		return nil, errors.New("更新清单无签名，已拒绝更新")
 	}
 	var m updateManifest
 	if err := json.Unmarshal(raw, &m); err != nil {
@@ -398,17 +240,6 @@ func fetchManifest(rawURL string) (*updateManifest, error) {
 		return nil, fmt.Errorf("清单字段不完整")
 	}
 	return &m, nil
-}
-
-// updateChannel 返回本机跟随的发布渠道：stable（默认）/ beta / dev。
-// 生产工位机保持 stable；测试机可设 MES_UPDATE_CHANNEL=beta 抢先体验预发布。
-func updateChannel() string {
-	c := strings.ToLower(strings.TrimSpace(os.Getenv("MES_UPDATE_CHANNEL")))
-	switch c {
-	case "beta", "dev":
-		return c
-	}
-	return "stable"
 }
 
 // clientID 生成本机标识：优先取显式配置，否则用 主机名-用户名 组合。
@@ -430,99 +261,26 @@ func clientID() string {
 	return host + "-" + user
 }
 
-// reportCheckin 向镜像登记本机（版本 / 渠道 / 主机名），让控制台能看到
-// 「现场到底有哪些机器、哪些还没更新」。best-effort：失败静默，绝不影响使用。
-func reportCheckin() {
-	base := strings.TrimRight(updateMirrorBase, "/")
-	if base == "" {
-		return
-	}
-	payload := map[string]string{
-		"client_id": clientID(),
-		"app":       mirrorAppID(),
-		"version":   appVersion,
-		"channel":   updateChannel(),
-		"os":        runtime.GOOS,
-		"hostname":  clientID(),
-	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return
-	}
-	req, err := http.NewRequest(http.MethodPost,
-		base+"/api/v1/client/checkin", bytes.NewReader(body))
-	if err != nil {
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "MESConverter/"+appVersion)
-	if mirrorToken != "" {
-		req.Header.Set("Authorization", "Bearer "+mirrorToken)
-	}
-	cli := &http.Client{Timeout: 5 * time.Second}
-	resp, err := cli.Do(req)
-	if err != nil {
-		appLog("客户端签到上报失败（忽略）：%v", err)
-		return
-	}
-	defer resp.Body.Close()
-	captureNextToken(resp)
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-}
-
-// resolveUpdate 决定有没有新版本、从哪下。
-// 返回 (清单, 下载基址)；基址为空表示用清单里的 GitHub URL，非空表示用该基址 + "/" + exe.Name。
-// 更新源由 sys_settings.json 的 update_source 决定（界面「系统设置 → 更新源」可改）：
-//   - auto   （默认）镜像优先；镜像不可达/无新版时回退 GitHub
-//   - github 只查 GitHub（适合能直连外网的机器）
-//   - mirror 只查镜像、不回退（适合内网无法访问 GitHub 的机器，避免每次白等超时）
-func resolveUpdate() (*updateManifest, string, bool) {
-	src := srcAuto
-	if s := sysSettings(); s.UpdateSource != "" {
-		src = normalizeUpdateSource(s.UpdateSource)
-	}
-	mirrorOK := updateMirrorBase != "" && src != srcGithub
-	githubOK := src != srcMirror
-	// reachable 表示「至少有一个更新源正常应答」。
+// resolveUpdate 决定 GitHub Releases 上有没有新版本。
+func resolveUpdate() (*updateManifest, bool) {
+	// reachable 表示 GitHub 正常应答。
 	// 调用方靠它区分「确实没有新版」和「网络没打通」——后者不该写 24h 节流，
 	// 否则一次抖动就让机器一天内不再检查更新。
-	reachable := false
-
-	if mirrorOK {
-		if m, err := fetchManifest(mirrorAppBase() + "/version.json?channel=" + url.QueryEscape(updateChannel())); err == nil {
-			reachable = true
-			if versionLess(appVersion, m.Version) {
-				// 强校验：清单 exe 的 SHA256 与当前运行文件一致，说明实为同一构建，绝不提示升级
+	rel, err := fetchLatestRelease()
+	if err != nil {
+		return nil, false
+	}
+	for _, a := range rel.Assets {
+		if strings.EqualFold(a.Name, "version.json") {
+			if m, e := fetchManifest(a.URL); e == nil && versionLess(appVersion, m.Version) {
 				if m.Exe.SHA256 != "" && strings.EqualFold(m.Exe.SHA256, runningExeSHA256()) {
-					m = nil
+					continue
 				}
-				if m != nil {
-					return m, mirrorAppBase(), true
-				}
-			}
-		}
-		if src == srcMirror {
-			return nil, "", reachable // 只用镜像：镜像没有新版 / 不可达，就不更新了
-		}
-	}
-	if githubOK {
-		rel, err := fetchLatestRelease()
-		if err == nil {
-			reachable = true
-			for _, a := range rel.Assets {
-				if strings.EqualFold(a.Name, "version.json") {
-					if m, e := fetchManifest(a.URL); e == nil &&
-						versionLess(appVersion, m.Version) {
-						if m.Exe.SHA256 != "" && strings.EqualFold(m.Exe.SHA256, runningExeSHA256()) {
-							continue
-						}
-						return m, "", true // 用清单里的 GitHub 下载地址
-					}
-				}
+				return m, true
 			}
 		}
 	}
-	return nil, "", reachable
+	return nil, true
 }
 
 // handlerUpdate 检查更新（手动点按钮）
@@ -530,13 +288,9 @@ func handlerUpdate(w http.ResponseWriter, r *http.Request) {
 	lang := reqLang(r)
 	L := msgs(lang)
 
-	// 顺手向镜像登记本机，让控制台能看到现场机器的更新状态（best-effort）
-	go reportCheckin()
-
-	m, base, reachable := resolveUpdate()
+	m, reachable := resolveUpdate()
 	if !reachable {
-		// 没有任何更新源应答：下面会按「已是最新」回话，这里至少让日志能区分
-		appLog("检查更新：更新源均不可达（当前 v%s），按已是最新处理", appVersion)
+		appLog("检查更新：GitHub 不可达（当前 v%s），按已是最新处理", appVersion)
 	}
 	latest := appVersion
 	has := false
@@ -544,17 +298,13 @@ func handlerUpdate(w http.ResponseWriter, r *http.Request) {
 	if m != nil {
 		latest = m.Version
 		has = true
-		if base != "" {
-			dl = base + "/" + m.Exe.Name
-		} else {
-			dl = m.Exe.URL
-		}
+		dl = m.Exe.URL
 	}
 	msg := fmt.Sprintf(L["msg_update_latest"], appVersion)
 	if has {
 		msg = fmt.Sprintf(L["msg_update_new"], latest, appVersion)
 	}
-	// 更新说明：优先用清单里带的（镜像 / 内网环境也能看到），没有再回 GitHub Release 正文
+	// 更新说明优先用清单里的，没有再读 GitHub Release 正文。
 	notes := ""
 	if m != nil {
 		if ns := pickLang(m.Notes, lang); len(ns) > 0 {
@@ -582,36 +332,21 @@ func handlerUpdate(w http.ResponseWriter, r *http.Request) {
 // 下载 + 校验 + 就地替换
 // ============================================================================
 
-// downloadFile 下载 url 到 dest，可选校验内容长度。
-// 命中镜像时附加令牌；若返回 401，则尝试用 enroll 密钥自注册一次再下载。
+// downloadFile 下载 GitHub Release 资产到 dest，可选校验内容长度。
 func downloadFile(url, dest string, expectSize int64) error {
-	fetch := func(token string, enroll bool) (*http.Response, error) {
-		req, err := http.NewRequest(http.MethodGet, mirrorURLWith(url, token, enroll), nil)
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("User-Agent", "MESConverter/"+appVersion)
-		cli := &http.Client{Timeout: 180 * time.Second}
-		return cli.Do(req)
-	}
-	resp, err := fetch(mirrorToken, false)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return err
 	}
-	if resp.StatusCode == http.StatusUnauthorized && isMirrorURL(url) {
-		resp.Body.Close()
-		newTok := randHex(16)
-		saveMirrorToken(newTok)
-		resp, err = fetch(newTok, true)
-		if err != nil {
-			return err
-		}
+	req.Header.Set("User-Agent", "MESConverter/"+appVersion)
+	resp, err := (&http.Client{Timeout: 180 * time.Second}).Do(req)
+	if err != nil {
+		return err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("下载更新失败：HTTP %d", resp.StatusCode)
 	}
-	captureNextToken(resp)
 	f, err := os.Create(dest)
 	if err != nil {
 		return err
@@ -698,7 +433,7 @@ func readAllAndClose(f *os.File) []byte {
 	return b
 }
 
-func applyUpdateFromManifest(m *updateManifest, base string) (string, error) {
+func applyUpdateFromManifest(m *updateManifest) (string, error) {
 	// 同进程内只有一个更新流程（自动更新与手动「立即更新」可能同时触发）；
 	// 目录锁再挡住共享盘上其他机器。两者都在最外层，任何一步失败都不会碰到现有文件。
 	if !updateGateMu.TryLock() {
@@ -711,12 +446,6 @@ func applyUpdateFromManifest(m *updateManifest, base string) (string, error) {
 	}
 	defer releaseLock()
 
-	var dlURL string
-	if base != "" {
-		dlURL = strings.TrimRight(base, "/") + "/" + m.Exe.Name
-	} else {
-		dlURL = m.Exe.URL
-	}
 	cur, err := os.Executable()
 	if err != nil {
 		return "", err
@@ -727,7 +456,7 @@ func applyUpdateFromManifest(m *updateManifest, base string) (string, error) {
 	// 临时文件：隐藏、唯一，绝不与原文件名冲突（避免"同名锁文件"类问题）。
 	tmp := filepath.Join(dir, "."+strings.TrimSuffix(m.Exe.Name, ".exe")+".part")
 	_ = os.Remove(tmp)
-	if err := downloadFile(dlURL, tmp, m.Exe.Size); err != nil {
+	if err := downloadFile(m.Exe.URL, tmp, m.Exe.Size); err != nil {
 		_ = os.Remove(tmp)
 		return "", err
 	}
@@ -902,16 +631,14 @@ func autoUpdateMarkFailed() int {
 func autoUpdate() {
 	defer func() { _ = recover() }()
 	time.Sleep(3 * time.Second)
-	// 启动即向镜像登记本机（best-effort，失败不影响使用）
-	reportCheckin()
 	// 上一次落位失败过（exe 被占用等）：这次不看 24h 节流，直接再试一次
 	retryPending := fileExists(pendingApplyFile())
 	if !retryPending && autoUpdateCheckedRecently() {
 		return
 	}
-	m, base, reachable := resolveUpdate()
+	m, reachable := resolveUpdate()
 	if !reachable {
-		// 一个更新源都没应答：不能记成「已检查」，否则一次网络抖动就是一天不再查
+		// GitHub 没应答：不能记成「已检查」，否则一次网络抖动就是一天不再查
 		n := autoUpdateMarkFailed()
 		appLog("自动更新：更新源暂时不可达（第 %d 次），稍后重试", n)
 		return
@@ -920,7 +647,7 @@ func autoUpdate() {
 	if m == nil {
 		return
 	}
-	if _, err := applyUpdateFromManifest(m, base); err != nil {
+	if _, err := applyUpdateFromManifest(m); err != nil {
 		appLog("后台自动更新失败：%v", err)
 		return
 	}
@@ -957,11 +684,11 @@ func moveFile(src, dst string) error {
 func handlerUpdateApply(w http.ResponseWriter, r *http.Request) {
 	lang := reqLang(r)
 	L := msgs(lang)
-	m, base, reachable := resolveUpdate()
+	m, reachable := resolveUpdate()
 	if m == nil {
 		msg := fmt.Sprintf(L["msg_update_latest"], appVersion)
 		if !reachable {
-			appLog("手动更新：更新源均不可达，按已是最新处理")
+			appLog("手动更新：GitHub 不可达，按已是最新处理")
 		}
 		writeJSON(w, map[string]interface{}{
 			"ok": true, "restart": false, "reachable": reachable,
@@ -969,7 +696,7 @@ func handlerUpdateApply(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	final, err := applyUpdateFromManifest(m, base)
+	final, err := applyUpdateFromManifest(m)
 	if err != nil {
 		writeJSON(w, map[string]interface{}{
 			"ok": false, "error": fmt.Sprintf(L["msg_update_apply_fail"], err.Error()),

@@ -1247,18 +1247,18 @@ func collectSources(r *http.Request, dir, field string, sheetIdx int, L map[stri
 // classifySourceField 读取 `source` 表单字段里的每个文件，按表头自动判定是订单还是工单，
 // 把落盘路径分别追加进 orderPaths / workPaths，并把识别结果记进 detected。
 // 无法判定的一律按「订单」兜底（缺列时转换会给出明确报错，不会静默错配）。
-func classifySourceField(r *http.Request, dir string, cfg *OrdersConfig, L map[string]string,
-	orderPaths, workPaths *[]string, orderNames, workNames *[]string, detected *[]map[string]string) {
+func classifySourceField(r *http.Request, dir string, cfg *OrdersConfig,
+	orderPaths, workPaths *[]string, orderNames, workNames *[]string, detected *[]map[string]string) error {
 	for i, h := range r.MultipartForm.File["source"] {
 		ext := filepath.Ext(h.Filename)
 		p := filepath.Join(dir, fmt.Sprintf("src_%d%s", i, ext))
 		f, err := h.Open()
 		if err != nil {
-			continue
+			return fmt.Errorf("%s: %w", h.Filename, err)
 		}
 		if err := saveUpload(f, p); err != nil {
 			f.Close()
-			continue
+			return fmt.Errorf("%s: %w", h.Filename, err)
 		}
 		f.Close()
 
@@ -1280,6 +1280,7 @@ func classifySourceField(r *http.Request, dir string, cfg *OrdersConfig, L map[s
 			*orderNames = append(*orderNames, h.Filename)
 		}
 	}
+	return nil
 }
 
 type HistoryItem struct {
@@ -1593,7 +1594,6 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("/api/system/password", handlerSetPassword)
 	mux.HandleFunc("/api/system/autostart", handlerSetAutostart)
 	mux.HandleFunc("/api/system/lan", handlerSetLAN)
-	mux.HandleFunc("/api/system/update-source", handlerSetUpdateSource)
 	mux.HandleFunc("/api/system/welcomed", handlerSetWelcomed)
 	mux.HandleFunc("/api/system/diag", handlerDiag)
 	mux.HandleFunc("/api/system/update", handlerUpdate)
@@ -1605,7 +1605,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("/api/stats", handlerStats)
 	mux.HandleFunc("/api/report", handlerReport)
 	mux.HandleFunc("/api/open-folder", handlerOpenFolder)
-	mux.HandleFunc("/api/convert", handlerConvert)
+	mux.HandleFunc("/api/convert", singleConversion(handlerConvert))
 	mux.HandleFunc("/api/preview", handlerPreview)
 	// ---- 订单 / 工单模块 ----
 	mux.HandleFunc("/api/orders/config", func(w http.ResponseWriter, r *http.Request) {
@@ -1615,9 +1615,9 @@ func buildMux() *http.ServeMux {
 			handlerOrdersGetConfig(w, r)
 		}
 	})
-	mux.HandleFunc("/api/orders/convert", handlerOrdersConvert)
+	mux.HandleFunc("/api/orders/convert", singleConversion(handlerOrdersConvert))
 	mux.HandleFunc("/api/orders/history", handlerOrdersHistory)
-	mux.HandleFunc("/api/bom/convert", handlerBomConvert)
+	mux.HandleFunc("/api/bom/convert", singleConversion(handlerBomConvert))
 	mux.HandleFunc("/api/bom/config", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			handlerBomSaveConfig(w, r)
@@ -1627,6 +1627,21 @@ func buildMux() *http.ServeMux {
 	})
 	mux.HandleFunc("/download", handlerDownload)
 	return mux
+}
+
+var conversionMu sync.Mutex
+
+func singleConversion(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !conversionMu.TryLock() {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusConflict)
+			writeJSON(w, map[string]interface{}{"ok": false, "error": "已有转换正在进行中，请稍候再试"})
+			return
+		}
+		defer conversionMu.Unlock()
+		next(w, r)
+	}
 }
 
 // startServer 在指定端口启动服务。
@@ -1671,7 +1686,13 @@ func startServer(port int) error {
 	}
 
 	go func() {
-		_ = http.Serve(ln, limitBodyMiddleware(logMiddleware(authMiddleware(buildMux()))))
+		srv := &http.Server{
+			Handler:           limitBodyMiddleware(logMiddleware(authMiddleware(buildMux()))),
+			ReadHeaderTimeout: 5 * time.Second,
+			IdleTimeout:       60 * time.Second,
+			MaxHeaderBytes:    1 << 20,
+		}
+		_ = srv.Serve(ln)
 	}()
 	return nil
 }

@@ -481,7 +481,7 @@ const (
 )
 
 // checkUpdateFromTray 托盘「检查更新…」：真正去查一次，而不是打开 GitHub 网页。
-// 查法复用本地服务的 /api/system/update（与界面按钮同一套逻辑，含镜像优先 + 验签）。
+// 查法复用本地服务的 /api/system/update（与界面按钮同一套 GitHub + 验签逻辑）。
 func checkUpdateFromTray() {
 	T := trayTexts(trayLang)
 	// 「正在检查」用带超时自动关的提示；这里用窗口标题承载，先查再弹结果
