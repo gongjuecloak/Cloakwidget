@@ -2,6 +2,44 @@
   "note": "程序内置的更新日志。发版时在 versions 顶部加一条，并把 version 改成新版本号；notes 按语言分组，缺的语言回退到 zh。",
   "versions": [
     {
+      "version": "1.19.0",
+      "date": "2026-10-31",
+      "notes": {
+        "zh": [
+          "配置中心升级为工作台：新增简单 / 专家模式、页内目录、全局搜索、配置区折叠、条目计数与分区恢复默认值；系统设置与业务映射分开显示。",
+          "物料、订单 / 工单、BOM 三个模块都能导入导出配置、查看自动备份、对比和恢复；页签显示未保存项数量，保存后可一键撤销。",
+          "保存前统一校验；可选真实源文件测试当前配置，查看匹配、缺失和样例值。BOM 测试后可直接从真实表头下拉选择源列。",
+          "转换结果自动过滤空白行和纯空格行，避免输出文件带无效数据行。",
+          "BOM 转换记录、统计与预检提示已修正：预检无问题时不再显示矛盾告警，旧版历史遗留告警会明确说明。",
+          "更新源只保留 GitHub Release，移除镜像仓库路径；转换页面间距、操作层级和结果诊断继续统一。"
+        ],
+        "zht": [
+          "設定中心升級為工作台：新增簡單 / 專家模式、頁內目錄、全域搜尋、設定區摺疊、項目計數與分區恢復預設值；系統設定與業務對應分開顯示。",
+          "物料、訂單 / 工單、BOM 三個模組都能匯入匯出設定、查看自動備份、比較與還原；頁籤顯示未儲存項目數量，儲存後可一鍵復原。",
+          "儲存前統一驗證；可選真實來源檔測試目前設定，查看匹配、缺失與範例值。BOM 測試後可直接從真實表頭下拉選擇來源欄。",
+          "轉換結果自動過濾空白列與純空格列，避免輸出檔帶入無效資料列。",
+          "BOM 轉換記錄、統計與預檢提示已修正：預檢無問題時不再顯示矛盾警告，舊版歷史遺留警告會明確說明。",
+          "更新來源只保留 GitHub Release，移除鏡像倉庫路徑；轉換頁面間距、操作層級與結果診斷繼續統一。"
+        ],
+        "vi": [
+          "Trung tâm cấu hình được nâng cấp thành không gian làm việc: có chế độ đơn giản / chuyên gia, mục lục trong trang, tìm kiếm, thu gọn, đếm mục và đặt lại từng phần; cài đặt hệ thống tách khỏi ánh xạ nghiệp vụ.",
+          "Cả ba mô-đun vật tư, đơn hàng / lệnh sản xuất và BOM đều hỗ trợ nhập xuất cấu hình, xem bản sao lưu tự động, so sánh và khôi phục; thẻ hiển thị số mục chưa lưu và có thể hoàn tác sau khi lưu.",
+          "Kiểm tra thống nhất trước khi lưu; có thể dùng tệp nguồn thật để thử cấu hình, xem cột khớp, thiếu và giá trị mẫu. Sau khi thử BOM có thể chọn cột nguồn trực tiếp từ tiêu đề thật.",
+          "Kết quả chuyển đổi tự động loại bỏ dòng trống và dòng chỉ có khoảng trắng, tránh dữ liệu vô hiệu trong tệp đầu ra.",
+          "Đã sửa lịch sử, thống kê và thông báo kiểm tra BOM: khi kiểm tra không có lỗi sẽ không còn cảnh báo mâu thuẫn; cảnh báo tồn từ phiên bản cũ được giải thích rõ.",
+          "Nguồn cập nhật chỉ còn GitHub Release, bỏ đường dẫn kho gương; khoảng cách, cấp độ thao tác và chẩn đoán kết quả trên các trang chuyển đổi được thống nhất."
+        ],
+        "en": [
+          "The Config Center is now a workspace with Simple / Expert modes, an in-page directory, global search, collapsible sections, item counts and per-section reset; system settings are visually separated from business mappings.",
+          "Materials, Orders / Work Orders and BOM now all support config import/export, automatic backup browsing, comparison and restore; tabs show unsaved item counts and a save can be undone.",
+          "Unified validation runs before saving. A real source file can test the current config and show matches, missing columns and sample values; BOM source columns can then be selected from the real headers.",
+          "Converted output now filters empty and whitespace-only rows so invalid blank data rows are not written.",
+          "BOM history, statistics and pre-check messaging are corrected: a clean pre-check no longer shows a contradictory warning, and legacy warnings are clearly identified.",
+          "Updates now use GitHub Releases only; mirror-repository paths are removed. Conversion-page spacing, action hierarchy and result diagnostics are further unified."
+        ]
+      }
+    },
+    {
       "version": "1.18.1",
       "date": "2026-10-29",
       "notes": {
