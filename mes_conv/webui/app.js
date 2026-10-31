@@ -207,7 +207,7 @@ function makeChecksRenderer(c){
     sec.classList.add("show");
     ul.innerHTML=""; body.innerHTML="";
     const errs=data.errors||[], warns=data.warnings||[], issues=data.issues||[];
-    const count=(errs.length+warns.length) || (data.issue_total||0);
+    const count=Math.max(errs.length+warns.length,(data.issue_total||0)+(data.warning_total||0));
     sum.className="check-chip show "+(count>0?"bad":"ok");
     sum.textContent = count>0 ? fmt(c.summaryFmt,[count]) : t(c.okKey);
     if(count===0 && issues.length===0){

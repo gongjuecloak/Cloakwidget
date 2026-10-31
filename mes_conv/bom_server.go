@@ -62,6 +62,10 @@ var bomI18n = map[string]bomMsg{
 		"b_issue_empty_seq":     "项次号为空",
 		"b_issue_nonnum_seq":    "项次号不是数字：%s",
 		"b_issue_empty_child":   "子件品号为空",
+		"b_warn_unit_empty":     "源单位为空：%d 行",
+		"b_warn_unit_unmapped":  "源单位「%s」未匹配 MES 单位，已保留原值（%d 行）",
+		"b_warn_unit_ambig":     "源单位「%s」匹配到多个 MES 单位，已取「%s」（%d 行）",
+		"b_warn_unit_status":    "源单位「%s」状态异常：%s（%d 行）",
 	},
 	"zht": {
 		"b_start":               "開始處理 BOM 資料…",
@@ -100,6 +104,10 @@ var bomI18n = map[string]bomMsg{
 		"b_issue_empty_seq":     "項次號為空",
 		"b_issue_nonnum_seq":    "項次號不是數字：%s",
 		"b_issue_empty_child":   "子件品號為空",
+		"b_warn_unit_empty":     "來源單位為空：%d 列",
+		"b_warn_unit_unmapped":  "來源單位「%s」未對應 MES 單位，已保留原值（%d 列）",
+		"b_warn_unit_ambig":     "來源單位「%s」對應到多個 MES 單位，已取「%s」（%d 列）",
+		"b_warn_unit_status":    "來源單位「%s」狀態異常：%s（%d 列）",
 	},
 	"vi": {
 		"b_start":               "Bắt đầu xử lý dữ liệu BOM…",
@@ -138,6 +146,10 @@ var bomI18n = map[string]bomMsg{
 		"b_issue_empty_seq":     "Số thứ tự đang trống",
 		"b_issue_nonnum_seq":    "Số thứ tự không phải số: %s",
 		"b_issue_empty_child":   "Mã vật tư con đang trống",
+		"b_warn_unit_empty":     "Đơn vị nguồn trống: %d dòng",
+		"b_warn_unit_unmapped":  "Đơn vị nguồn \"%s\" chưa khớp đơn vị MES; đã giữ nguyên (%d dòng)",
+		"b_warn_unit_ambig":     "Đơn vị nguồn \"%s\" khớp nhiều đơn vị MES; đã chọn \"%s\" (%d dòng)",
+		"b_warn_unit_status":    "Đơn vị nguồn \"%s\" có trạng thái bất thường: %s (%d dòng)",
 	},
 	"en": {
 		"b_start":               "Starting BOM conversion…",
@@ -176,6 +188,10 @@ var bomI18n = map[string]bomMsg{
 		"b_issue_empty_seq":     "Sequence number is empty",
 		"b_issue_nonnum_seq":    "Sequence number is not numeric: %s",
 		"b_issue_empty_child":   "Child material code is empty",
+		"b_warn_unit_empty":     "Source unit is empty: %d row(s)",
+		"b_warn_unit_unmapped":  "Source unit \"%s\" is not mapped to a MES unit; original value kept (%d row(s))",
+		"b_warn_unit_ambig":     "Source unit \"%s\" matches multiple MES units; selected \"%s\" (%d row(s))",
+		"b_warn_unit_status":    "Source unit \"%s\" has an unexpected status %s (%d row(s))",
 	},
 }
 
@@ -219,13 +235,41 @@ func handlerBomHistory(w http.ResponseWriter, r *http.Request) {
 func bomHistoryCounts(rep *BomReport) (issues, warnings int) {
 	issues = rep.EmptySeq + rep.NonNumSeq + rep.EmptyChild
 	for _, u := range rep.UnitStats {
-		switch strings.ToUpper(strings.TrimSpace(u.Status)) {
-		case "OK", "ALIAS", "AMBIG_RESOLVED", "NO_MAP":
-		default:
+		if bomUnitNeedsWarning(u.Status) {
 			warnings += u.Count
 		}
 	}
 	return issues, warnings
+}
+
+func bomUnitNeedsWarning(status string) bool {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case "OK", "ALIAS", "AMBIG_RESOLVED", "NO_MAP":
+		return false
+	default:
+		return true
+	}
+}
+
+func bomUnitWarnings(rep *BomReport, L map[string]string) (out []string, total int) {
+	for _, u := range rep.UnitStats {
+		status := strings.ToUpper(strings.TrimSpace(u.Status))
+		if !bomUnitNeedsWarning(status) {
+			continue
+		}
+		total += u.Count
+		switch status {
+		case "EMPTY":
+			out = append(out, fmt.Sprintf(L["b_warn_unit_empty"], u.Count))
+		case "UNMAPPED":
+			out = append(out, fmt.Sprintf(L["b_warn_unit_unmapped"], u.Raw, u.Count))
+		case "AMBIG_FALLBACK":
+			out = append(out, fmt.Sprintf(L["b_warn_unit_ambig"], u.Raw, u.Mapped, u.Count))
+		default:
+			out = append(out, fmt.Sprintf(L["b_warn_unit_status"], u.Raw, status, u.Count))
+		}
+	}
+	return out, total
 }
 
 // handlerBomConvert POST /api/bom/convert
@@ -378,6 +422,10 @@ func handlerBomConvert(w http.ResponseWriter, r *http.Request) {
 	if len(rep.UnitStats) > 0 {
 		add(fmt.Sprintf(L["b_units"], len(rep.UnitStats)))
 	}
+	unitWarnings, unitWarningTotal := bomUnitWarnings(rep, L)
+	for _, warning := range unitWarnings {
+		add("* " + warning)
+	}
 	add(L["b_done"])
 	add(fmt.Sprintf(L["b_elapsed"], time.Since(start).Milliseconds()))
 	_ = os.WriteFile(logPath, []byte(strings.Join(logs, "\n")), 0644)
@@ -386,19 +434,21 @@ func handlerBomConvert(w http.ResponseWriter, r *http.Request) {
 	elapsed := time.Since(start).Milliseconds()
 	nowStr := time.Now().Format("2006-01-02 15:04:05")
 	reportName := strings.TrimSuffix(base, ".xlsx") + ".json"
-	issues, warnings := bomHistoryCounts(rep)
+	issues, _ := bomHistoryCounts(rep)
+	resultWarnings := append(append([]string{}, unitWarnings...), persistenceWarnings...)
 	reportID := saveReport(&ConvertReport{
-		ID:         reportName,
-		Time:       nowStr,
-		Source:     srcName,
-		Template:   tplName,
-		Output:     base,
-		Rows:       rep.MasterRows + rep.DetailRows,
-		ElapsedMS:  elapsed,
-		IssueTotal: issues,
-		Issues:     rep.Issues,
-		Warnings:   persistenceWarnings,
-		Module:     "bom",
+		ID:           reportName,
+		Time:         nowStr,
+		Source:       srcName,
+		Template:     tplName,
+		Output:       base,
+		Rows:         rep.MasterRows + rep.DetailRows,
+		ElapsedMS:    elapsed,
+		IssueTotal:   issues,
+		WarningTotal: unitWarningTotal + len(persistenceWarnings),
+		Issues:       rep.Issues,
+		Warnings:     resultWarnings,
+		Module:       "bom",
 		Types: map[string]int{
 			"BOM主表": rep.MasterRows,
 			"BOM明细": rep.DetailRows,
@@ -406,20 +456,20 @@ func handlerBomConvert(w http.ResponseWriter, r *http.Request) {
 	})
 	if reportID == "" {
 		persistenceWarnings = append(persistenceWarnings, L["warn_report_save"])
+		resultWarnings = append(resultWarnings, L["warn_report_save"])
 		add("* " + L["warn_report_save"])
 	}
 	if err := appendBomHistory(HistoryItem{
 		Time: nowStr, File: base, Rows: rep.MasterRows + rep.DetailRows, Source: srcName, Template: tplName,
-		Issues: issues, Warnings: warnings + len(persistenceWarnings), Report: reportID, Module: "bom",
+		Issues: issues, Warnings: unitWarningTotal + len(persistenceWarnings), Report: reportID, Module: "bom",
 	}); err != nil {
 		msg := fmt.Sprintf(L["warn_history_save"], err)
 		persistenceWarnings = append(persistenceWarnings, msg)
+		resultWarnings = append(resultWarnings, msg)
 		add("* " + msg)
 		appLog("BOM 转换历史保存失败：%v", err)
 	}
-	if len(persistenceWarnings) > 0 {
-		_ = os.WriteFile(logPath, []byte(strings.Join(logs, "\n")), 0644)
-	}
+	_ = os.WriteFile(logPath, []byte(strings.Join(logs, "\n")), 0644)
 
 	if rep.UnitStats == nil {
 		rep.UnitStats = []BomUnitStat{}
@@ -443,8 +493,9 @@ func handlerBomConvert(w http.ResponseWriter, r *http.Request) {
 		"dim_fixes":       rep.DimFixes,
 		"issues":          rep.Issues,
 		"issue_total":     issues,
+		"warning_total":   unitWarningTotal + len(persistenceWarnings),
 		"errors":          []string{},
-		"warnings":        persistenceWarnings,
+		"warnings":        resultWarnings,
 		"log":             logs,
 		"elapsed":         elapsed,
 	})

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -109,14 +110,14 @@ func TestBomHistoryRecoversExistingReportsWithoutDuplicates(t *testing.T) {
 	}
 	writeReport("old-bom.json", ConvertReport{
 		ID: "old-bom.json", Time: "2026-10-30 09:00:00", Module: "bom",
-		Output: "old-bom.xlsx", Rows: 18, IssueTotal: 2,
+		Output: "old-bom.xlsx", Rows: 18, IssueTotal: 2, WarningTotal: 7, Warnings: []string{"单位告警"},
 	})
 	writeReport("material.json", ConvertReport{
 		ID: "material.json", Time: "2026-10-31 09:00:00", Module: "materials", Output: "material.xlsx",
 	})
 
 	recovered := historyFromReports(reports, "bom")
-	if len(recovered) != 1 || recovered[0].File != "old-bom.xlsx" || recovered[0].Issues != 2 {
+	if len(recovered) != 1 || recovered[0].File != "old-bom.xlsx" || recovered[0].Issues != 2 || recovered[0].Warnings != 7 {
 		t.Fatalf("unexpected recovered history: %#v", recovered)
 	}
 	merged := mergeHistories([]HistoryItem{{Report: "old-bom.json", File: "from-history.xlsx", Module: "bom"}}, recovered)
@@ -129,14 +130,22 @@ func TestBomHistoryCounts(t *testing.T) {
 	rep := &BomReport{
 		EmptySeq: 1, NonNumSeq: 2, EmptyChild: 3,
 		UnitStats: []BomUnitStat{
-			{Status: "OK", Count: 4},
-			{Status: "AMBIG_RESOLVED", Count: 5},
-			{Status: "unmapped", Count: 6},
-			{Status: "AMBIG_FALLBACK", Count: 7},
+			{Raw: "PCS", Status: "OK", Count: 4},
+			{Raw: "KG", Status: "AMBIG_RESOLVED", Count: 5},
+			{Raw: "unmapped", Status: "unmapped", Count: 6},
+			{Raw: "AMBIG", Mapped: "MES-A", Status: "AMBIG_FALLBACK", Count: 7},
 		},
 	}
 	issues, warnings := bomHistoryCounts(rep)
 	if issues != 6 || warnings != 13 {
 		t.Fatalf("counts = (%d, %d), want (6, 13)", issues, warnings)
+	}
+	messages, total := bomUnitWarnings(rep, bomMsgs("zh"))
+	if total != 13 || len(messages) != 2 {
+		t.Fatalf("unit warnings = (%d, %#v), want total 13 and 2 messages", total, messages)
+	}
+	joined := strings.Join(messages, "\n")
+	if !strings.Contains(joined, "unmapped") || !strings.Contains(joined, "MES-A") {
+		t.Fatalf("单位告警应说明原单位与实际采用值：%s", joined)
 	}
 }
