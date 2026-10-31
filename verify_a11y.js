@@ -4,7 +4,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
-const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+const CHROME = process.env.CHROME || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 const CDP = Number(process.env.CDP_PORT || 9337);
 const BASE = process.env.SHOT_BASE || 'http://127.0.0.1:8731/';
 const HERE = __dirname;

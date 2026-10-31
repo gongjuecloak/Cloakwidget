@@ -384,6 +384,78 @@ func handlerSetWelcomed(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]interface{}{"ok": true})
 }
 
+type authAttempt struct {
+	Failures     int
+	Since        time.Time
+	BlockedUntil time.Time
+}
+
+var (
+	authAttemptMu sync.Mutex
+	authAttempts  = map[string]authAttempt{}
+	authSlots     = make(chan struct{}, 2)
+)
+
+const (
+	authWindow      = time.Minute
+	authMaxFailures = 5
+)
+
+func authClientKey(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil && host != "" {
+		return host
+	}
+	return r.RemoteAddr
+}
+
+func authAllowed(key string, now time.Time) bool {
+	authAttemptMu.Lock()
+	defer authAttemptMu.Unlock()
+	a, ok := authAttempts[key]
+	if !ok {
+		return true
+	}
+	if !a.BlockedUntil.IsZero() {
+		if now.Before(a.BlockedUntil) {
+			return false
+		}
+		delete(authAttempts, key)
+		return true
+	}
+	if now.Sub(a.Since) >= authWindow {
+		delete(authAttempts, key)
+	}
+	return true
+}
+
+func recordAuthFailure(key string, now time.Time) {
+	authAttemptMu.Lock()
+	defer authAttemptMu.Unlock()
+	a := authAttempts[key]
+	if a.Since.IsZero() || now.Sub(a.Since) >= authWindow {
+		a = authAttempt{Since: now}
+	}
+	a.Failures++
+	if a.Failures >= authMaxFailures {
+		a.BlockedUntil = now.Add(authWindow)
+	}
+	authAttempts[key] = a
+	if len(authAttempts) > 256 {
+		for k, old := range authAttempts {
+			if (!old.BlockedUntil.IsZero() && !now.Before(old.BlockedUntil)) || now.Sub(old.Since) >= authWindow {
+				delete(authAttempts, k)
+			}
+		}
+	}
+}
+
+func clearAuthFailures(key string) {
+	authAttemptMu.Lock()
+	delete(authAttempts, key)
+	authAttemptMu.Unlock()
+}
+
 // handlerAuth 用口令换 token
 func handlerAuth(w http.ResponseWriter, r *http.Request) {
 	lang := reqLang(r)
@@ -398,10 +470,24 @@ func handlerAuth(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]interface{}{"ok": false, "error": L["err_pwd_empty"]})
 		return
 	}
+	key := authClientKey(r)
+	if !authAllowed(key, time.Now()) {
+		writeJSONStatus(w, http.StatusTooManyRequests, map[string]interface{}{"ok": false, "error": L["err_auth_rate"]})
+		return
+	}
+	select {
+	case authSlots <- struct{}{}:
+		defer func() { <-authSlots }()
+	default:
+		writeJSONStatus(w, http.StatusTooManyRequests, map[string]interface{}{"ok": false, "error": L["err_auth_busy"]})
+		return
+	}
 	if !verifyPassword(s.PasswordHash, pwd) {
+		recordAuthFailure(key, time.Now())
 		writeJSON(w, map[string]interface{}{"ok": false, "error": L["err_pwd_wrong"]})
 		return
 	}
+	clearAuthFailures(key)
 	// 存量口令若是旧 sha256 格式，就地升级为 Argon2id（用户无感，只发生一次）
 	if needsRehash(s.PasswordHash) {
 		s.PasswordHash = hashPassword(pwd)

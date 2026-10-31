@@ -59,6 +59,9 @@ var bomI18n = map[string]bomMsg{
 		"b_tpl_builtin":         "内置 BOM 模板",
 		"b_map_saved":           "单位映射已存入配置（%d 条），下次转换无需再上传",
 		"b_map_cfg":             "使用配置内置单位映射：%d 条",
+		"b_issue_empty_seq":     "项次号为空",
+		"b_issue_nonnum_seq":    "项次号不是数字：%s",
+		"b_issue_empty_child":   "子件品号为空",
 	},
 	"zht": {
 		"b_start":               "開始處理 BOM 資料…",
@@ -94,6 +97,9 @@ var bomI18n = map[string]bomMsg{
 		"b_tpl_builtin":         "內建 BOM 模板",
 		"b_map_saved":           "單位映射已存入設定（%d 條），下次轉換無需再上傳",
 		"b_map_cfg":             "使用設定內建單位映射：%d 條",
+		"b_issue_empty_seq":     "項次號為空",
+		"b_issue_nonnum_seq":    "項次號不是數字：%s",
+		"b_issue_empty_child":   "子件品號為空",
 	},
 	"vi": {
 		"b_start":               "Bắt đầu xử lý dữ liệu BOM…",
@@ -129,6 +135,9 @@ var bomI18n = map[string]bomMsg{
 		"b_tpl_builtin":         "Mẫu BOM tích hợp",
 		"b_map_saved":           "Đã lưu bảng ánh xạ đơn vị vào cấu hình (%d mục), lần sau không cần tải lên lại",
 		"b_map_cfg":             "Dùng bảng ánh xạ đơn vị tích hợp trong cấu hình: %d mục",
+		"b_issue_empty_seq":     "Số thứ tự đang trống",
+		"b_issue_nonnum_seq":    "Số thứ tự không phải số: %s",
+		"b_issue_empty_child":   "Mã vật tư con đang trống",
 	},
 	"en": {
 		"b_start":               "Starting BOM conversion…",
@@ -164,6 +173,9 @@ var bomI18n = map[string]bomMsg{
 		"b_tpl_builtin":         "Built-in BOM template",
 		"b_map_saved":           "Unit mapping saved to config (%d entries); no need to upload again",
 		"b_map_cfg":             "Using unit mapping stored in config: %d entries",
+		"b_issue_empty_seq":     "Sequence number is empty",
+		"b_issue_nonnum_seq":    "Sequence number is not numeric: %s",
+		"b_issue_empty_child":   "Child material code is empty",
 	},
 }
 
@@ -191,12 +203,15 @@ func loadBomHistory() []HistoryItem {
 	return mergeHistories(loadHistoryFile(bomHistoryPath()), historyFromReports(reportsDir(), "bom"))
 }
 
-func appendBomHistory(it HistoryItem) { _ = appendHistoryFile(bomHistoryPath(), it) }
+func appendBomHistory(it HistoryItem) error { return appendHistoryFile(bomHistoryPath(), it) }
 
 func handlerBomHistory(w http.ResponseWriter, r *http.Request) {
 	h := loadBomHistory()
 	if h == nil {
 		h = []HistoryItem{}
+	}
+	if len(h) > 50 {
+		h = h[:50]
 	}
 	writeJSON(w, map[string]interface{}{"ok": true, "items": h})
 }
@@ -220,8 +235,8 @@ func handlerBomConvert(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", 405)
 		return
 	}
-	if err := r.ParseMultipartForm(64 << 20); err != nil {
-		writeJSON(w, map[string]interface{}{"ok": false, "error": "解析上传失败: " + err.Error()})
+	if err := r.ParseMultipartForm(multipartMemory); err != nil {
+		writeUploadParseError(w, err)
 		return
 	}
 
@@ -270,12 +285,30 @@ func handlerBomConvert(w http.ResponseWriter, r *http.Request) {
 
 	// 单位映射：上传了就解析并持久化进配置（下次免传）；没上传就用配置里的
 	unitMapSaved := 0
+	persistenceWarnings := []string{}
 	if mapPath != "" {
-		if m, e := bomUnitMapFromFile(mapPath); e == nil && len(m) > 0 {
-			bc.UnitMap = m
-			if e := saveBomConfig(bc); e == nil {
-				unitMapSaved = len(m)
+		m, err := bomUnitMapFromFile(mapPath)
+		if err != nil || len(m) == 0 {
+			if err == nil {
+				err = fmt.Errorf("映射表没有有效数据")
 			}
+			writeJSON(w, map[string]interface{}{"ok": false, "error": L["b_err_map"] + ": " + err.Error()})
+			return
+		}
+		bc.UnitMap = m
+		var saveErr error
+		if fileExists(bomConfigPath()) {
+			_, saveErr = backupFile(bomConfigPath(), backupRoot())
+		}
+		if saveErr == nil {
+			saveErr = saveBomConfig(bc)
+		}
+		if saveErr != nil {
+			msg := fmt.Sprintf(L["warn_config_save"], saveErr)
+			persistenceWarnings = append(persistenceWarnings, msg)
+			appLog("BOM 单位映射配置保存失败：%v", saveErr)
+		} else {
+			unitMapSaved = len(m)
 		}
 	}
 
@@ -324,6 +357,9 @@ func handlerBomConvert(w http.ResponseWriter, r *http.Request) {
 	if unitMapSaved > 0 {
 		add(fmt.Sprintf(L["b_map_saved"], unitMapSaved))
 	}
+	for _, warning := range persistenceWarnings {
+		add("* " + warning)
+	}
 
 	progressStart(srcName)
 	rep, err := ConvertBOM(srcPath, tplPath, mapPath, outPath, opt, L, func(s string) { add(s) })
@@ -349,10 +385,10 @@ func handlerBomConvert(w http.ResponseWriter, r *http.Request) {
 	// 落盘完整报告，并写入 BOM 独立历史；旧版本漏写的记录会从报告自动恢复。
 	elapsed := time.Since(start).Milliseconds()
 	nowStr := time.Now().Format("2006-01-02 15:04:05")
-	reportID := strings.TrimSuffix(base, ".xlsx") + ".json"
+	reportName := strings.TrimSuffix(base, ".xlsx") + ".json"
 	issues, warnings := bomHistoryCounts(rep)
-	saveReport(&ConvertReport{
-		ID:         reportID,
+	reportID := saveReport(&ConvertReport{
+		ID:         reportName,
 		Time:       nowStr,
 		Source:     srcName,
 		Template:   tplName,
@@ -360,16 +396,30 @@ func handlerBomConvert(w http.ResponseWriter, r *http.Request) {
 		Rows:       rep.MasterRows + rep.DetailRows,
 		ElapsedMS:  elapsed,
 		IssueTotal: issues,
+		Issues:     rep.Issues,
+		Warnings:   persistenceWarnings,
 		Module:     "bom",
 		Types: map[string]int{
 			"BOM主表": rep.MasterRows,
 			"BOM明细": rep.DetailRows,
 		},
 	})
-	appendBomHistory(HistoryItem{
+	if reportID == "" {
+		persistenceWarnings = append(persistenceWarnings, L["warn_report_save"])
+		add("* " + L["warn_report_save"])
+	}
+	if err := appendBomHistory(HistoryItem{
 		Time: nowStr, File: base, Rows: rep.MasterRows + rep.DetailRows, Source: srcName, Template: tplName,
-		Issues: issues, Warnings: warnings, Report: reportID, Module: "bom",
-	})
+		Issues: issues, Warnings: warnings + len(persistenceWarnings), Report: reportID, Module: "bom",
+	}); err != nil {
+		msg := fmt.Sprintf(L["warn_history_save"], err)
+		persistenceWarnings = append(persistenceWarnings, msg)
+		add("* " + msg)
+		appLog("BOM 转换历史保存失败：%v", err)
+	}
+	if len(persistenceWarnings) > 0 {
+		_ = os.WriteFile(logPath, []byte(strings.Join(logs, "\n")), 0644)
+	}
 
 	if rep.UnitStats == nil {
 		rep.UnitStats = []BomUnitStat{}
@@ -391,6 +441,10 @@ func handlerBomConvert(w http.ResponseWriter, r *http.Request) {
 		"div_applied":     rep.DivApplied,
 		"unit_stats":      rep.UnitStats,
 		"dim_fixes":       rep.DimFixes,
+		"issues":          rep.Issues,
+		"issue_total":     issues,
+		"errors":          []string{},
+		"warnings":        persistenceWarnings,
 		"log":             logs,
 		"elapsed":         elapsed,
 	})

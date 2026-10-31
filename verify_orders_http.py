@@ -17,15 +17,21 @@ import urllib.request
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-EXE = os.path.join(HERE, "mes_conv", "物料档案转换工具.exe")
-ORDER = r"D:/User/Cloak_Zeng/Code/python/project-001/code-file/015/文件/訂單資料.xlsx"
-WORK = r"D:/User/Cloak_Zeng/Code/python/project-001/code-file/015/文件/工單資料.xlsx"
-GOLD = os.path.join(HERE, "_golden", "go_订单工单.xlsx")
+EXE = os.environ.get("MES_EXE", os.path.join(HERE, "mes_conv", "物料档案转换工具.exe"))
+ORDER = os.environ.get("MES_ORDER_FILE", os.path.join(HERE, "_fixtures", "orders.xlsx"))
+WORK = os.environ.get("MES_WORK_FILE", os.path.join(HERE, "_fixtures", "work_orders.xlsx"))
+GOLD = os.environ.get("MES_GOLD_FILE", os.path.join(HERE, "_golden", "go_订单工单.xlsx"))
 PORT = int(os.environ.get("MES_PORT", 8747))
 BASE = f"http://127.0.0.1:{PORT}"
 # 复用模式：程序是全局单实例（互斥量），用户自己开着一份时无法另起。
 # MES_REUSE=1 时直接对在运行的实例做接口验证；「重启后历史仍可查」改为核对落盘文件。
 REUSE = os.environ.get("MES_REUSE") == "1"
+
+if not REUSE and not os.path.isfile(EXE):
+    raise SystemExit(f"程序不存在：{EXE}（可用 MES_EXE 指定）")
+for label, path in (("订单文件", ORDER), ("工单文件", WORK)):
+    if not os.path.isfile(path):
+        raise SystemExit(f"{label}不存在：{path}（可用 MES_ORDER_FILE / MES_WORK_FILE 指定）")
 
 passed, failed = 0, 0
 

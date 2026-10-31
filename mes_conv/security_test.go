@@ -205,3 +205,25 @@ func TestClientID(t *testing.T) {
 		t.Fatal("空配置时应回退到主机名派生，不能为空")
 	}
 }
+
+func TestAuthFailureRateLimitExpires(t *testing.T) {
+	authAttemptMu.Lock()
+	authAttempts = map[string]authAttempt{}
+	authAttemptMu.Unlock()
+	t.Cleanup(func() {
+		authAttemptMu.Lock()
+		authAttempts = map[string]authAttempt{}
+		authAttemptMu.Unlock()
+	})
+
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i := 0; i < authMaxFailures; i++ {
+		recordAuthFailure("127.0.0.1", now.Add(time.Duration(i)*time.Second))
+	}
+	if authAllowed("127.0.0.1", now.Add(10*time.Second)) {
+		t.Fatal("连续失败达到上限后应被限流")
+	}
+	if !authAllowed("127.0.0.1", now.Add(2*authWindow)) {
+		t.Fatal("限流时间结束后应恢复")
+	}
+}

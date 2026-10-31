@@ -4,7 +4,6 @@ import io
 import json
 import mimetypes
 import os
-import shutil
 import subprocess
 import sys
 import time
@@ -15,11 +14,15 @@ import uuid
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-EXE = os.path.join(HERE, "物料档案转换工具_new.exe")
-PORT = 8741
+EXE = os.environ.get("MES_EXE", os.path.join(HERE, "物料档案转换工具.exe"))
+PORT = int(os.environ.get("MES_PORT", "8741"))
 BASE = "http://127.0.0.1:%d" % PORT
-SRC = r"D:\User\Cloak_Zeng\Download\20261006 匯入 577筆.xlsx"
-TPL = r"D:\User\Cloak_Zeng\Download\物料档案导入模版 (3).xlsx"
+SRC = os.environ.get("MES_SRC_FILE", os.path.join(os.path.dirname(HERE), "_fixtures", "materials.xlsx"))
+TPL = os.environ.get("MES_TPL_FILE", os.path.join(os.path.dirname(HERE), "_fixtures", "materials_template.xlsx"))
+
+for label, path in (("程序", EXE), ("源文件", SRC), ("模板", TPL)):
+    if not os.path.isfile(path):
+        raise SystemExit("%s不存在：%s（可用 MES_EXE / MES_SRC_FILE / MES_TPL_FILE 指定）" % (label, path))
 
 fail = 0
 
@@ -31,14 +34,8 @@ def check(name, cond, extra=""):
     print(("PASS  " if cond else "FAIL  ") + name + (("   " + str(extra)) if extra else ""))
 
 
-def kill_all():
-    for n in ("物料档案转换工具_new.exe", "物料档案转换工具.exe"):
-        subprocess.run(["taskkill", "/F", "/IM", n], capture_output=True)
-    time.sleep(1)
-
-
 def start():
-    p = subprocess.Popen([EXE, "-nobrowser", "-port", str(PORT)], cwd=HERE,
+    p = subprocess.Popen([EXE, "-nobrowser", "-nosingle", "-port", str(PORT)], cwd=HERE,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(5)
     if p.poll() is not None:
@@ -71,18 +68,7 @@ def get_json(path):
     return json.loads(urllib.request.urlopen(BASE + path, timeout=30).read().decode("utf-8"))
 
 
-kill_all()
-
-# 清掉旧的报告目录，确保下面看到的是本次生成的
-# 注意：本沙箱的 safe-delete 钩子会拦 shutil.rmtree，用 os.remove + os.rmdir 自底向上删
 rep_dir = os.path.join(HERE, "out", "reports")
-if os.path.isdir(rep_dir):
-    for _n in os.listdir(rep_dir):
-        _p = os.path.join(rep_dir, _n)
-        if os.path.isfile(_p):
-            os.remove(_p)
-    os.rmdir(rep_dir)
-print("已清理旧报告目录")
 
 print("\n--- 第一次启动服务 ---")
 p1 = start()
@@ -123,9 +109,9 @@ rd2 = get_json("/api/report?id=" + urllib.parse.quote("../mapping.json"))
 check("拒绝目录穿越 id", rd2.get("ok") is False, rd2.get("error"))
 
 print("\n--- 杀进程，模拟「关掉程序/重启服务」 ---")
-subprocess.run(["taskkill", "/F", "/PID", str(p1.pid)], capture_output=True)
-time.sleep(2)
-kill_all()
+p1.terminate()
+p1.wait(timeout=8)
+time.sleep(1)
 
 p2 = start()
 print("服务已重启（新进程 pid = %d）" % p2.pid)
@@ -140,8 +126,7 @@ html = urllib.request.urlopen(BASE + "/", timeout=30).read().decode("utf-8")
 check("首页含「查看问题」按钮逻辑", "jsview" in html and "viewReport" in html)
 check("首页含报告接口调用", "/api/report?id=" in html)
 
-subprocess.run(["taskkill", "/F", "/PID", str(p2.pid)], capture_output=True)
-time.sleep(1)
-kill_all()
+p2.terminate()
+p2.wait(timeout=8)
 print("\n" + ("全部通过 ✓" if fail == 0 else "失败 %d 项" % fail))
 sys.exit(0 if fail == 0 else 1)

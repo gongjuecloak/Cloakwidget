@@ -54,6 +54,7 @@ type BomReport struct {
 	BaseRule   string        `json:"base_rule"`
 	UnitStats  []BomUnitStat `json:"unit_stats"`
 	DimFixes   []string      `json:"dim_fixes"`
+	Issues     []Issue       `json:"issues"`
 }
 
 // ---------------- 通用小工具（bomconv 移植，包内无同名冲突） ----------------
@@ -468,9 +469,16 @@ func ConvertBOM(srcPath, tplPath, mapPath, outPath string, opt BomOptions, L map
 	masterOrder := []string{}
 	unitRawStats := map[string]int{}
 	emptySeq, emptyChild, nonNumSeq := 0, 0, 0
+	issues := []Issue{}
+	addIssue := func(row int, col, msg string) {
+		if len(issues) < maxIssues {
+			issues = append(issues, Issue{Row: row, Col: col, Msg: msg, Level: "error"})
+		}
+	}
 	divApplied := 0
 	detailCount := 0
 	detailRow := 2
+	sourceRow := 0
 	headerSkipped := false
 
 	// 固定值：配置可覆盖内置默认
@@ -484,6 +492,7 @@ func ConvertBOM(srcPath, tplPath, mapPath, outPath string, opt BomOptions, L map
 	dfMain := bomFixedVal(cfg.DetailFixed, "main_flag", "否")
 
 	for iter.Next() {
+		sourceRow++
 		if !headerSkipped {
 			headerSkipped = true
 			continue
@@ -513,11 +522,14 @@ func ConvertBOM(srcPath, tplPath, mapPath, outPath string, opt BomOptions, L map
 
 		if child == "" {
 			emptyChild++
+			addIssue(sourceRow, "子件品号", L["b_issue_empty_child"])
 		}
 		if seqRaw == "" {
 			emptySeq++
+			addIssue(sourceRow, "项次号", L["b_issue_empty_seq"])
 		} else if _, e := strconv.Atoi(seqRaw); e != nil {
 			nonNumSeq++
+			addIssue(sourceRow, "项次号", fmt.Sprintf(L["b_issue_nonnum_seq"], seqRaw))
 		}
 		unitRawStats[unitRaw]++
 
@@ -559,9 +571,8 @@ func ConvertBOM(srcPath, tplPath, mapPath, outPath string, opt BomOptions, L map
 	}
 	masterRow := 2
 	for _, parent := range masterOrder {
-		name := mfPrefix + parent
 		mRow := []interface{}{
-			parent, name, nil, nil, parent, nil,
+			mfPrefix + parent, masterName[parent], nil, nil, parent, nil,
 			mfType, mfKind, nil, mfUnit, nil, nil, nil, nil,
 		}
 		cell, _ := excelize.CoordinatesToCellName(1, masterRow)
@@ -591,6 +602,7 @@ func ConvertBOM(srcPath, tplPath, mapPath, outPath string, opt BomOptions, L map
 		EmptyChild: emptyChild,
 		DivApplied: divApplied,
 		DimFixes:   reps,
+		Issues:     issues,
 	}
 	if opt.Basediv {
 		rep.BaseRule = L["b_rule_div"]

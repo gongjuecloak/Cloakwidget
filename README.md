@@ -57,7 +57,6 @@ verify_render_v13.py              无头浏览器渲染验证（三视图 + 四�
 verify_v16.js                     v1.6.0 前端行为验证（批量多选 / diff / 字段表工具 / 图表 / 系统页签）
 _fmttest/                         格式与系统设置回归（dup / tpl / sys / batch / 伪装格式比对）
 MES物料档案转换工具_分享版/        本地构建生成的分享成品（不提交仓库）
-build.py                          **历史文件**：Go 版之前的 Python 原型，仅作参考
 ```
 
 ---
@@ -104,7 +103,7 @@ go run .                                        # 起 Web UI（托盘常驻）
 - 输出：`out/` 下按 `名字_YYYYMMDD_HHMMSS.xlsx` 命名，同秒冲突自动加序号，永不覆盖
 - 日志：`out/*.log`（每次转换）+ `logs/server_日期.log`（服务级）
 - 预检报告：`out/reports/*.json`，界面「最近转换 → 查看问题」可随时翻回任意一次，**重启程序也不丢**
-- 配置备份：`backup/`，每次保存配置自动留一份，保留最近 20 份
+- 配置备份：`backup/`，每次保存配置自动留一份，物料/订单/BOM 各保留最近 20 份
 
 ---
 
@@ -139,6 +138,10 @@ python _fmttest/cmp.py          # .xls 伪装 / UTF-8 CSV / GBK CSV 与 .xlsx �
 node verify_v16.js              # 批量多选 / diff 弹窗 / 字段表工具 / 图表 / 系统页签（73 项）
 python mes_conv/verify_tray.py  # 托盘窗口 + 退出路径
 ```
+
+验证脚本不再绑定某台电脑的绝对路径。缺少夹具时，可按脚本报错提示设置
+`MES_EXE`、`MES_SRC_FILE`、`MES_TPL_FILE`、`MES_ORDER_FILE`、`MES_WORK_FILE`、
+`MES_REFERENCE_OUT`、`MES_LEGACY_DIR` 等环境变量。
 
 ---
 

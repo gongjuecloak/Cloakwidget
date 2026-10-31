@@ -4,7 +4,8 @@ import sys, io, os
 import openpyxl
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
-GOLD = r"C:/Users/Cloak_Zeng/WorkBuddy/2026-10-06-14-57-26/_golden"
+ROOT = os.path.dirname(os.path.abspath(__file__))
+GOLD = os.environ.get("MES_GOLD_DIR", os.path.join(ROOT, "_golden"))
 
 
 def norm(v):

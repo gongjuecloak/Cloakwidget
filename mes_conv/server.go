@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -241,6 +243,21 @@ func writeJSON(w http.ResponseWriter, v interface{}) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+func writeJSONStatus(w http.ResponseWriter, status int, v interface{}) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func writeUploadParseError(w http.ResponseWriter, err error) {
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		writeJSONStatus(w, http.StatusRequestEntityTooLarge, map[string]interface{}{"ok": false, "error": "上传文件过大"})
+		return
+	}
+	writeJSON(w, map[string]interface{}{"ok": false, "error": "解析上传失败: " + err.Error()})
+}
+
 // ---------- 界面 ----------
 
 func handlerIndex(w http.ResponseWriter, r *http.Request) {
@@ -311,7 +328,11 @@ func handlerSaveConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 覆盖前先备份旧配置，改坏了可回滚
-	backupName, _ := backupConfig()
+	backupName, err := backupConfig()
+	if err != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": "备份当前配置失败，已取消保存：" + err.Error()})
+		return
+	}
 	// 界面上保存的配置就是「当前代」的配置，标上 schema 免得下次启动再迁一遍
 	c.Schema = schemaMaterials
 	if err := saveConfig(&c); err != nil {
@@ -323,12 +344,12 @@ func handlerSaveConfig(w http.ResponseWriter, r *http.Request) {
 
 func backupRoot() string { return filepath.Join(exeDir(), "backup") }
 
-// backupConfig 把当前 mapping.json 复制到 backup/ 下（时间戳命名），只保留最近 20 份
+// backupConfig 把当前 mapping.json 复制到 backup/ 下（时间戳命名），只保留本模块最近 20 份
 func backupConfig() (string, error) {
 	return backupFile(configPath(), backupRoot())
 }
 
-// backupFile 把 src 复制到 dir 下，文件名 = 原文件名 + 时间戳，只保留最近 20 份。
+// backupFile 把 src 复制到 dir 下，文件名 = 原文件名 + 时间戳，只保留本模块最近 20 份。
 // 物料档案的 mapping.json 与订单模块的 orders.json 共用这套备份策略。
 func backupFile(src, dir string) (string, error) {
 	if !fileExists(src) {
@@ -338,7 +359,8 @@ func backupFile(src, dir string) (string, error) {
 		return "", err
 	}
 	stem := strings.TrimSuffix(filepath.Base(src), ".json")
-	name := stem + "_" + time.Now().Format("20060102_150405") + ".json"
+	prefix := stem + "_"
+	name := prefix + time.Now().Format("20060102_150405.000000000") + ".json"
 	b, err := os.ReadFile(src)
 	if err != nil {
 		return "", err
@@ -346,18 +368,18 @@ func backupFile(src, dir string) (string, error) {
 	if err := os.WriteFile(filepath.Join(dir, name), b, 0644); err != nil {
 		return "", err
 	}
-	pruneBackups(dir, 20)
+	pruneBackups(dir, prefix, 20)
 	return name, nil
 }
 
-func pruneBackups(dir string, keep int) {
+func pruneBackups(dir, prefix string, keep int) {
 	ents, err := os.ReadDir(dir)
 	if err != nil {
 		return
 	}
 	var names []string
 	for _, e := range ents {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
+		if !e.IsDir() && strings.HasPrefix(e.Name(), prefix) && strings.HasSuffix(e.Name(), ".json") {
 			names = append(names, e.Name())
 		}
 	}
@@ -433,7 +455,10 @@ func handlerConfigRestore(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]interface{}{"ok": false, "error": "备份内容不是合法配置: " + err.Error()})
 		return
 	}
-	_, _ = backupConfig() // 还原前也备份当前，避免「还原」变成不可逆
+	if _, err := backupConfig(); err != nil { // 还原前也备份当前，避免「还原」变成不可逆
+		writeJSON(w, map[string]interface{}{"ok": false, "error": "备份当前配置失败，已取消还原：" + err.Error()})
+		return
+	}
 	if err := saveConfig(&c); err != nil {
 		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
 		return
@@ -746,8 +771,8 @@ func handlerSourceHeaders(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", 405)
 		return
 	}
-	if err := r.ParseMultipartForm(64 << 20); err != nil {
-		writeJSON(w, map[string]interface{}{"ok": false, "error": "解析上传失败: " + err.Error()})
+	if err := r.ParseMultipartForm(multipartMemory); err != nil {
+		writeUploadParseError(w, err)
 		return
 	}
 	f, _, err := r.FormFile("source")
@@ -828,8 +853,8 @@ func handlerPreview(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", 405)
 		return
 	}
-	if err := r.ParseMultipartForm(64 << 20); err != nil {
-		writeJSON(w, map[string]interface{}{"ok": false, "error": "解析上传失败: " + err.Error()})
+	if err := r.ParseMultipartForm(multipartMemory); err != nil {
+		writeUploadParseError(w, err)
 		return
 	}
 	srcHeads := r.MultipartForm.File["source"]
@@ -946,8 +971,8 @@ func handlerConvert(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", 405)
 		return
 	}
-	if err := r.ParseMultipartForm(64 << 20); err != nil {
-		writeJSON(w, map[string]interface{}{"ok": false, "error": "解析上传失败: " + err.Error()})
+	if err := r.ParseMultipartForm(multipartMemory); err != nil {
+		writeUploadParseError(w, err)
 		return
 	}
 	// 源文件支持多选：一次拖一批进来。多份时按列名合并成一份再转换（见 mergeSourceGrids）
@@ -1116,9 +1141,9 @@ func handlerConvert(w http.ResponseWriter, r *http.Request) {
 	// 落盘完整报告：页面刷新 / 服务重启后，仍能从「最近转换」里把这次的问题明细翻出来看
 	elapsed := time.Since(start).Milliseconds()
 	nowStr := time.Now().Format("2006-01-02 15:04:05")
-	reportID := strings.TrimSuffix(base, ".xlsx") + ".json"
-	saveReport(&ConvertReport{
-		ID:         reportID,
+	reportName := strings.TrimSuffix(base, ".xlsx") + ".json"
+	reportID := saveReport(&ConvertReport{
+		ID:         reportName,
 		Time:       nowStr,
 		Source:     srcH.Filename,
 		Template:   tplName,
@@ -1132,8 +1157,13 @@ func handlerConvert(w http.ResponseWriter, r *http.Request) {
 		Types:      rep.Types,
 		Sources:    rep.Sources,
 	})
+	persistenceWarnings := []string{}
+	if reportID == "" {
+		persistenceWarnings = append(persistenceWarnings, L["warn_report_save"])
+		add("* " + L["warn_report_save"])
+	}
 
-	appendHistory(HistoryItem{
+	if err := appendHistory(HistoryItem{
 		Time:     nowStr,
 		File:     base,
 		Rows:     rep.Rows,
@@ -1142,7 +1172,15 @@ func handlerConvert(w http.ResponseWriter, r *http.Request) {
 		Issues:   rep.IssueTotal,
 		Warnings: len(rep.Warnings),
 		Report:   reportID,
-	})
+	}); err != nil {
+		msg := fmt.Sprintf(L["warn_history_save"], err)
+		persistenceWarnings = append(persistenceWarnings, msg)
+		add("* " + msg)
+		appLog("物料转换历史保存失败：%v", err)
+	}
+	if len(persistenceWarnings) > 0 {
+		_ = os.WriteFile(logPath, []byte(strings.Join(logs, "\n")), 0644)
+	}
 
 	issues, errs, warns := rep.Issues, rep.Errors, rep.Warnings
 	if issues == nil {
@@ -1154,6 +1192,7 @@ func handlerConvert(w http.ResponseWriter, r *http.Request) {
 	if warns == nil {
 		warns = []string{}
 	}
+	warns = append(warns, persistenceWarnings...)
 	notes := append([]string{}, mergeNotes...)
 	notes = append(notes, rep.Notes...)
 	if notes == nil {
@@ -1291,8 +1330,9 @@ type HistoryItem struct {
 	Template string `json:"template"`
 	Issues   int    `json:"issues"`
 	Warnings int    `json:"warnings"`
-	Report   string `json:"report"` // 报告文件名（null/空表示那次没留下报告），用于事后查看问题明细
-	Module   string `json:"module"` // 空/materials = 物料档案，orders = 订单工单，bom = BOM
+	Report   string `json:"report"`             // 报告文件名（null/空表示那次没留下报告），用于事后查看问题明细
+	Module   string `json:"module"`             // 空/materials = 物料档案，orders = 订单工单，bom = BOM
+	External bool   `json:"external,omitempty"` // CLI 自定义输出目录时不可由网页下载
 }
 
 // noBrowser 由 -nobrowser 设置：启动时不自动打开浏览器（开机自启 / 托盘常驻场景）
@@ -1318,9 +1358,7 @@ func appendHistoryFile(path string, it HistoryItem) error {
 	histMu.Lock()
 	defer histMu.Unlock()
 	h := append([]HistoryItem{it}, loadHistoryFile(path)...)
-	if len(h) > 50 {
-		h = h[:50]
-	}
+	// shortcut: 历史随转换次数增长以保证累计统计准确，文件明显变大时再拆独立计数器。
 	b, err := json.MarshalIndent(h, "", "  ")
 	if err != nil {
 		return err
@@ -1330,14 +1368,15 @@ func appendHistoryFile(path string, it HistoryItem) error {
 
 func loadHistory() []HistoryItem { return loadHistoryFile(historyPath()) }
 
-func appendHistory(it HistoryItem) {
-	_ = appendHistoryFile(historyPath(), it)
-}
+func appendHistory(it HistoryItem) error { return appendHistoryFile(historyPath(), it) }
 
 func handlerHistory(w http.ResponseWriter, r *http.Request) {
 	h := loadHistory()
 	if h == nil {
 		h = []HistoryItem{}
+	}
+	if len(h) > 50 {
+		h = h[:50]
 	}
 	writeJSON(w, map[string]interface{}{"ok": true, "items": h})
 }
@@ -1469,24 +1508,66 @@ func appLog(format string, args ...interface{}) {
 	_, _ = f.WriteString(line + "\n")
 }
 
-// limitBodyMiddleware 限制请求体大小。
-// 转换接口要收配置 JSON / 表头数据，虽然正常都不大，但同机或局域网上任何人都能打这个服务，
-// 不设上限的话一个超大 POST 就能把内存吃满。上限 32MB，足够任何 legit 配置。
-const maxBodyBytes = 32 << 20 // 32 MiB
+// 普通接口只需很小的 JSON；转换接口需要容纳实际 Excel 文件。
+const (
+	maxBodyBytes    int64 = 4 << 20
+	maxUploadBytes  int64 = 256 << 20
+	multipartMemory       = 8 << 20
+)
+
+func requestBodyLimit(path string) int64 {
+	switch path {
+	case "/api/convert", "/api/preview", "/api/source-headers", "/api/orders/convert", "/api/bom/convert":
+		return maxUploadBytes
+	default:
+		return maxBodyBytes
+	}
+}
 
 func limitBodyMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.ContentLength > maxBodyBytes {
-			writeJSON(w, map[string]interface{}{
-				"ok": false, "error": "请求体过大（上限 32MB）",
+		limit := requestBodyLimit(r.URL.Path)
+		if r.ContentLength > limit {
+			writeJSONStatus(w, http.StatusRequestEntityTooLarge, map[string]interface{}{
+				"ok": false, "error": fmt.Sprintf("请求体过大（上限 %dMB）", limit>>20),
 			})
 			return
 		}
 		if r.Body != nil {
-			r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+			r.Body = http.MaxBytesReader(w, r.Body, limit)
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func sameOriginMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+			if strings.EqualFold(r.Header.Get("Sec-Fetch-Site"), "cross-site") {
+				http.Error(w, "禁止跨站请求", http.StatusForbidden)
+				return
+			}
+			if origin := r.Header.Get("Origin"); origin != "" {
+				u, err := url.Parse(origin)
+				if err != nil || !strings.EqualFold(u.Host, r.Host) {
+					http.Error(w, "禁止跨站请求", http.StatusForbidden)
+					return
+				}
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func postOnly(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", http.MethodPost)
+			http.Error(w, "仅支持 POST", http.StatusMethodNotAllowed)
+			return
+		}
+		next(w, r)
+	}
 }
 
 // logMiddleware 记录 API 调用与下载请求；静态首页不记（噪声大）。
@@ -1590,26 +1671,26 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("/api/config-restore", handlerConfigRestore)
 	mux.HandleFunc("/api/source-headers", handlerSourceHeaders)
 	mux.HandleFunc("/api/tpl/status", handlerTplStatus)
-	mux.HandleFunc("/api/tpl/reset", handlerTplReset)
+	mux.HandleFunc("/api/tpl/reset", postOnly(handlerTplReset))
 	// ---- 系统设置（口令锁 / 局域网 / 开机自启）----
 	mux.HandleFunc("/api/system", handlerSystemInfo)
-	mux.HandleFunc("/api/auth", handlerAuth)
+	mux.HandleFunc("/api/auth", postOnly(handlerAuth))
 	mux.HandleFunc("/api/auth/state", handlerAuthState)
-	mux.HandleFunc("/api/download-token", handlerDownloadToken)
-	mux.HandleFunc("/api/system/password", handlerSetPassword)
-	mux.HandleFunc("/api/system/autostart", handlerSetAutostart)
-	mux.HandleFunc("/api/system/lan", handlerSetLAN)
-	mux.HandleFunc("/api/system/welcomed", handlerSetWelcomed)
-	mux.HandleFunc("/api/system/diag", handlerDiag)
+	mux.HandleFunc("/api/download-token", postOnly(handlerDownloadToken))
+	mux.HandleFunc("/api/system/password", postOnly(handlerSetPassword))
+	mux.HandleFunc("/api/system/autostart", postOnly(handlerSetAutostart))
+	mux.HandleFunc("/api/system/lan", postOnly(handlerSetLAN))
+	mux.HandleFunc("/api/system/welcomed", postOnly(handlerSetWelcomed))
+	mux.HandleFunc("/api/system/diag", postOnly(handlerDiag))
 	mux.HandleFunc("/api/system/update", handlerUpdate)
-	mux.HandleFunc("/api/system/update/apply", handlerUpdateApply)
+	mux.HandleFunc("/api/system/update/apply", postOnly(handlerUpdateApply))
 	mux.HandleFunc("/api/values-export", handlerValuesExport)
 	mux.HandleFunc("/api/values-import", handlerValuesImport)
 	mux.HandleFunc("/api/profiles", handlerProfiles)
 	mux.HandleFunc("/api/history", handlerHistory)
 	mux.HandleFunc("/api/stats", handlerStats)
 	mux.HandleFunc("/api/report", handlerReport)
-	mux.HandleFunc("/api/open-folder", handlerOpenFolder)
+	mux.HandleFunc("/api/open-folder", postOnly(handlerOpenFolder))
 	mux.HandleFunc("/api/convert", singleConversion(handlerConvert))
 	mux.HandleFunc("/api/preview", handlerPreview)
 	// ---- 订单 / 工单模块 ----
@@ -1693,7 +1774,7 @@ func startServer(port int) error {
 
 	go func() {
 		srv := &http.Server{
-			Handler:           limitBodyMiddleware(logMiddleware(authMiddleware(buildMux()))),
+			Handler:           limitBodyMiddleware(logMiddleware(sameOriginMiddleware(authMiddleware(buildMux())))),
 			ReadHeaderTimeout: 5 * time.Second,
 			IdleTimeout:       60 * time.Second,
 			MaxHeaderBytes:    1 << 20,

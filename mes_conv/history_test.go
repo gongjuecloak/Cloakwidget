@@ -6,9 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
-func TestAppendHistoryFileKeepsNewestFifty(t *testing.T) {
+func TestAppendHistoryFileKeepsAllForCumulativeStats(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "history.json")
 	for i := 0; i < 52; i++ {
 		it := HistoryItem{Time: fmt.Sprintf("2026-10-31 10:%02d:00", i), File: fmt.Sprintf("bom-%02d.xlsx", i)}
@@ -18,11 +19,75 @@ func TestAppendHistoryFileKeepsNewestFifty(t *testing.T) {
 	}
 
 	got := loadHistoryFile(path)
-	if len(got) != 50 {
-		t.Fatalf("history length = %d, want 50", len(got))
+	if len(got) != 52 {
+		t.Fatalf("history length = %d, want 52", len(got))
 	}
-	if got[0].File != "bom-51.xlsx" || got[49].File != "bom-02.xlsx" {
-		t.Fatalf("history order/cap wrong: first=%q last=%q", got[0].File, got[49].File)
+	if got[0].File != "bom-51.xlsx" || got[51].File != "bom-00.xlsx" {
+		t.Fatalf("history order wrong: first=%q last=%q", got[0].File, got[51].File)
+	}
+}
+
+func TestBackupRetentionIsPerModuleAndNamesAreUnique(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "mapping.json")
+	if err := os.WriteFile(src, []byte(`{"schema":1}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	b1, err := backupFile(src, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b2, err := backupFile(src, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b1 == b2 {
+		t.Fatalf("同一秒备份名必须唯一：%q", b1)
+	}
+	for _, name := range []string{"orders_1.json", "orders_2.json", "orders_3.json"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("{}"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pruneBackups(dir, "mapping_", 1)
+	if _, err := os.Stat(filepath.Join(dir, "orders_1.json")); err != nil {
+		t.Fatalf("清理 mapping 备份不应删除 orders 备份：%v", err)
+	}
+}
+
+func TestOutputIsExternal(t *testing.T) {
+	old := exeDirOverride
+	exeDirOverride = t.TempDir()
+	t.Cleanup(func() { exeDirOverride = old })
+	if outputIsExternal(filepath.Join(exeDir(), "out", "ok.xlsx")) {
+		t.Fatal("默认 out 目录内的 CLI 输出应可下载")
+	}
+	if !outputIsExternal(filepath.Join(exeDir(), "custom", "result.xlsx")) {
+		t.Fatal("自定义目录输出应标记为 external")
+	}
+}
+
+func TestPruneReportsUsesModificationTime(t *testing.T) {
+	old := exeDirOverride
+	exeDirOverride = t.TempDir()
+	t.Cleanup(func() { exeDirOverride = old })
+	if err := os.MkdirAll(reportsDir(), 0755); err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i, name := range []string{"z-old.json", "a-middle.json", "b-new.json"} {
+		path := filepath.Join(reportsDir(), name)
+		if err := os.WriteFile(path, []byte("{}"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		when := base.Add(time.Duration(i) * time.Minute)
+		if err := os.Chtimes(path, when, when); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pruneReports(2)
+	if _, err := os.Stat(filepath.Join(reportsDir(), "z-old.json")); !os.IsNotExist(err) {
+		t.Fatalf("应按修改时间删除最旧报告，got=%v", err)
 	}
 }
 

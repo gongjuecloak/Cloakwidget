@@ -310,7 +310,10 @@ func handlerBomSaveConfig(w http.ResponseWriter, r *http.Request) {
 	c.Schema = schemaBom
 	c.fillDefaults()
 	if fileExists(bomConfigPath()) {
-		_, _ = backupFile(bomConfigPath(), backupRoot())
+		if _, err := backupFile(bomConfigPath(), backupRoot()); err != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": "备份当前配置失败，已取消保存：" + err.Error()})
+			return
+		}
 	}
 	if err := saveBomConfig(&c); err != nil {
 		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})

@@ -100,7 +100,7 @@ func computeStats() statsResp {
 		s.ByDay = s.ByDay[len(s.ByDay)-14:]
 	}
 
-	// 最近 10 条（两本 history 混在一起按时间倒序）
+	// 最近 10 条（三本 history 混在一起按时间倒序）
 	sort.SliceStable(items, func(i, j int) bool { return items[i].Time > items[j].Time })
 	n := len(items)
 	if n > 10 {

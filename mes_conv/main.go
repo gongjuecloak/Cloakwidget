@@ -5,8 +5,25 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
+
+func outputIsExternal(path string) bool {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return true
+	}
+	outDir, err := filepath.Abs(filepath.Join(exeDir(), "out"))
+	return err != nil || !strings.EqualFold(filepath.Clean(filepath.Dir(abs)), filepath.Clean(outDir))
+}
+
+func baseOrEmpty(path string) string {
+	if strings.TrimSpace(path) == "" {
+		return ""
+	}
+	return filepath.Base(path)
+}
 
 func main() {
 	cli := flag.Bool("cli", false, "无界面模式：直接按 mapping.json 转换")
@@ -33,6 +50,7 @@ func main() {
 			outPath = filepath.Join(dir, "订单工单_"+time.Now().Format("20060102_150405")+".xlsx")
 		}
 		logf := func(s string) { appLog("%s", s) }
+		started := time.Now()
 		rep, err := ConvertOrders(oc, *orderSrc, *workSrc, outPath, *lang, logf)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "错误:", err)
@@ -44,6 +62,28 @@ func main() {
 		}
 		for _, w := range rep.Warnings {
 			appLog("%s", "  * "+w)
+		}
+		nowStr := time.Now().Format("2006-01-02 15:04:05")
+		base := filepath.Base(outPath)
+		sources := []string{}
+		for _, source := range []string{baseOrEmpty(*orderSrc), baseOrEmpty(*workSrc)} {
+			if source != "" {
+				sources = append(sources, source)
+			}
+		}
+		source := strings.Join(sources, " + ")
+		reportID := saveReport(&ConvertReport{
+			ID: strings.TrimSuffix(base, filepath.Ext(base)) + "_" + time.Now().Format("20060102_150405.000000000") + ".json", Time: nowStr, Module: "orders",
+			Source: source, Template: ordersMsgs(*lang)["label_work"], Output: base,
+			Rows: rep.OrderMaster + rep.OrderDetail + rep.WorkOrders, ElapsedMS: time.Since(started).Milliseconds(),
+			IssueTotal: rep.IssueTotal, Errors: rep.Errors, Warnings: rep.Warnings, Issues: rep.Issues,
+		})
+		if err := appendOrdersHistory(HistoryItem{
+			Time: nowStr, File: base, Rows: rep.OrderMaster + rep.OrderDetail + rep.WorkOrders,
+			Source: source, Template: ordersMsgs(*lang)["label_work"], Issues: rep.IssueTotal,
+			Warnings: len(rep.Warnings), Report: reportID, Module: "orders", External: outputIsExternal(outPath),
+		}); err != nil {
+			appLog("订单 CLI 转换历史保存失败：%v", err)
 		}
 		return
 	}
@@ -67,6 +107,7 @@ func main() {
 			outPath = filepath.Join(dir, "MES物料档案_"+time.Now().Format("20060102_150405")+".xlsx")
 		}
 		L := msgs(*lang)
+		started := time.Now()
 		rep, err := Convert(cfg, *src, *tpl, outPath, *lang)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "错误:", err)
@@ -86,6 +127,20 @@ func main() {
 		appLog("%s", fmt.Sprintf(L["type"], formatDist(rep.Types)))
 		appLog("%s", fmt.Sprintf(L["source"], formatDist(rep.Sources)))
 		appLog("%s", L["done"])
+		nowStr := time.Now().Format("2006-01-02 15:04:05")
+		base := filepath.Base(outPath)
+		reportID := saveReport(&ConvertReport{
+			ID: strings.TrimSuffix(base, filepath.Ext(base)) + "_" + time.Now().Format("20060102_150405.000000000") + ".json", Time: nowStr,
+			Source: filepath.Base(*src), Template: filepath.Base(*tpl), Output: base, Rows: rep.Rows,
+			ElapsedMS: time.Since(started).Milliseconds(), IssueTotal: rep.IssueTotal,
+			Errors: rep.Errors, Warnings: rep.Warnings, Issues: rep.Issues, Types: rep.Types, Sources: rep.Sources,
+		})
+		if err := appendHistory(HistoryItem{
+			Time: nowStr, File: base, Rows: rep.Rows, Source: filepath.Base(*src), Template: filepath.Base(*tpl),
+			Issues: rep.IssueTotal, Warnings: len(rep.Warnings), Report: reportID, External: outputIsExternal(outPath),
+		}); err != nil {
+			appLog("物料 CLI 转换历史保存失败：%v", err)
+		}
 		return
 	}
 

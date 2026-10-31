@@ -10,7 +10,7 @@ from ctypes import wintypes
 sys.stdout = __import__('io').TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-EXE = os.path.join(HERE, "物料档案转换工具.exe")
+EXE = os.environ.get("MES_EXE", os.path.join(HERE, "物料档案转换工具.exe"))
 CLASS_NAME = "MesMaterialConvTrayWnd"
 WM_DESTROY = 0x0002
 
@@ -21,10 +21,12 @@ user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, w
 user32.IsWindow.argtypes = [wintypes.HWND]
 user32.IsWindow.restype = wintypes.BOOL
 
-# 0) 先清掉可能残留的实例（否则新进程会因「已有实例」直接退出，找不到属于它的窗口）
-for name in ("物料档案转换工具.exe", "物料档案转换工具_new.exe", "mesconv.exe"):
-    subprocess.run(["taskkill", "/F", "/IM", name], capture_output=True)
-time.sleep(1)
+# 已有实例属于用户，绝不按进程名强杀；此时跳过需要独占托盘类名的验证。
+if user32.FindWindowW(CLASS_NAME, None):
+    print("SKIP: 已有 MES 托盘实例运行，未打扰用户进程")
+    sys.exit(0)
+if not os.path.isfile(EXE):
+    raise SystemExit("程序不存在：%s（可用 MES_EXE 指定）" % EXE)
 
 # 1) 启动（-nobrowser 免得抢焦点）
 p = subprocess.Popen([EXE, "-nobrowser"], cwd=HERE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -40,7 +42,7 @@ hwnd = user32.FindWindowW(CLASS_NAME, None)
 print("隐藏窗口 hwnd =", hwnd)
 if not hwnd:
     print("FAIL: 找不到托盘窗口（说明托盘没初始化成功）")
-    subprocess.run(["taskkill", "/F", "/PID", str(p.pid)], capture_output=True)
+    p.terminate()
     sys.exit(1)
 
 # 3) 日志里应有「托盘图标已挂上」的留痕，并列出增强后的菜单项
@@ -48,19 +50,19 @@ import glob
 logf = sorted(glob.glob(os.path.join(HERE, "logs", "server_*.log")))
 if not logf:
     print("FAIL: 没有找到日志文件")
-    subprocess.run(["taskkill", "/F", "/PID", str(p.pid)], capture_output=True)
+    p.terminate()
     sys.exit(1)
 tail = open(logf[-1], encoding="utf-8", errors="replace").read()[-4000:]
 tray_line = [ln for ln in tail.splitlines() if "托盘图标" in ln]
 print("托盘日志:", tray_line[-1] if tray_line else "(无)")
 if not tray_line:
     print("FAIL: 日志里没有托盘已就绪的记录")
-    subprocess.run(["taskkill", "/F", "/PID", str(p.pid)], capture_output=True)
+    p.terminate()
     sys.exit(1)
 missing = [w for w in ("打开界面", "打开输出文件夹", "重启", "检查更新", "退出") if w not in tray_line[-1]]
 if missing:
     print("FAIL: 托盘日志未提到这些菜单项:", missing)
-    subprocess.run(["taskkill", "/F", "/PID", str(p.pid)], capture_output=True)
+    p.terminate()
     sys.exit(1)
 print("PASS: 托盘日志已列出 5 个菜单入口")
 
@@ -77,7 +79,7 @@ for _ in range(20):
 code = p.poll()
 if code is None:
     print("FAIL: 5 秒后进程仍在运行（退出路径没生效）")
-    subprocess.run(["taskkill", "/F", "/PID", str(p.pid)], capture_output=True)
+    p.terminate()
     sys.exit(1)
 
 print("PASS: 进程已退出，exit =", code)

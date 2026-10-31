@@ -13,10 +13,10 @@ import urllib.request
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
-HERE = r"C:\Users\Cloak_Zeng\WorkBuddy\2026-10-06-14-57-26"
+HERE = os.path.dirname(os.path.abspath(__file__))
 MES = os.path.join(HERE, "mes_conv")
-EXE = os.path.join(MES, "物料档案转换工具.exe")
-PORT = 8749
+EXE = os.environ.get("MES_EXE", os.path.join(MES, "物料档案转换工具.exe"))
+PORT = int(os.environ.get("MES_PORT", "8749"))
 BASE = "http://127.0.0.1:%d" % PORT
 
 CANDIDATES = [
@@ -33,23 +33,17 @@ if not chrome:
     sys.exit(0)
 
 
-def kill_all():
-    for n in ("物料档案转换工具.exe", "物料档案转换工具.exe"):
-        subprocess.run(["taskkill", "/F", "/IM", n], capture_output=True)
-
-
-# 复用模式：程序是全局单实例（互斥量），若用户自己开着一份，就别杀也别另起，
-# 直接对它做渲染验证（它磁盘优先加载 webui.html，测到的就是当前磁盘上的界面）。
+# 复用模式直接验证已运行实例；否则用 -nosingle 起独立测试实例，不影响用户进程。
 REUSE = os.environ.get("MES_REUSE") == "1"
 if REUSE:
     BASE = "http://127.0.0.1:%d" % int(os.environ.get("MES_PORT", PORT))
     print("复用模式：不杀进程、不另起服务，直接验证", BASE)
 else:
-    kill_all()
-    time.sleep(0.6)
+    if not os.path.isfile(EXE):
+        raise SystemExit("程序不存在：%s（可用 MES_EXE 指定）" % EXE)
 p = None
 if not REUSE:
-    p = subprocess.Popen([EXE, "-nobrowser", "-port", str(PORT)], cwd=MES,
+    p = subprocess.Popen([EXE, "-nobrowser", "-nosingle", "-port", str(PORT)], cwd=MES,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 up = False
 for _ in range(40):
@@ -148,7 +142,6 @@ if not REUSE:
         p.wait(timeout=4)
     except Exception:
         p.kill()
-    kill_all()
 
 bad = [n for n, o in results if not o]
 print()

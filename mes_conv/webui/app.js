@@ -299,7 +299,7 @@ document.getElementById("startBtn").addEventListener("click",doConvert);
 document.getElementById("openFolderBtn").addEventListener("click",async()=>{
   const b=document.getElementById("openFolderBtn"); const old=b.textContent;
   b.textContent=t("opening");
-  try{ await fetch("/api/open-folder"); }catch(e){}
+  try{ await fetch("/api/open-folder",{method:"POST"}); }catch(e){}
   setTimeout(()=>{ b.textContent=old; },900);
 });
 
@@ -335,9 +335,10 @@ function makeHistoryLoader(c){
         return;
       }
       body.innerHTML = items.map(it=>{
-        const bad=(it.issues||0)>0;
+        const bad=(it.issues||0)>0 || (it.warnings||0)>0;
+		const problemCount=(it.issues||0)+(it.warnings||0);
         const badge = bad
-          ? '<span style="color:#b45309">'+t(c.k.bad)+' ('+it.issues+')</span>'
+          ? '<span style="color:#b45309">'+t(c.k.bad)+' ('+problemCount+')</span>'
           : '<span style="color:#059669">'+t(c.k.ok)+'</span>';
         // 「查看」按钮：把那次转换留下的问题明细重新摊开（服务重启过也照样能看）
         const viewBtn = c.view && it.report
@@ -346,7 +347,7 @@ function makeHistoryLoader(c){
           : '';
         return '<tr><td>'+esc(it.time||"")+'</td><td>'+esc(it.file||"")+'</td><td>'+(it.rows||0)+'</td><td>'+badge+'</td>'+
           '<td>'+viewBtn+
-          '<a class="ghost" style="padding:3px 9px;font-size:12px" href="/download?file='+encodeURIComponent(it.file||"")+'">'+t(c.k.dl)+'</a></td></tr>';
+          (it.external?'—':'<a class="ghost" style="padding:3px 9px;font-size:12px" href="/download?file='+encodeURIComponent(it.file||"")+'">'+t(c.k.dl)+'</a>')+'</td></tr>';
       }).join("");
       if(c.view){
         body.querySelectorAll("button."+c.btnCls).forEach(b=>{
@@ -1021,7 +1022,7 @@ document.getElementById("aboutBtn").addEventListener("click",async()=>{
     });
     body.querySelectorAll(".js-open").forEach(b=>{
       b.addEventListener("click",()=>{
-        fetch("/api/open-folder?dir="+encodeURIComponent(b.getAttribute("data-dir")||"")).catch(()=>{});
+        fetch("/api/open-folder?dir="+encodeURIComponent(b.getAttribute("data-dir")||""),{method:"POST"}).catch(()=>{});
       });
     });
   }catch(e){ body.innerHTML='<p style="color:#dc2626">'+esc(e.message)+'</p>'; }
@@ -1195,7 +1196,7 @@ async function refreshRecent(){
   btnGo.style.display="";
   btnOut.style.display="";
   btnGo.onclick=()=>showModule(newest.mod);
-  btnOut.onclick=async()=>{ try{ await fetch("/api/open-folder"); }catch(e){} };
+  btnOut.onclick=async()=>{ try{ await fetch("/api/open-folder",{method:"POST"}); }catch(e){} };
 }
 
 // ---------- 配置中心：两个模块的配置集中在这里维护 ----------
@@ -1388,7 +1389,7 @@ document.getElementById("ordStartBtn").addEventListener("click",doOrdersConvert)
 document.getElementById("ordOpenFolderBtn").addEventListener("click",async()=>{
   const b=document.getElementById("ordOpenFolderBtn"); const old=b.textContent;
   b.textContent=t("opening");
-  try{ await fetch("/api/open-folder"); }catch(e){}
+  try{ await fetch("/api/open-folder",{method:"POST"}); }catch(e){}
   setTimeout(()=>{ b.textContent=old; },900);
 });
 document.getElementById("ordToggleLogBtn").addEventListener("click",()=>{
@@ -1410,10 +1411,24 @@ const bomSrcPicker = bindMultiFile("bomSrcFile","bomSrcName","bomSrcList","bomSr
 const bomTplPicker = bindMultiFile("bomTplFile","bomTplName","bomTplList","bomTplCard", null, null);
 const bomMapPicker = bindMultiFile("bomMapFile","bomMapName","bomMapList","bomMapCard", null, null);
 let bomLastResult=null;
+const bomRenderChecks=makeChecksRenderer({
+  sec:"bomCheckSection", list:"bomCheckList", wrap:"bomIssueWrap", body:"bomIssueBody", sum:"bomCheckSummary", toggle:"bomCheckToggleBtn",
+  summaryFmt:"check_summary", okKey:"check_ok", lastResult:()=>bomLastResult });
 const loadBomHistory=makeHistoryLoader({
-  url:"/api/bom/history", body:"bomHistBody", sec:"bomHistSection", btnCls:"jsbomview", view:null,
+  url:"/api/bom/history", body:"bomHistBody", sec:"bomHistSection", btnCls:"jsbomview", view:bomViewReport,
   hint:"bom_hist_empty_hint", k:{none:"hist_none", bad:"hist_bad", ok:"hist_ok", dl:"hist_dl"} });
 document.getElementById("bomRefreshHistBtn").addEventListener("click",loadBomHistory);
+
+async function bomViewReport(id,noScroll){
+  if(!id) return;
+  try{
+    const r=await fetch("/api/report?id="+encodeURIComponent(id));
+    const d=await r.json();
+    if(!d.ok || !d.report) return;
+    bomRenderChecks(d.report,true);
+    if(!noScroll) document.getElementById("bomCheckSection").scrollIntoView({behavior:"smooth",block:"center"});
+  }catch(e){}
+}
 
 function bomEsc(s){
   return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -1474,7 +1489,7 @@ async function doBomConvert(){
       bomShowStatus("ok","status_done");
       const rs=document.getElementById("bomResultSection"); rs.classList.add("show");
       document.getElementById("bomDownloadLink").href="/download?file="+encodeURIComponent(data.file);
-      renderBomStats(data); renderBomDiag(data);
+      renderBomStats(data); renderBomDiag(data); bomRenderChecks(data);
       bomLastResult={data:data,lang:currentLang};
       loadBomHistory();
       refreshRecent();
@@ -1493,7 +1508,7 @@ document.getElementById("bomStartBtn").addEventListener("click",doBomConvert);
 document.getElementById("bomOpenFolderBtn").addEventListener("click",async()=>{
   const b=document.getElementById("bomOpenFolderBtn"); const old=b.textContent;
   b.textContent=t("opening");
-  try{ await fetch("/api/open-folder"); }catch(e){}
+  try{ await fetch("/api/open-folder",{method:"POST"}); }catch(e){}
   setTimeout(()=>{ b.textContent=old; },900);
 });
 document.getElementById("bomToggleLogBtn").addEventListener("click",()=>{

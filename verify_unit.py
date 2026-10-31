@@ -1,12 +1,16 @@
 # -*- coding: utf-8 -*-
 """逐格比对 工具输出 vs 参考文件 物料档案导入_577筆.xlsx"""
-import sys, io
+import sys, io, os
 from collections import Counter
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 import openpyxl
 
-A = r"C:\Users\Cloak_Zeng\WorkBuddy\2026-10-06-14-57-26\verify_out.xlsx"
-B = r"D:\User\Cloak_Zeng\Download\物料档案导入_577筆.xlsx"
+ROOT = os.path.dirname(os.path.abspath(__file__))
+A = os.environ.get("MES_VERIFY_OUT", os.path.join(ROOT, "verify_out.xlsx"))
+B = os.environ.get("MES_REFERENCE_OUT", os.path.join(ROOT, "_fixtures", "materials_reference.xlsx"))
+for label, path in (("待验证输出", A), ("参考文件", B)):
+    if not os.path.isfile(path):
+        raise SystemExit(f"{label}不存在：{path}（可用 MES_VERIFY_OUT / MES_REFERENCE_OUT 指定）")
 
 
 def norm(v):

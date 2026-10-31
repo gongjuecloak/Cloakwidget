@@ -3,12 +3,12 @@
 const { spawn } = require('child_process');
 const path = require('path');
 
-const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+const CHROME = process.env.CHROME || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 const CDP_PORT = Number(process.env.CDP_PORT || 9335);
 // 端口可用环境变量覆盖：本机若已有实例在跑（用户自己开着界面），换一个端口独立验证
 const APP_PORT = Number(process.env.APP_PORT || 8731);
 const HERE = __dirname;
-const EXE = path.join(HERE, 'mes_conv', '物料档案转换工具.exe');
+const EXE = process.env.MES_EXE || path.join(HERE, 'mes_conv', '物料档案转换工具.exe');
 const BASE = `http://127.0.0.1:${APP_PORT}/`;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -138,7 +138,7 @@ async function waitHttp(url, tries = 40) {
   if (occupied) {
     console.log('复用已在运行的实例：' + BASE);
   } else {
-    app = spawn(EXE, ['-nobrowser', '-port', String(APP_PORT)], { cwd: path.join(HERE, 'mes_conv'), stdio: 'ignore' });
+    app = spawn(EXE, ['-nobrowser', '-nosingle', '-port', String(APP_PORT)], { cwd: path.dirname(EXE), stdio: 'ignore' });
     if (!await waitHttp(BASE + 'api/ping')) {
       console.log('✗ 程序未能在 ' + APP_PORT + ' 上启动');
       app.kill(); process.exit(1);

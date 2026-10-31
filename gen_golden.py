@@ -12,9 +12,12 @@ for _name in ("tkinter", "tkinter.ttk", "tkinter.filedialog",
     sys.modules[_name] = MagicMock()
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
-HERE = r"D:/User/Cloak_Zeng/Code/python/project-001/code-file/015/39"
-SAMPLES = r"D:/User/Cloak_Zeng/Code/python/project-001/code-file/015/文件"
-OUT = r"C:/Users/Cloak_Zeng/WorkBuddy/2026-10-06-14-57-26/_golden"
+ROOT = os.path.dirname(os.path.abspath(__file__))
+HERE = os.environ.get("MES_LEGACY_DIR", "")
+SAMPLES = os.environ.get("MES_ORD_DIR", os.path.join(ROOT, "_fixtures"))
+OUT = os.environ.get("MES_GOLD_DIR", os.path.join(ROOT, "_golden"))
+if not HERE or not os.path.isfile(os.path.join(HERE, "2.py")):
+    raise SystemExit("请设置 MES_LEGACY_DIR，指向含 2.py 和 config.json 的旧版目录")
 os.chdir(HERE)
 os.makedirs(OUT, exist_ok=True)
 

@@ -200,6 +200,7 @@ func Convert(cfg *Config, srcPath, tplPath, outPath, lang string) (*Report, erro
 
 	// ---- 构建输出 ----
 	owb := excelize.NewFile()
+	defer owb.Close()
 	oSheet := cfg.OutputSheet
 	if oSheet == "" {
 		oSheet = owb.GetSheetName(0)

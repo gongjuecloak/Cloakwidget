@@ -637,6 +637,7 @@ func ConvertOrders(cfg *OrdersConfig, orderPath, workPath, outPath, lang string,
 	ctx.log(ctx.L["o_start"])
 
 	owb := excelize.NewFile()
+	defer owb.Close()
 	firstSheet := owb.GetSheetName(0)
 	sheetCreated := false
 

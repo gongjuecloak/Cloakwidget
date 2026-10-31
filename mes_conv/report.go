@@ -70,18 +70,30 @@ func pruneReports(keep int) {
 	if err != nil {
 		return
 	}
-	names := make([]string, 0, len(ents))
+	type reportFile struct {
+		name string
+		mod  int64
+	}
+	files := make([]reportFile, 0, len(ents))
 	for _, e := range ents {
 		if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
-			names = append(names, e.Name())
+			info, err := e.Info()
+			if err == nil {
+				files = append(files, reportFile{name: e.Name(), mod: info.ModTime().UnixNano()})
+			}
 		}
 	}
-	if len(names) <= keep {
+	if len(files) <= keep {
 		return
 	}
-	sort.Strings(names)
-	for _, n := range names[:len(names)-keep] {
-		_ = os.Remove(filepath.Join(reportsDir(), n))
+	sort.Slice(files, func(i, j int) bool {
+		if files[i].mod == files[j].mod {
+			return files[i].name < files[j].name
+		}
+		return files[i].mod < files[j].mod
+	})
+	for _, f := range files[:len(files)-keep] {
+		_ = os.Remove(filepath.Join(reportsDir(), f.name))
 	}
 }
 
@@ -131,9 +143,6 @@ func historyFromReports(dir, module string) []HistoryItem {
 		})
 	}
 	sort.SliceStable(items, func(i, j int) bool { return items[i].Time > items[j].Time })
-	if len(items) > 50 {
-		items = items[:50]
-	}
 	return items
 }
 
@@ -154,8 +163,5 @@ func mergeHistories(groups ...[]HistoryItem) []HistoryItem {
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Time > out[j].Time })
-	if len(out) > 50 {
-		out = out[:50]
-	}
 	return out
 }

@@ -19,12 +19,20 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: 'mes_conv/go.mod'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - name: go vet
         working-directory: mes_conv
         run: go vet ./...
       - name: go test
         working-directory: mes_conv
         run: go test ./...
+      - name: web UI tests
+        working-directory: mes_conv
+        run: |
+          node test_i18n.js
+          node test_fmt.js
 
   build:
     needs: test
@@ -44,7 +52,7 @@ jobs:
         run: |
           V="${{ steps.ver.outputs.version }}"
           python3 - <<PY
-          import re, sys
+          import json, re
           v = "${{ steps.ver.outputs.version }}"
           parts = [int(x) for x in v.split(".")] + [0, 0, 0]
           mj, mn, pa, bd = parts[0], parts[1], parts[2], parts[3]
@@ -54,16 +62,16 @@ jobs:
           g = re.sub(r'(const appVersion = ")[^"]+(")', r'\g<1>%s\2' % v, g, count=1)
           open("version.go", "w", encoding="utf-8").write(g)
 
-          # versioninfo.json: 同时更新数字段与字符串字段
-          s = open("versioninfo.json", encoding="utf-8").read()
-          s = re.sub(r'("FileVersion":\s*\{\s*"Major":\s*)\d+', r'\g<1>%d' % mj, s, count=1)
-          s = re.sub(r'("Minor":\s*)\d+', r'\g<1>%d' % mn, s, count=1)
-          s = re.sub(r'("Patch":\s*)\d+', r'\g<1>%d' % pa, s, count=1)
-          s = re.sub(r'("Build":\s*)\d+', r'\g<1>%d' % bd, s, count=1)
-          s = re.sub(r'("ProductVersion":\s*\{\s*"Major":\s*)\d+', r'\g<1>%d' % mj, s, count=1)
-          s = re.sub(r'("FileVersion":\s*")[^"]+(")', r'\g<1>%d.%d.%d.%d\2' % (mj, mn, pa, bd), s)
-          s = re.sub(r'("ProductVersion":\s*")[^"]+(")', r'\g<1>%d.%d.%d.%d\2' % (mj, mn, pa, bd), s)
-          open("versioninfo.json", "w", encoding="utf-8").write(s)
+          # versioninfo.json: 按 JSON 字段更新，避免正则误改相邻版本字段
+          with open("versioninfo.json", encoding="utf-8") as f:
+              info = json.load(f)
+          nums = {"Major": mj, "Minor": mn, "Patch": pa, "Build": bd}
+          for key in ("FileVersion", "ProductVersion"):
+              info["FixedFileInfo"][key].update(nums)
+              info["StringFileInfo"][key] = f"{mj}.{mn}.{pa}.{bd}"
+          with open("versioninfo.json", "w", encoding="utf-8") as f:
+              json.dump(info, f, ensure_ascii=False, indent=2)
+              f.write("\n")
           print("版本号已同步为", v)
           PY
 

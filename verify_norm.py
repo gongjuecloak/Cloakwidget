@@ -4,10 +4,14 @@ import sys, io, os, subprocess
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 import openpyxl
 
-HERE = r'C:\Users\Cloak_Zeng\WorkBuddy\2026-10-06-14-57-26'
+HERE = os.path.dirname(os.path.abspath(__file__))
 MES = os.path.join(HERE, 'mes_conv')
-SRC = r'D:\User\Cloak_Zeng\Download\20261006 匯入 577筆.xlsx'
-TPL = r'D:\User\Cloak_Zeng\Download\物料档案导入模版 (3).xlsx'
+SRC = os.environ.get('MES_SRC_FILE', os.path.join(HERE, '_fixtures', 'materials.xlsx'))
+TPL = os.environ.get('MES_TPL_FILE', os.path.join(HERE, '_fixtures', 'materials_template.xlsx'))
+EXE = os.environ.get('MES_EXE', os.path.join(MES, '物料档案转换工具.exe'))
+for label, path in [('源文件', SRC), ('模板', TPL), ('程序', EXE)]:
+    if not os.path.isfile(path):
+        raise SystemExit(f'{label}不存在：{path}（可用 MES_SRC_FILE / MES_TPL_FILE / MES_EXE 指定）')
 
 wb = openpyxl.load_workbook(SRC)
 sh = wb[wb.sheetnames[0]]
@@ -28,8 +32,7 @@ print('测试源已生成:', test_src)
 test_out = os.path.join(HERE, 'test_unit_norm_out.xlsx')
 if os.path.exists(test_out):
     os.remove(test_out)
-exe = os.path.join(MES, '物料档案转换工具.exe')
-r = subprocess.run([exe, '-cli', '-lang', 'zh', '-src', test_src, '-tpl', TPL, '-out', test_out],
+r = subprocess.run([EXE, '-cli', '-lang', 'zh', '-src', test_src, '-tpl', TPL, '-out', test_out],
                    capture_output=True)
 print('exit =', r.returncode)
 out = (r.stdout.decode('utf-8', 'replace') + r.stderr.decode('utf-8', 'replace')).strip()

@@ -193,11 +193,17 @@ func sniffDelimiter(txt string) rune {
 // readSourceGrid 读一个工作表，返回二维字符串网格、工作表名、识别说明、以及格式真身。
 // sheetIdx < 0 或越界时取第一个工作表。
 func readSourceGrid(path string, sheetIdx int) (rows [][]string, sheetName, desc string, kind srcKind, err error) {
-	raw, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return nil, "", "", srcText, err
 	}
-	switch sniffSource(raw) {
+	head, err := io.ReadAll(io.LimitReader(f, 8192))
+	_ = f.Close()
+	if err != nil {
+		return nil, "", "", srcText, err
+	}
+	kind = sniffSource(head)
+	switch kind {
 	case srcXlsx:
 		rows, sheetName, err = readXlsxGrid(path, sheetIdx)
 		return rows, sheetName, srcXlsx.label(), srcXlsx, err
@@ -205,6 +211,10 @@ func readSourceGrid(path string, sheetIdx int) (rows [][]string, sheetName, desc
 		rows, sheetName, err = readBiffGrid(path, sheetIdx)
 		return rows, sheetName, srcBiff.label(), srcBiff, err
 	case srcXML2003:
+		raw, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return nil, "", "", srcXML2003, readErr
+		}
 		txt, enc := decodeText(raw)
 		rows, sheetName, err = readXML2003Grid(txt, sheetIdx)
 		if err != nil {
@@ -212,6 +222,10 @@ func readSourceGrid(path string, sheetIdx int) (rows [][]string, sheetName, desc
 		}
 		return rows, sheetName, fmt.Sprintf("%s, %s", srcXML2003.label(), enc), srcXML2003, nil
 	default:
+		raw, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return nil, "", "", srcText, readErr
+		}
 		txt, enc := decodeText(raw)
 		d := sniffDelimiter(txt)
 		if strings.EqualFold(filepath.Ext(path), ".tsv") {

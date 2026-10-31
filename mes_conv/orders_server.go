@@ -37,7 +37,10 @@ func handlerOrdersSaveConfig(w http.ResponseWriter, r *http.Request) {
 	c.Schema = schemaOrders
 	c.fillDefaults()
 	if fileExists(ordersConfigPath()) {
-		_, _ = backupFile(ordersConfigPath(), backupRoot())
+		if _, err := backupFile(ordersConfigPath(), backupRoot()); err != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": "备份当前配置失败，已取消保存：" + err.Error()})
+			return
+		}
 	}
 	if err := saveOrdersConfig(&c); err != nil {
 		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
@@ -54,8 +57,8 @@ func handlerOrdersConvert(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", 405)
 		return
 	}
-	if err := r.ParseMultipartForm(64 << 20); err != nil {
-		writeJSON(w, map[string]interface{}{"ok": false, "error": "解析上传失败: " + err.Error()})
+	if err := r.ParseMultipartForm(multipartMemory); err != nil {
+		writeUploadParseError(w, err)
 		return
 	}
 
@@ -188,7 +191,7 @@ func handlerOrdersConvert(w http.ResponseWriter, r *http.Request) {
 
 	elapsed := time.Since(start).Milliseconds()
 	nowStr := time.Now().Format("2006-01-02 15:04:05")
-	reportID := strings.TrimSuffix(base, ".xlsx") + ".json"
+	reportName := strings.TrimSuffix(base, ".xlsx") + ".json"
 	srcLabel := orderName
 	if workName != "" {
 		if srcLabel != "" {
@@ -197,8 +200,8 @@ func handlerOrdersConvert(w http.ResponseWriter, r *http.Request) {
 			srcLabel = workName
 		}
 	}
-	saveReport(&ConvertReport{
-		ID:         reportID,
+	reportID := saveReport(&ConvertReport{
+		ID:         reportName,
 		Time:       nowStr,
 		Source:     srcLabel,
 		Template:   L["label_work"],
@@ -216,8 +219,13 @@ func handlerOrdersConvert(w http.ResponseWriter, r *http.Request) {
 		},
 		Module: "orders",
 	})
+	persistenceWarnings := []string{}
+	if reportID == "" {
+		persistenceWarnings = append(persistenceWarnings, L["warn_report_save"])
+		add("* " + L["warn_report_save"])
+	}
 
-	appendOrdersHistory(HistoryItem{
+	if err := appendOrdersHistory(HistoryItem{
 		Time:     nowStr,
 		File:     base,
 		Rows:     rep.OrderMaster + rep.OrderDetail + rep.WorkOrders,
@@ -227,7 +235,15 @@ func handlerOrdersConvert(w http.ResponseWriter, r *http.Request) {
 		Warnings: len(rep.Warnings),
 		Report:   reportID,
 		Module:   "orders",
-	})
+	}); err != nil {
+		msg := fmt.Sprintf(L["warn_history_save"], err)
+		persistenceWarnings = append(persistenceWarnings, msg)
+		add("* " + msg)
+		appLog("订单转换历史保存失败：%v", err)
+	}
+	if len(persistenceWarnings) > 0 {
+		_ = os.WriteFile(logPath, []byte(strings.Join(logs, "\n")), 0644)
+	}
 
 	issues, errs, warns := rep.Issues, rep.Errors, rep.Warnings
 	if issues == nil {
@@ -239,6 +255,7 @@ func handlerOrdersConvert(w http.ResponseWriter, r *http.Request) {
 	if warns == nil {
 		warns = []string{}
 	}
+	warns = append(warns, persistenceWarnings...)
 	notes := append(append([]string{}, orderNotes...), workNotes...)
 	notes = append(notes, rep.Notes...)
 	if notes == nil {
@@ -269,14 +286,15 @@ func handlerOrdersConvert(w http.ResponseWriter, r *http.Request) {
 // orders historyPath 与物料档案分开存，两个模块的「最近转换」互不污染
 func ordersHistoryPath() string { return filepath.Join(exeDir(), "out", "orders_history.json") }
 
-func appendOrdersHistory(it HistoryItem) {
-	_ = appendHistoryFile(ordersHistoryPath(), it)
-}
+func appendOrdersHistory(it HistoryItem) error { return appendHistoryFile(ordersHistoryPath(), it) }
 
 func handlerOrdersHistory(w http.ResponseWriter, r *http.Request) {
 	h := loadHistoryFile(ordersHistoryPath())
 	if h == nil {
 		h = []HistoryItem{}
+	}
+	if len(h) > 50 {
+		h = h[:50]
 	}
 	writeJSON(w, map[string]interface{}{"ok": true, "items": h})
 }

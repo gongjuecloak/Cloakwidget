@@ -817,6 +817,7 @@ const TEXT_MAP = {
   bom_result_title:"bom_result_title", bom_result_desc:"bom_result_desc",
   bomDownloadLink:"bom_download", bomOpenFolderBtn:"bom_open_folder",
   bom_diag_title:"bom_diag_title",
+  bomCheckTitle:"check_title", bomIssueRow:"issue_row", bomIssueCol:"issue_col", bomIssueMsg:"issue_msg",
   bom_unit_raw:"bom_unit_raw", bom_unit_count:"bom_unit_count", bom_unit_mapped:"bom_unit_mapped", bom_unit_status:"bom_unit_status",
   bom_log_title:"bom_log_title", bomCopyLogBtn:"bom_copy_log", bomToggleLogBtn:"bom_view_log",
   bomHistoryTitle:"history_title", bomRefreshHistBtn:"refresh",
