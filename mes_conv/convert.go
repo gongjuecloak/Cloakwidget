@@ -52,6 +52,15 @@ func isBlank(v interface{}) bool {
 	return false
 }
 
+func rowHasValue(row []interface{}) bool {
+	for _, v := range row {
+		if !isBlank(v) {
+			return true
+		}
+	}
+	return false
+}
+
 func sortedCountKeys(m map[string]int) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
@@ -279,7 +288,7 @@ func Convert(cfg *Config, srcPath, tplPath, outPath, lang string) (*Report, erro
 		}
 		empty := true
 		for _, c := range row {
-			if c != "" {
+			if strings.TrimSpace(c) != "" {
 				empty = false
 				break
 			}
@@ -399,6 +408,9 @@ func Convert(cfg *Config, srcPath, tplPath, outPath, lang string) (*Report, erro
 					unknownUnit[strings.TrimSpace(raw)]++
 				}
 			}
+		}
+		if !rowHasValue(out) {
+			continue
 		}
 
 		if err := owb.SetSheetRow(oSheet, fmt.Sprintf("A%d", wrote+2), &out); err != nil {

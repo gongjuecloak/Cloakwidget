@@ -687,6 +687,13 @@ func sortedKeysInt(m map[string]int) []string {
 
 // writeSheet 建表并写入表头 + 数据行。返回最终写入的行数。
 func (c *orderCtx) writeSheet(owb *excelize.File, firstSheet string, created *bool, name string, headers []string, rows [][]interface{}, dates map[string]bool) error {
+	clean := rows[:0]
+	for _, row := range rows {
+		if rowHasValue(row) {
+			clean = append(clean, row)
+		}
+	}
+	rows = clean
 	if !*created {
 		if err := owb.SetSheetName(firstSheet, name); err != nil {
 			return err

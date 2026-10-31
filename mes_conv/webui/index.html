@@ -439,6 +439,15 @@
       <button type="button" class="cfg-tab" role="tab" id="cfgTabBom" data-tab="bom" aria-controls="cfgPaneBom" aria-selected="false">BOM / 用料表</button>
       <button type="button" class="cfg-tab" role="tab" id="cfgTabSys" data-tab="sys" aria-controls="cfgPaneSys" aria-selected="false">系统</button>
     </div>
+    <div class="cfg-workbar">
+      <div class="cfg-modes" role="group" aria-label="配置显示模式">
+        <button type="button" id="cfgSimpleBtn" class="ghost active">简单模式</button>
+        <button type="button" id="cfgExpertBtn" class="ghost">专家模式</button>
+      </div>
+      <input type="search" id="cfgGlobalSearch" placeholder="搜索当前配置页">
+      <span id="cfgSearchCount" class="muted" aria-live="polite"></span>
+    </div>
+    <nav id="cfgSectionNav" class="cfg-section-nav" aria-label="当前配置页目录"></nav>
 
     <!-- ---------- 面板一：物料档案配置 ---------- -->
     <section class="advanced" id="cfgPaneMat" role="tabpanel" aria-labelledby="cfgTabMat">
@@ -454,8 +463,11 @@
         <button id="exportConfigBtn" class="ghost">导出配置</button>
         <button id="importConfigBtn" class="ghost">导入配置</button>
         <input type="file" id="importCfgFile" accept=".json" style="display:none">
+        <button id="matCfgTestBtn" class="ghost">测试配置</button>
+        <input type="file" id="matCfgTestFile" accept=".xlsx,.xls,.csv" style="display:none">
       </div>
       <div id="advMsg" class="adv-msg"></div>
+      <div id="matSaveMeta" class="cfg-save-meta"></div>
 
       <div class="block-title"><span id="block_profiles">配置档（多套配置）</span>
         <small id="block_profiles_hint">把当前配置存成一份命名档案，不同工厂 / 模板一键载入</small></div>
@@ -536,8 +548,23 @@
       <div class="adv-actions">
         <button id="ordCfgReloadBtn" class="ghost">载入当前配置</button>
         <button id="ordCfgSaveBtn" class="primary action-primary">保存配置</button>
+        <button id="ordCfgExportBtn" class="ghost">导出配置</button>
+        <button id="ordCfgImportBtn" class="ghost">导入配置</button>
+        <button id="ordCfgTestBtn" class="ghost">测试配置</button>
+        <input type="file" id="ordCfgImportFile" accept=".json" style="display:none">
+        <input type="file" id="ordCfgTestFile" accept=".xlsx,.xls,.csv" style="display:none">
       </div>
       <div id="ordAdvMsg" class="adv-msg"></div>
+      <div id="ordSaveMeta" class="cfg-save-meta"></div>
+
+      <div class="block-title"><span id="ord_block_backup">配置备份</span>
+        <small>每次保存自动备份，可对比或恢复</small></div>
+      <div class="pc-line">
+        <select id="ordBackupSel" style="width:260px"></select>
+        <button id="ordRestoreBtn" class="ghost">恢复此备份</button>
+        <button id="ordBackupDiffBtn" class="ghost">对比当前配置</button>
+        <button id="ordRefreshBackupBtn" class="ghost">刷新列表</button>
+      </div>
 
       <div class="block-title"><span id="ord_block_map">字段映射</span>
         <small id="ord_block_map_hint">每行 = 一个输出列：源列（可留空表示不导出）+ 源档为空时填入的默认值。表格行序就是输出列顺序。</small></div>
@@ -562,8 +589,23 @@
       <div class="adv-actions">
         <button id="bomCfgReloadBtn" class="ghost">载入当前配置</button>
         <button id="bomCfgSaveBtn" class="primary action-primary">保存配置</button>
+        <button id="bomCfgExportBtn" class="ghost">导出配置</button>
+        <button id="bomCfgImportBtn" class="ghost">导入配置</button>
+        <button id="bomCfgTestBtn" class="ghost">测试配置</button>
+        <input type="file" id="bomCfgImportFile" accept=".json" style="display:none">
+        <input type="file" id="bomCfgTestFile" accept=".xlsx,.xls,.csv" style="display:none">
       </div>
       <div id="bomAdvMsg" class="adv-msg"></div>
+      <div id="bomSaveMeta" class="cfg-save-meta"></div>
+
+      <div class="block-title"><span id="bom_block_backup">配置备份</span>
+        <small>每次保存自动备份，可对比或恢复</small></div>
+      <div class="pc-line">
+        <select id="bomBackupSel" style="width:260px"></select>
+        <button id="bomRestoreBtn" class="ghost">恢复此备份</button>
+        <button id="bomBackupDiffBtn" class="ghost">对比当前配置</button>
+        <button id="bomRefreshBackupBtn" class="ghost">刷新列表</button>
+      </div>
 
       <div class="block-title"><span id="bom_block_sheet">工作表名</span>
         <small id="bom_block_sheet_hint">源表在 ERP 导出文件里的名字，以及输出模板里两张表的名字</small></div>
@@ -575,6 +617,7 @@
         <thead><tr><th id="bom_th_role" style="width:32%">角色</th><th id="bom_th_value">源列</th></tr></thead>
         <tbody></tbody>
       </table>
+      <datalist id="bomSourceHeaders"></datalist>
 
       <div class="block-title"><span id="bom_block_master">主表固定值</span>
         <small id="bom_block_master_hint">BOM主表每行这些列直接写固定值</small></div>
@@ -668,6 +711,16 @@
       <button class="ghost" id="aboutClose">关闭</button>
     </div>
     <div id="aboutBody"></div>
+  </div>
+</div>
+
+<div id="configToolModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="configToolTitle" aria-hidden="true">
+  <div class="modal-panel modal-wide">
+    <div class="modal-head modal-head-tight">
+      <h3 id="configToolTitle" style="margin:0">配置检查</h3>
+      <button class="ghost" id="configToolClose">关闭</button>
+    </div>
+    <div id="configToolBody" class="cfg-tool-body"></div>
   </div>
 </div>
 

@@ -788,6 +788,7 @@ function loadAdvFromCfg(){
   document.getElementById("outSheetInput").value = cfg.output_sheet || "物料档案";
   renderTable(); renderUnitMap(); renderDicts(); renderWl(); renderLen(); renderCross();
   advLoaded=true; if(window.__dirty){ window.__dirty.mat=false; updateDirtyBadge(); }
+  updateConfigSections();
 }
 function advMsg(msg,kind){ const el=document.getElementById("advMsg"); el.textContent=msg; el.className="adv-msg "+(kind||""); }
 function syncAdvToCfg(){
@@ -838,7 +839,7 @@ document.getElementById("saveConfigBtn").addEventListener("click",async()=>{
   try{
     const r=await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(cfg)});
     const d=await r.json();
-    if(d.ok){ advMsg(t("saved_ok"),"ok"); window.__dirty.mat=false; updateDirtyBadge(); refreshBackups(); } else advMsg(t("saved_err")+JSON.stringify(d.error),"err");
+    if(d.ok){ advMsg(t("saved_ok"),"ok"); window.__cfgSnapMat=clone(cfg); window.__dirty.mat=false; updateDirtyBadge(); refreshBackups(); refreshModuleBackups("mat"); showSavedMeta("mat",d.backup); } else advMsg(t("saved_err")+JSON.stringify(d.error),"err");
   }catch(err){ advMsg(err.message,"err"); }
 });
 
@@ -865,7 +866,9 @@ document.getElementById("importCfgFile").addEventListener("change",e=>{
     try{
       const c=JSON.parse(rd.result);
       if(!c || typeof c!=="object" || !Array.isArray(c.fields)) throw new Error("not a mapping config");
+      if(!confirm("导入会替换当前未保存配置，确定继续？")) return;
       cfg=c; loadAdvFromCfg(); advMsg(t("imported_ok"),"ok");
+      cfgSetDirty("mat");
     }catch(err){ advMsg(t("imported_err")+err.message,"err"); }
   };
   rd.readAsText(f,"utf-8");
@@ -887,6 +890,7 @@ document.getElementById("refreshBackupBtn").addEventListener("click",refreshBack
 document.getElementById("restoreBtn").addEventListener("click",async()=>{
   const name=document.getElementById("backupSel").value;
   if(!name){ advMsg(t("no_backup"),"err"); return; }
+  if(!confirm("确定恢复此备份？恢复前会自动备份当前配置。")) return;
   try{
     const r=await fetch("/api/config-restore?name="+encodeURIComponent(name),{method:"POST"});
     const d=await r.json();
@@ -1217,6 +1221,9 @@ function showCfgTab(which,keepScroll){
   else if(cfgTab==="ord"){ if(!ordCfgLoaded) loadOrdersCfg(); }
   else if(cfgTab==="bom"){ if(!bomCfgLoaded) loadBomCfg(); }
   else { loadSysInfo(); }
+  const search=document.getElementById("cfgGlobalSearch"); if(search){search.value="";document.getElementById("cfgSearchCount").textContent="";}
+  document.querySelectorAll("#viewConfig .block-title,#viewConfig .cfg-section-body").forEach(x=>x.style.removeProperty("display"));
+  setTimeout(refreshConfigCenter,0);
   if(!keepScroll) window.scrollTo({top:0,behavior:"smooth"});
 }
 function applyModuleChrome(){
@@ -1597,6 +1604,7 @@ function ordRenderCfg(){
       +'<td><button class="row-del oa-del">✕</button></td></tr>').join("")
     +'</tbody></table><button class="mini-btn oa-add">'+t("ord_add_row")+'</button>';
   bindOrdCfgEvents();
+  updateConfigSections();
 }
 function bindOrdCfgEvents(){
   document.querySelectorAll("#ordMapWrap button.om-del").forEach(b=>{
@@ -1688,7 +1696,7 @@ document.getElementById("ordCfgSaveBtn").addEventListener("click",async()=>{
   try{
     const r=await fetch("/api/orders/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(c)});
     const d=await r.json();
-    if(d.ok){ ordCfg=c; window.__dirty.ord=false; updateDirtyBadge(); ordAdvMsg(t("ord_cfg_saved"),true); }
+    if(d.ok){ ordCfg=c; window.__ordCfgSnap=clone(c); window.__dirty.ord=false; updateDirtyBadge(); ordAdvMsg(t("ord_cfg_saved"),true); refreshModuleBackups("ord"); showSavedMeta("ord",d.backup); }
     else ordAdvMsg(t("ord_cfg_fail")+(d.error||""),false);
   }catch(e){ ordAdvMsg(t("ord_cfg_fail")+((e&&e.message)||""),false); }
 });
@@ -1773,6 +1781,7 @@ function bomRenderCfg(){
   // 默认选项
   const bd=document.getElementById("bomCfgBasediv");
   if(bd) bd.checked=!!bomCfg.basediv;
+  updateConfigSections();
 }
 function bindBomCfgEvents(){
   document.querySelectorAll("#bomAliasWrap button.ba-del").forEach(b=>{
@@ -1829,7 +1838,7 @@ document.getElementById("bomCfgSaveBtn").addEventListener("click",async()=>{
   try{
     const r=await fetch("/api/bom/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(c)});
     const d=await r.json();
-    if(d.ok){ bomCfg=c; window.__dirty.bom=false; updateDirtyBadge(); bomAdvMsg(t("bom_cfg_saved"),true); }
+    if(d.ok){ bomCfg=c; window.__bomCfgSnap=clone(c); window.__dirty.bom=false; updateDirtyBadge(); bomAdvMsg(t("bom_cfg_saved"),true); refreshModuleBackups("bom"); showSavedMeta("bom",d.backup); }
     else bomAdvMsg(t("bom_cfg_fail")+(d.error||""),false);
   }catch(e){ bomAdvMsg(t("bom_cfg_fail")+((e&&e.message)||""),false); }
 });
@@ -2488,6 +2497,12 @@ document.addEventListener("click",e=>{
       items = diffBomConfig(before, after);
     }
   }catch(err){ return; }   // 同步失败就让原逻辑自己处理
+  const problems=validateConfigForm(which);
+  if(problems.length){
+    e.preventDefault(); e.stopImmediatePropagation();
+    showConfigProblems(problems);
+    return;
+  }
   if(!items.length) return;  // 没改动不用打扰
   e.preventDefault();
   e.stopImmediatePropagation();
@@ -2853,17 +2868,175 @@ async function maybeShowWelcome(){
 window.__dirty={mat:false,ord:false,bom:false};
 function updateDirtyBadge(){
   const el=document.getElementById("cfgDirtyBadge"); if(!el) return;
-  const dirty=window.__dirty && (window.__dirty.mat||window.__dirty.ord||window.__dirty.bom);
-  el.hidden=!dirty;
-  el.textContent=dirty?t("cfg_unsaved"):"";
+  let total=0;
+  [["mat","cfgTabMat"],["ord","cfgTabOrd"],["bom","cfgTabBom"]].forEach(x=>{
+    let n=0;
+    if(window.__dirty&&window.__dirty[x[0]]) try{ const cur=cfgCurrent(x[0]),snap=x[0]==="mat"?window.__cfgSnapMat:(x[0]==="ord"?window.__ordCfgSnap:window.__bomCfgSnap); n=(x[0]==="mat"?diffMatConfig(snap,cur):(x[0]==="ord"?diffOrdConfig(snap,cur):diffBomConfig(snap,cur))).length||1; }catch(e){n=1;}
+    total+=n; const tab=document.getElementById(x[1]); let badge=tab.querySelector(".tab-dirty-count");
+    if(n&&!badge){badge=document.createElement("span");badge.className="tab-dirty-count";tab.appendChild(badge);} if(badge){badge.textContent=n;badge.hidden=!n;}
+  });
+  el.hidden=!total;
+  el.textContent=total?(total+" 项未保存"):"";
 }
 function applyCfgGuard(){
   const f=!!window.__cfgFail, o=!!window.__ordFail, bm=!!window.__bomFail;
-  ["saveConfigBtn","importConfigBtn","restoreBtn","profileSaveBtn","valuesImportBtn"].forEach(id=>{ const b=document.getElementById(id); if(b) b.disabled=f; });
-  const ob=document.getElementById("ordCfgSaveBtn"); if(ob) ob.disabled=o;
-  const bb=document.getElementById("bomCfgSaveBtn"); if(bb) bb.disabled=bm;
+  ["saveConfigBtn","importConfigBtn","restoreBtn","profileSaveBtn","valuesImportBtn","matCfgTestBtn"].forEach(id=>{ const b=document.getElementById(id); if(b) b.disabled=f; });
+  ["ordCfgSaveBtn","ordCfgImportBtn","ordRestoreBtn","ordCfgTestBtn"].forEach(id=>{const b=document.getElementById(id);if(b)b.disabled=o;});
+  ["bomCfgSaveBtn","bomCfgImportBtn","bomRestoreBtn","bomCfgTestBtn"].forEach(id=>{const b=document.getElementById(id);if(b)b.disabled=bm;});
   document.getElementById("cfgFailBanner").classList.toggle("show",f||o||bm);
 }
+
+// ---- 配置中心工作台：目录 / 简专家模式 / 校验 / 测试 / 三模块备份与导入导出 ----
+const CFG_MODULE={mat:{pane:"cfgPaneMat",sel:"backupSel"},ord:{pane:"cfgPaneOrd",sel:"ordBackupSel"},bom:{pane:"cfgPaneBom",sel:"bomBackupSel"}};
+const CFG_EXPERT=new Set(["block_profiles","block_values","block_backup","block_dicts","block_wl","block_len","block_cross","ord_block_backup","ord_block_alias","bom_block_backup","bom_block_master","bom_block_detail","bom_block_alias"]);
+let cfgMode=localStorage.getItem("cfgMode")==="expert"?"expert":"simple";
+function cfgCurrent(which){
+  if(which==="mat"){ syncAdvToCfg(); return clone(cfg); }
+  if(which==="ord") return collectOrdCfg();
+  return collectBomCfg();
+}
+function cfgSetDirty(which){ window.__dirty[which]=true; updateDirtyBadge(); updateConfigSections(); }
+function validateConfigForm(which){
+  document.querySelectorAll("#viewConfig .cfg-invalid").forEach(x=>x.classList.remove("cfg-invalid"));
+  const out=[];
+  if(which==="mat"){
+    const seen={}; advFields.forEach((f,i)=>{ const target=(f.target||"").trim(); if(!target) out.push("字段映射第 "+(i+1)+" 行缺少目标列"); else if(seen[target]) out.push("目标列重复："+target); seen[target]=1; if(f.op==="dict"&&!f.dict) out.push("“"+target+"”未选择字典"); });
+    return out;
+  }
+  if(which==="ord"){
+    document.querySelectorAll("#ordMapWrap table.ord-map").forEach(tb=>{
+      const seen={};
+      tb.querySelectorAll("tbody tr").forEach((tr,i)=>{
+        const inp=tr.querySelector(".om-newtgt");
+        const target=((inp&&inp.value)||tr.dataset.target||"").trim();
+        if(!target){ out.push("字段映射第 "+(i+1)+" 行缺少目标列"); if(inp) inp.classList.add("cfg-invalid"); }
+        else if(seen[target]){ out.push("目标列重复："+target); (inp||tr.querySelector("input")).classList.add("cfg-invalid"); }
+        seen[target]=1;
+      });
+    });
+    document.querySelectorAll("#ordAliasWrap tbody tr").forEach((tr,i)=>{
+      const k=tr.querySelector(".oa-k"),v=tr.querySelector(".oa-v");
+      if(!!k.value.trim()!==!!v.value.trim()){ out.push("表头别名第 "+(i+1)+" 行没有填写完整"); (k.value.trim()?v:k).classList.add("cfg-invalid"); }
+    });
+  }else{
+    [["bomSheetMaster","BOM 主表工作表名"],["bomSheetDetail","BOM 明细工作表名"]].forEach(x=>{
+      const el=document.getElementById(x[0]); if(el&&!el.value.trim()){ out.push(x[1]+"不能为空"); el.classList.add("cfg-invalid"); }
+    });
+    const seen={};
+    document.querySelectorAll("#bomColTable .bc-col").forEach(el=>{ const v=el.value.trim().toLowerCase(); if(v&&seen[v]){ out.push("BOM 源列重复："+el.value.trim()); el.classList.add("cfg-invalid"); } if(v) seen[v]=1; });
+    document.querySelectorAll("#bomAliasWrap tbody tr").forEach((tr,i)=>{ const k=tr.querySelector(".ba-k"),v=tr.querySelector(".ba-v"); if(!!k.value.trim()!==!!v.value.trim()){ out.push("单位别名第 "+(i+1)+" 行没有填写完整"); (k.value.trim()?v:k).classList.add("cfg-invalid"); } });
+  }
+  return out;
+}
+function showConfigProblems(items){
+  document.getElementById("configToolTitle").textContent="保存前校验";
+  document.getElementById("configToolBody").innerHTML='<div class="cfg-tool-summary bad">发现 '+items.length+' 个问题，请修正后再保存。</div><ol>'+items.map(x=>'<li>'+esc(x)+'</li>').join("")+'</ol>';
+  showModal("configToolModal");
+}
+document.getElementById("configToolClose").addEventListener("click",()=>hideModal("configToolModal"));
+
+function setupConfigSections(){
+  Object.values(CFG_MODULE).map(x=>document.getElementById(x.pane)).concat(document.getElementById("cfgPaneSys")).forEach(pane=>{
+    if(!pane) return;
+    [...pane.querySelectorAll(":scope > .block-title")].forEach((title,n)=>{
+      if(title.dataset.ready) return;
+      title.dataset.ready="1";
+      const span=title.querySelector("span"); if(span&&!span.id) span.id=pane.id+"Section"+n;
+      const body=document.createElement("div"); body.className="cfg-section-body";
+      let node=title.nextSibling;
+      while(node && !(node.nodeType===1 && node.classList.contains("block-title"))){ const next=node.nextSibling; body.appendChild(node); node=next; }
+      title.parentNode.insertBefore(body,node);
+      const actions=document.createElement("span"); actions.className="cfg-section-actions";
+      actions.innerHTML='<span class="cfg-section-count">0</span><button type="button" class="ghost cfg-reset">重置</button><button type="button" class="ghost cfg-collapse">收起</button>';
+      title.appendChild(actions);
+      actions.querySelector(".cfg-collapse").onclick=()=>{ body.classList.toggle("collapsed"); actions.querySelector(".cfg-collapse").textContent=body.classList.contains("collapsed")?"展开":"收起"; };
+      const id=span&&span.id||"";
+      actions.querySelector(".cfg-reset").onclick=()=>resetConfigSection(pane.id,id);
+      if(pane.id==="cfgPaneSys" || !resetKeys(id)) actions.querySelector(".cfg-reset").remove();
+      if(CFG_EXPERT.has(id)){ title.dataset.expert="1"; body.dataset.expert="1"; }
+    });
+  });
+}
+function resetKeys(id){
+  return ({block_fields:["fields"],block_unit:["unit_map"],block_dicts:["dicts"],block_wl:["value_whitelist"],block_len:["column_max_len"],block_cross:["cross_checks"],ord_block_map:["field_mapping","default_values","column_order","required_columns","date_columns"],ord_block_tag:["tag_materials"],ord_block_sw:["settings"],ord_block_alias:["column_aliases"],bom_block_sheet:["src_sheet","master_sheet","detail_sheet"],bom_block_cols:["columns"],bom_block_master:["master_fixed"],bom_block_detail:["detail_fixed"],bom_block_alias:["unit_aliases"],bom_block_opts:["basediv"]})[id];
+}
+async function resetConfigSection(pane,id){
+  const keys=resetKeys(id); if(!keys||!confirm("确定把这一节恢复为默认值？当前未保存内容会被替换。")) return;
+  const which=pane==="cfgPaneMat"?"mat":(pane==="cfgPaneOrd"?"ord":"bom");
+  const r=await fetch("/api/config-defaults?module="+which),d=await r.json(); if(!d.ok) return;
+  const target=which==="mat"?cfg:(which==="ord"?ordCfg:bomCfg); keys.forEach(k=>target[k]=clone(d.config[k]));
+  if(which==="mat"){ const snap=window.__cfgSnapMat; loadAdvFromCfg(); window.__cfgSnapMat=snap; }
+  else if(which==="ord") ordRenderCfg(); else bomRenderCfg();
+  cfgSetDirty(which); refreshConfigCenter();
+}
+function applyCfgMode(){
+  const expert=cfgMode==="expert";
+  document.querySelectorAll("#viewConfig [data-expert='1']").forEach(x=>x.classList.toggle("cfg-expert-hidden",!expert));
+  document.getElementById("cfgSimpleBtn").classList.toggle("active",!expert); document.getElementById("cfgExpertBtn").classList.toggle("active",expert);
+  localStorage.setItem("cfgMode",cfgMode); refreshConfigCenter();
+}
+document.getElementById("cfgSimpleBtn").onclick=()=>{cfgMode="simple";applyCfgMode();};
+document.getElementById("cfgExpertBtn").onclick=()=>{cfgMode="expert";applyCfgMode();};
+function refreshConfigCenter(){
+  setupConfigSections();
+  const pane=document.getElementById("cfgPane"+(cfgTab==="mat"?"Mat":cfgTab==="ord"?"Ord":cfgTab==="bom"?"Bom":"Sys")); if(!pane) return;
+  const nav=document.getElementById("cfgSectionNav"); nav.innerHTML="";
+  [...pane.querySelectorAll(":scope > .block-title")].filter(x=>!x.classList.contains("cfg-expert-hidden")).forEach(title=>{
+    const label=title.querySelector(":scope > span"); const count=title.querySelector(".cfg-section-count"); const body=title.nextElementSibling;
+    if(count&&body) count.textContent=body.querySelectorAll("tbody tr,.pc-line,.dict-box").length||body.querySelectorAll("input,select").length;
+    const b=document.createElement("button"); b.type="button"; b.textContent=label?label.textContent:"配置"; b.onclick=()=>title.scrollIntoView({behavior:"smooth",block:"start"}); nav.appendChild(b);
+  });
+}
+function updateConfigSections(){ setTimeout(refreshConfigCenter,0); }
+document.getElementById("cfgGlobalSearch").addEventListener("input",e=>{
+  const q=e.target.value.trim().toLowerCase(); if(q&&cfgMode!=="expert"){cfgMode="expert";applyCfgMode();}
+  const pane=document.getElementById("cfgPane"+(cfgTab==="mat"?"Mat":cfgTab==="ord"?"Ord":cfgTab==="bom"?"Bom":"Sys")); let hits=0;
+  if(pane) [...pane.querySelectorAll(":scope > .block-title")].forEach(title=>{ const body=title.nextElementSibling; const ok=!q||(title.textContent+" "+body.textContent).toLowerCase().includes(q); title.style.display=ok?"":"none"; body.style.display=ok?"":"none"; if(q&&ok){body.classList.remove("collapsed");hits++;} });
+  document.getElementById("cfgSearchCount").textContent=q?("匹配 "+hits+" 个配置区"):"";
+});
+
+function downloadConfig(which){ const c=cfgCurrent(which),a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([JSON.stringify(c,null,2)],{type:"application/json"})); a.download=(which==="ord"?"orders":which==="bom"?"bom_mapping":"mapping")+"_"+new Date().toISOString().slice(0,10)+".json"; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1000); }
+function importConfigFile(which,file){
+  const rd=new FileReader(); rd.onload=()=>{ try{ const c=JSON.parse(rd.result); if(!c||typeof c!=="object") throw Error("配置格式错误"); if(!confirm("导入会替换当前未保存配置，确定继续？")) return;
+    if(which==="ord"){ordCfg=ordEnsureCfg(c);ordRenderCfg();} else {bomCfg=bomEnsureCfg(c);bomRenderCfg();} cfgSetDirty(which); refreshConfigCenter();
+  }catch(e){(which==="ord"?ordAdvMsg:bomAdvMsg)("导入失败："+e.message,false);} }; rd.readAsText(file,"utf-8");
+}
+[["ord","ordCfgExportBtn","ordCfgImportBtn","ordCfgImportFile"],["bom","bomCfgExportBtn","bomCfgImportBtn","bomCfgImportFile"]].forEach(x=>{
+  document.getElementById(x[1]).onclick=()=>downloadConfig(x[0]); document.getElementById(x[2]).onclick=()=>document.getElementById(x[3]).click(); document.getElementById(x[3]).onchange=e=>{if(e.target.files[0])importConfigFile(x[0],e.target.files[0]);e.target.value="";};
+});
+
+async function refreshModuleBackups(which){
+  const spec=CFG_MODULE[which]; if(!spec) return; const sel=document.getElementById(spec.sel); if(!sel) return;
+  try{const r=await fetch("/api/config-backups?module="+which),d=await r.json(); sel.innerHTML=(d.items||[]).map(x=>'<option value="'+esc(x.name)+'">'+esc(x.name)+'</option>').join("");}catch(e){}
+}
+async function restoreModule(which,name){
+  if(!name||!confirm("确定恢复此备份？恢复前会自动备份当前配置。")) return false;
+  const r=await fetch("/api/config-restore?module="+which+"&name="+encodeURIComponent(name),{method:"POST"}),d=await r.json(); if(!d.ok){alert(d.error||"恢复失败");return false;}
+  if(which==="mat"){cfg=d.config;loadAdvFromCfg();window.__cfgSnapMat=clone(cfg);} else if(which==="ord"){ordCfg=ordEnsureCfg(d.config);ordRenderCfg();window.__ordCfgSnap=clone(ordCfg);} else {bomCfg=bomEnsureCfg(d.config);bomRenderCfg();window.__bomCfgSnap=clone(bomCfg);}
+  window.__dirty[which]=false; updateDirtyBadge(); refreshConfigCenter(); refreshModuleBackups(which); return true;
+}
+async function compareBackup(which,name){
+  if(!name) return; const r=await fetch("/api/config-backup?module="+which+"&name="+encodeURIComponent(name)),d=await r.json(); if(!d.ok)return;
+  const cur=cfgCurrent(which),items=which==="mat"?diffMatConfig(d.config,cur):(which==="ord"?diffOrdConfig(d.config,cur):diffBomConfig(d.config,cur)); showDiffModal(items,null);
+}
+[["ord","ordBackupSel","ordRestoreBtn","ordBackupDiffBtn","ordRefreshBackupBtn"],["bom","bomBackupSel","bomRestoreBtn","bomBackupDiffBtn","bomRefreshBackupBtn"]].forEach(x=>{
+  document.getElementById(x[2]).onclick=()=>restoreModule(x[0],document.getElementById(x[1]).value); document.getElementById(x[3]).onclick=()=>compareBackup(x[0],document.getElementById(x[1]).value); document.getElementById(x[4]).onclick=()=>refreshModuleBackups(x[0]);
+});
+function showSavedMeta(which,backup){
+  const el=document.getElementById(which==="mat"?"matSaveMeta":which==="ord"?"ordSaveMeta":"bomSaveMeta"); if(!el)return;
+  el.textContent="已保存于 "+new Date().toLocaleTimeString(); if(backup){ const b=document.createElement("button");b.className="ghost";b.textContent="撤销本次保存";b.onclick=()=>restoreModule(which,backup);el.appendChild(b); }
+}
+async function testConfig(which,file){
+  const fd=new FormData();fd.append("module",which);fd.append("source",file);fd.append("config",JSON.stringify(cfgCurrent(which)));
+  document.getElementById("configToolTitle").textContent="配置测试："+file.name;document.getElementById("configToolBody").innerHTML='<div class="cfg-tool-summary">正在读取源文件…</div>';showModal("configToolModal");
+  try{const r=await fetch("/api/config-test",{method:"POST",body:fd}),d=await r.json();if(!d.ok)throw Error(d.error||"测试失败");
+    const rows=(d.items||[]).map(x=>'<tr><td class="'+(x.found?'ok':'bad')+'">'+(x.found?'已匹配':'缺失')+'</td><td>'+esc(x.group||"")+'</td><td>'+esc(x.target||"")+'</td><td>'+esc(x.source||"")+'</td><td>'+esc((x.samples||[]).join("、"))+'</td></tr>').join("");
+    document.getElementById("configToolBody").innerHTML='<div class="cfg-tool-summary '+(d.missing?'bad':'')+'">工作表 '+esc(d.sheet||"")+' · '+esc(d.summary||"")+' · '+(d.rows||0)+' 行</div><table class="cfg-tool-table"><thead><tr><th>状态</th><th>分组</th><th>目标</th><th>源列</th><th>样例值</th></tr></thead><tbody>'+rows+'</tbody></table>';
+    if(which==="bom"){document.getElementById("bomSourceHeaders").innerHTML=(d.headers||[]).map(h=>'<option value="'+esc(h)+'"></option>').join("");document.querySelectorAll("#bomColTable .bc-col").forEach(x=>x.setAttribute("list","bomSourceHeaders"));}
+  }catch(e){document.getElementById("configToolBody").innerHTML='<div class="cfg-tool-summary bad">'+esc(e.message)+'</div>';}
+}
+[["mat","matCfgTestBtn","matCfgTestFile"],["ord","ordCfgTestBtn","ordCfgTestFile"],["bom","bomCfgTestBtn","bomCfgTestFile"]].forEach(x=>{document.getElementById(x[1]).onclick=()=>document.getElementById(x[2]).click();document.getElementById(x[2]).onchange=e=>{if(e.target.files[0])testConfig(x[0],e.target.files[0]);e.target.value="";};});
+setupConfigSections(); applyCfgMode(); ["mat","ord","bom"].forEach(refreshModuleBackups);
 (function(){
   const vc=document.getElementById("viewConfig");
   const mark=e=>{

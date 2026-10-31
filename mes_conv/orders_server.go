@@ -36,8 +36,10 @@ func handlerOrdersSaveConfig(w http.ResponseWriter, r *http.Request) {
 	// 界面上保存的配置就是「当前代」的配置，标上 schema 免得下次启动再迁一遍
 	c.Schema = schemaOrders
 	c.fillDefaults()
+	backupName := ""
 	if fileExists(ordersConfigPath()) {
-		if _, err := backupFile(ordersConfigPath(), backupRoot()); err != nil {
+		var err error
+		if backupName, err = backupFile(ordersConfigPath(), backupRoot()); err != nil {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": "备份当前配置失败，已取消保存：" + err.Error()})
 			return
 		}
@@ -47,7 +49,7 @@ func handlerOrdersSaveConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	appLog("订单模块配置已保存：%s", ordersConfigPath())
-	writeJSON(w, map[string]interface{}{"ok": true})
+	writeJSON(w, map[string]interface{}{"ok": true, "backup": backupName})
 }
 
 // ---------- 转换 ----------

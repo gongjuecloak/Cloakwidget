@@ -309,8 +309,10 @@ func handlerBomSaveConfig(w http.ResponseWriter, r *http.Request) {
 	// 保存时把 schema 标成当前版本：界面上改过的配置同样是「当前代」的配置
 	c.Schema = schemaBom
 	c.fillDefaults()
+	backupName := ""
 	if fileExists(bomConfigPath()) {
-		if _, err := backupFile(bomConfigPath(), backupRoot()); err != nil {
+		var err error
+		if backupName, err = backupFile(bomConfigPath(), backupRoot()); err != nil {
 			writeJSON(w, map[string]interface{}{"ok": false, "error": "备份当前配置失败，已取消保存：" + err.Error()})
 			return
 		}
@@ -320,5 +322,5 @@ func handlerBomSaveConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	appLog("BOM 模块配置已保存：%s", bomConfigPath())
-	writeJSON(w, map[string]interface{}{"ok": true})
+	writeJSON(w, map[string]interface{}{"ok": true, "backup": backupName})
 }

@@ -392,7 +392,25 @@ func pruneBackups(dir, prefix string, keep int) {
 	}
 }
 
+func configModulePath(module string) (string, string, error) {
+	switch module {
+	case "", "mat", "materials":
+		return configPath(), "mapping_", nil
+	case "ord", "orders":
+		return ordersConfigPath(), "orders_", nil
+	case "bom":
+		return bomConfigPath(), "bom_mapping_", nil
+	default:
+		return "", "", fmt.Errorf("未知配置模块: %s", module)
+	}
+}
+
 func handlerConfigBackups(w http.ResponseWriter, r *http.Request) {
+	_, prefix, err := configModulePath(r.URL.Query().Get("module"))
+	if err != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+		return
+	}
 	dir := backupRoot()
 	ents, _ := os.ReadDir(dir)
 	type Item struct {
@@ -401,7 +419,7 @@ func handlerConfigBackups(w http.ResponseWriter, r *http.Request) {
 	}
 	out := []Item{}
 	for _, e := range ents {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+		if e.IsDir() || !strings.HasPrefix(e.Name(), prefix) || !strings.HasSuffix(e.Name(), ".json") {
 			continue
 		}
 		info, err := e.Info()
@@ -416,8 +434,14 @@ func handlerConfigBackups(w http.ResponseWriter, r *http.Request) {
 
 // handlerConfigBackupGet 只读返回某份备份的完整配置（供「对比当前配置」使用）。
 func handlerConfigBackupGet(w http.ResponseWriter, r *http.Request) {
+	module := r.URL.Query().Get("module")
+	_, prefix, moduleErr := configModulePath(module)
+	if moduleErr != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": moduleErr.Error()})
+		return
+	}
 	name := filepath.Base(r.URL.Query().Get("name")) // 防目录穿越
-	if name == "" || !strings.HasSuffix(name, ".json") {
+	if name == "" || !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, ".json") {
 		writeJSON(w, map[string]interface{}{"ok": false, "error": "非法备份名"})
 		return
 	}
@@ -426,12 +450,24 @@ func handlerConfigBackupGet(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]interface{}{"ok": false, "error": "备份不存在: " + err.Error()})
 		return
 	}
-	var c Config
-	if err := json.Unmarshal(b, &c); err != nil {
+	var c interface{}
+	switch module {
+	case "ord", "orders":
+		c = &OrdersConfig{}
+	case "bom":
+		c = &BomConfig{}
+	default:
+		c = &Config{}
+	}
+	if err := json.Unmarshal(b, c); err != nil {
 		writeJSON(w, map[string]interface{}{"ok": false, "error": "备份内容不是合法配置: " + err.Error()})
 		return
 	}
-	writeJSON(w, map[string]interface{}{"ok": true, "fields": c.Fields})
+	resp := map[string]interface{}{"ok": true, "config": c}
+	if mat, ok := c.(*Config); ok {
+		resp["fields"] = mat.Fields
+	}
+	writeJSON(w, resp)
 }
 
 func handlerConfigRestore(w http.ResponseWriter, r *http.Request) {
@@ -439,8 +475,14 @@ func handlerConfigRestore(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", 405)
 		return
 	}
+	module := r.URL.Query().Get("module")
+	currentPath, prefix, moduleErr := configModulePath(module)
+	if moduleErr != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": moduleErr.Error()})
+		return
+	}
 	name := filepath.Base(r.URL.Query().Get("name")) // 防目录穿越
-	if !strings.HasSuffix(name, ".json") {
+	if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, ".json") {
 		writeJSON(w, map[string]interface{}{"ok": false, "error": "非法备份名"})
 		return
 	}
@@ -450,20 +492,61 @@ func handlerConfigRestore(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]interface{}{"ok": false, "error": "备份不存在: " + err.Error()})
 		return
 	}
-	var c Config
-	if err := json.Unmarshal(b, &c); err != nil {
-		writeJSON(w, map[string]interface{}{"ok": false, "error": "备份内容不是合法配置: " + err.Error()})
-		return
+	var c interface{}
+	switch module {
+	case "ord", "orders":
+		v := &OrdersConfig{}
+		if err := json.Unmarshal(b, v); err != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": "备份内容不是合法配置: " + err.Error()})
+			return
+		}
+		c = v
+	case "bom":
+		v := &BomConfig{}
+		if err := json.Unmarshal(b, v); err != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": "备份内容不是合法配置: " + err.Error()})
+			return
+		}
+		c = v
+	default:
+		v := &Config{}
+		if err := json.Unmarshal(b, v); err != nil {
+			writeJSON(w, map[string]interface{}{"ok": false, "error": "备份内容不是合法配置: " + err.Error()})
+			return
+		}
+		c = v
 	}
-	if _, err := backupConfig(); err != nil { // 还原前也备份当前，避免「还原」变成不可逆
+	if _, err := backupFile(currentPath, backupRoot()); err != nil { // 还原前也备份当前，避免「还原」变成不可逆
 		writeJSON(w, map[string]interface{}{"ok": false, "error": "备份当前配置失败，已取消还原：" + err.Error()})
 		return
 	}
-	if err := saveConfig(&c); err != nil {
-		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
+	var saveErr error
+	switch v := c.(type) {
+	case *OrdersConfig:
+		saveErr = saveOrdersConfig(v)
+	case *BomConfig:
+		saveErr = saveBomConfig(v)
+	case *Config:
+		saveErr = saveConfig(v)
+	}
+	if saveErr != nil {
+		writeJSON(w, map[string]interface{}{"ok": false, "error": saveErr.Error()})
 		return
 	}
 	writeJSON(w, map[string]interface{}{"ok": true, "config": c})
+}
+
+func handlerConfigDefaults(w http.ResponseWriter, r *http.Request) {
+	switch r.URL.Query().Get("module") {
+	case "", "mat", "materials":
+		writeJSON(w, map[string]interface{}{"ok": true, "config": defaultConfig()})
+	case "ord", "orders":
+		writeJSON(w, map[string]interface{}{"ok": true, "config": defaultOrdersConfig()})
+	case "bom":
+		writeJSON(w, map[string]interface{}{"ok": true, "config": defaultBomConfig()})
+	default:
+		writeJSON(w, map[string]interface{}{"ok": false, "error": "未知配置模块"})
+	}
 }
 
 // ---------- 源文件表头（供界面下拉） ----------
@@ -1518,7 +1601,7 @@ const (
 
 func requestBodyLimit(path string) int64 {
 	switch path {
-	case "/api/convert", "/api/preview", "/api/source-headers", "/api/orders/convert", "/api/bom/convert":
+	case "/api/convert", "/api/preview", "/api/source-headers", "/api/config-test", "/api/orders/convert", "/api/bom/convert":
 		return maxUploadBytes
 	default:
 		return maxBodyBytes
@@ -1670,6 +1753,8 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("/api/config-backups", handlerConfigBackups)
 	mux.HandleFunc("/api/config-backup", handlerConfigBackupGet)
 	mux.HandleFunc("/api/config-restore", handlerConfigRestore)
+	mux.HandleFunc("/api/config-defaults", handlerConfigDefaults)
+	mux.HandleFunc("/api/config-test", postOnly(handlerConfigTest))
 	mux.HandleFunc("/api/source-headers", handlerSourceHeaders)
 	mux.HandleFunc("/api/tpl/status", handlerTplStatus)
 	mux.HandleFunc("/api/tpl/reset", postOnly(handlerTplReset))
