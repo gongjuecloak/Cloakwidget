@@ -149,3 +149,11 @@ func TestBomHistoryCounts(t *testing.T) {
 		t.Fatalf("单位告警应说明原单位与实际采用值：%s", joined)
 	}
 }
+
+func TestRestoreLegacyBomWarning(t *testing.T) {
+	rep := &ConvertReport{ID: "old.json", Module: "bom"}
+	restoreLegacyBomWarning(rep, []HistoryItem{{Report: "old.json", Warnings: 6}})
+	if rep.WarningTotal != 6 || len(rep.Warnings) != 1 || !strings.Contains(rep.Warnings[0], "重新转换") {
+		t.Fatalf("旧 BOM 报告应显示无法恢复明细的提示：%#v", rep)
+	}
+}

@@ -1388,6 +1388,7 @@ func handlerReport(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
 		return
 	}
+	restoreLegacyBomWarning(rep, loadHistoryFile(bomHistoryPath()))
 	writeJSON(w, map[string]interface{}{"ok": true, "report": rep})
 }
 

@@ -9,6 +9,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -113,6 +114,19 @@ func loadReport(id string) (*ConvertReport, error) {
 		return nil, err
 	}
 	return &r, nil
+}
+
+func restoreLegacyBomWarning(r *ConvertReport, history []HistoryItem) {
+	if r.Module != "bom" || r.WarningTotal > 0 || len(r.Warnings) > 0 {
+		return
+	}
+	for _, it := range history {
+		if it.Report == r.ID && it.Warnings > 0 {
+			r.WarningTotal = it.Warnings
+			r.Warnings = []string{fmt.Sprintf("旧版记录只保存了 %d 行单位告警，未保存具体单位明细；请重新转换以查看详情", it.Warnings)}
+			return
+		}
+	}
 }
 
 // historyFromReports 让新增的模块能从既有报告恢复历史，不因旧版本漏写 history 而丢记录。
