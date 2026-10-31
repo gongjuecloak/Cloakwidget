@@ -10,7 +10,7 @@ const STR = {
     mod_ord_t1:"主表 + 明细 + 工单", mod_ord_t2:"行号回填", mod_ord_t3:"打标判定", mod_ord_go:"进入 →",
     back_btn:"返回",
     cfg_title:"配置中心", cfg_subtitle:"字段映射与转换规则的维护页面",
-    cfg_desc:"各模块的字段映射与规则都在这里维护。选文件、转换这些日常操作在各自的模块页面完成，这里只改配置。",
+    cfg_desc:"各模块的字段映射与规则都在这里维护。选文件、转换这些日常操作在各自的模块页面完成，这里只改配置。", cfg_unsaved:"有未保存的修改",
     cfg_entry_name:"配置中心",
     cfg_entry_desc:"字段映射、单位表、字典表、表头别名都在这里维护；操作页面只负责选文件与转换",
     cfg_entry_go:"进入 →", cfg_tab_mat:"物料档案", cfg_tab_ord:"订单 / 工单", cfg_nav_btn:"配置",
@@ -154,6 +154,7 @@ const STR = {
     upd_applying:"正在下载更新…", upd_done:"已更新，程序即将重启", upd_fail:"更新失败：",
     bom_stat_master:"BOM主表", bom_stat_detail:"BOM明细",
     bom_log_title:"转换日志", bom_copy_log:"复制日志", bom_view_log:"查看日志",
+    bom_hist_empty_hint:"把 BOM 抓取文件拖进上面的卡片即可开始；输出模板已内置。",
     help_body:`<h4>三步完成转换</h4>
 <ol><li><b>选源文件</b>：从鼎新 ERP 导出的物料档（.xlsx，含 MB001 ~ MB254 列）。</li>
 <li><b>选模板</b>：MES 的「物料档案导入模板」。</li>
@@ -178,7 +179,7 @@ const STR = {
     mod_ord_t1:"主表 + 明細 + 工單", mod_ord_t2:"行號回填", mod_ord_t3:"打標判定", mod_ord_go:"進入 →",
     back_btn:"返回",
     cfg_title:"設定中心", cfg_subtitle:"欄位對應與轉換規則的維護頁面",
-    cfg_desc:"各模組的欄位對應與規則都在這裡維護。選檔、轉換這些日常操作在各自的模組頁面完成，這裡只改設定。",
+    cfg_desc:"各模組的欄位對應與規則都在這裡維護。選檔、轉換這些日常操作在各自的模組頁面完成，這裡只改設定。", cfg_unsaved:"有未儲存的修改",
     cfg_entry_name:"設定中心",
     cfg_entry_desc:"欄位對應、單位表、字典表、表頭別名都在這裡維護；操作頁面只負責選檔與轉換",
     cfg_entry_go:"進入 →", cfg_tab_mat:"物料檔案", cfg_tab_ord:"訂單 / 工單", cfg_nav_btn:"設定",
@@ -321,6 +322,7 @@ const STR = {
     upd_applying:"正在下載更新…", upd_done:"已更新，程式即將重啟", upd_fail:"更新失敗：", bom_st_alias:"別名命中",
     bom_stat_master:"BOM主表", bom_stat_detail:"BOM明細",
     bom_log_title:"轉換記錄", bom_copy_log:"複製記錄", bom_view_log:"查看記錄",
+    bom_hist_empty_hint:"把 BOM 抓取檔案拖進上面的卡片即可開始；輸出範本已內建。",
     help_body:`<h4>三步完成轉換</h4>
 <ol><li><b>選來源檔</b>：從鼎新 ERP 匯出的物料檔（.xlsx，含 MB001 ~ MB254 欄）。</li>
 <li><b>選範本</b>：MES 的「物料檔案匯入範本」。</li>
@@ -345,7 +347,7 @@ const STR = {
     mod_ord_t1:"Bảng chính + chi tiết + lệnh SX", mod_ord_t2:"Điền số dòng", mod_ord_t3:"Đánh dấu", mod_ord_go:"Vào →",
     back_btn:"Quay lại",
     cfg_title:"Trung tâm cấu hình", cfg_subtitle:"Nơi quản lý ánh xạ trường và quy tắc chuyển đổi",
-    cfg_desc:"Ánh xạ trường và quy tắc của từng mô-đun được quản lý ở đây. Việc chọn tệp và chuyển đổi thực hiện ở trang của từng mô-đun.",
+    cfg_desc:"Ánh xạ trường và quy tắc của từng mô-đun được quản lý ở đây. Việc chọn tệp và chuyển đổi thực hiện ở trang của từng mô-đun.", cfg_unsaved:"Có thay đổi chưa lưu",
     cfg_entry_name:"Trung tâm cấu hình",
     cfg_entry_desc:"Ánh xạ trường, bảng đơn vị, bảng từ điển, bí danh tiêu đề đều ở đây; trang thao tác chỉ chọn tệp và chuyển đổi",
     cfg_entry_go:"Vào →", cfg_tab_mat:"Hồ sơ vật tư", cfg_tab_ord:"Đơn hàng / Lệnh SX", cfg_nav_btn:"Cấu hình",
@@ -490,6 +492,7 @@ const STR = {
     upd_applying:"Đang tải bản cập nhật…", upd_done:"Đã cập nhật, chương trình sắp khởi động lại", upd_fail:"Cập nhật thất bại: ", bom_st_alias:"Khớp bí danh",
     bom_stat_master:"BOM chính", bom_stat_detail:"BOM chi tiết",
     bom_log_title:"Nhật ký chuyển đổi", bom_copy_log:"Sao chép nhật ký", bom_view_log:"Xem nhật ký",
+    bom_hist_empty_hint:"Kéo tệp BOM vào thẻ bên trên để bắt đầu; mẫu đầu ra đã được tích hợp.",
     help_body:`<h4>Ba bước để chuyển đổi</h4>
 <ol><li><b>Chọn tệp nguồn</b>: tệp vật tư xuất từ ERP Đỉnh Tân (.xlsx, gồm MB001 ~ MB254).</li>
 <li><b>Chọn biểu mẫu</b>: mẫu nhập hồ sơ vật tư của MES.</li>
@@ -514,7 +517,7 @@ const STR = {
     mod_ord_t1:"Master + detail + work orders", mod_ord_t2:"Line back-fill", mod_ord_t3:"Mark decision", mod_ord_go:"Open →",
     back_btn:"Back",
     cfg_title:"Configuration", cfg_subtitle:"Where field mappings and conversion rules are maintained",
-    cfg_desc:"Field mappings and rules for each module live here. Picking files and converting stay on each module's own page.",
+    cfg_desc:"Field mappings and rules for each module live here. Picking files and converting stay on each module's own page.", cfg_unsaved:"Unsaved changes",
     cfg_entry_name:"Configuration",
     cfg_entry_desc:"Field mappings, units, dictionaries and header aliases all live here; module pages only pick files and convert",
     cfg_entry_go:"Open →", cfg_tab_mat:"Material archive", cfg_tab_ord:"Order / Work order", cfg_nav_btn:"Configure",
@@ -659,6 +662,7 @@ const STR = {
     upd_applying:"Downloading update…", upd_done:"Updated — restarting", upd_fail:"Update failed: ", bom_st_alias:"Alias hit",
     bom_stat_master:"BOM master", bom_stat_detail:"BOM detail",
     bom_log_title:"Conversion log", bom_copy_log:"Copy log", bom_view_log:"View log",
+    bom_hist_empty_hint:"Drop a BOM capture file into the card above to start; the output template is built in.",
     help_body:`<h4>Three steps</h4>
 <ol><li><b>Pick the source</b>: the material file exported from Data Systems ERP (.xlsx, columns MB001 ~ MB254).</li>
 <li><b>Pick the template</b>: the MES "material import template".</li>
@@ -760,7 +764,7 @@ function cleanHdr(s){ return String(s==null?"":s).replace(/^\*\s*/,"").trim(); }
 
 const TEXT_MAP = {
   app_title:"app_title", app_subtitle:"app_subtitle", lang_label:"lang_label",
-  cfgNavBtn:"cfg_nav_btn", cfg_title:"cfg_title", cfg_desc:"cfg_desc",
+  cfgNavBtn:"cfg_nav_btn", cfg_title:"cfg_title", cfg_desc:"cfg_desc", cfgDirtyBadge:"cfg_unsaved",
   cfgTabMat:"cfg_tab_mat", cfgTabOrd:"cfg_tab_ord", cfgTabBom:"cfg_tab_bom", cfgFailBanner:"cfg_load_fail",
   cfg_entry_name:"cfg_entry_name", cfg_entry_desc:"cfg_entry_desc", cfg_entry_go:"cfg_entry_go",
   step_source:"step_source", step_source_desc:"step_source_desc",
@@ -815,6 +819,8 @@ const TEXT_MAP = {
   bom_diag_title:"bom_diag_title",
   bom_unit_raw:"bom_unit_raw", bom_unit_count:"bom_unit_count", bom_unit_mapped:"bom_unit_mapped", bom_unit_status:"bom_unit_status",
   bom_log_title:"bom_log_title", bomCopyLogBtn:"bom_copy_log", bomToggleLogBtn:"bom_view_log",
+  bomHistoryTitle:"history_title", bomRefreshHistBtn:"refresh",
+  bomHistTime:"hist_time", bomHistFile:"hist_file", bomHistRows:"hist_rows", bomHistStatus:"hist_status",
   // ---- 订单 / 工单模块 ----
   ord_step_source:"ord_step_source", ord_step_source_desc:"ord_step_source_desc",
   ord_step_work:"ord_step_work", ord_step_work_desc:"ord_step_work_desc",

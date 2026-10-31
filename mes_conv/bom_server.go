@@ -185,6 +185,34 @@ func bomSaveOne(r *http.Request, dir, field string) (string, string, error) {
 	return path, heads[0].Filename, nil
 }
 
+func bomHistoryPath() string { return filepath.Join(exeDir(), "out", "bom_history.json") }
+
+func loadBomHistory() []HistoryItem {
+	return mergeHistories(loadHistoryFile(bomHistoryPath()), historyFromReports(reportsDir(), "bom"))
+}
+
+func appendBomHistory(it HistoryItem) { _ = appendHistoryFile(bomHistoryPath(), it) }
+
+func handlerBomHistory(w http.ResponseWriter, r *http.Request) {
+	h := loadBomHistory()
+	if h == nil {
+		h = []HistoryItem{}
+	}
+	writeJSON(w, map[string]interface{}{"ok": true, "items": h})
+}
+
+func bomHistoryCounts(rep *BomReport) (issues, warnings int) {
+	issues = rep.EmptySeq + rep.NonNumSeq + rep.EmptyChild
+	for _, u := range rep.UnitStats {
+		switch strings.ToUpper(strings.TrimSpace(u.Status)) {
+		case "OK", "ALIAS", "AMBIG_RESOLVED", "NO_MAP":
+		default:
+			warnings += u.Count
+		}
+	}
+	return issues, warnings
+}
+
 // handlerBomConvert POST /api/bom/convert
 // 表单：source（必填）、template（必填）、unitmap（可选）、basediv、lang
 func handlerBomConvert(w http.ResponseWriter, r *http.Request) {
@@ -318,23 +346,29 @@ func handlerBomConvert(w http.ResponseWriter, r *http.Request) {
 	add(fmt.Sprintf(L["b_elapsed"], time.Since(start).Milliseconds()))
 	_ = os.WriteFile(logPath, []byte(strings.Join(logs, "\n")), 0644)
 
-	// 落盘完整报告（与物料 / 订单模块共用「最近转换」的报表存储）
+	// 落盘完整报告，并写入 BOM 独立历史；旧版本漏写的记录会从报告自动恢复。
 	elapsed := time.Since(start).Milliseconds()
 	nowStr := time.Now().Format("2006-01-02 15:04:05")
 	reportID := strings.TrimSuffix(base, ".xlsx") + ".json"
+	issues, warnings := bomHistoryCounts(rep)
 	saveReport(&ConvertReport{
-		ID:        reportID,
-		Time:      nowStr,
-		Source:    srcName,
-		Template:  tplName,
-		Output:    base,
-		Rows:      rep.MasterRows + rep.DetailRows,
-		ElapsedMS: elapsed,
-		Module:    "bom",
+		ID:         reportID,
+		Time:       nowStr,
+		Source:     srcName,
+		Template:   tplName,
+		Output:     base,
+		Rows:       rep.MasterRows + rep.DetailRows,
+		ElapsedMS:  elapsed,
+		IssueTotal: issues,
+		Module:     "bom",
 		Types: map[string]int{
 			"BOM主表": rep.MasterRows,
 			"BOM明细": rep.DetailRows,
 		},
+	})
+	appendBomHistory(HistoryItem{
+		Time: nowStr, File: base, Rows: rep.MasterRows + rep.DetailRows, Source: srcName, Template: tplName,
+		Issues: issues, Warnings: warnings, Report: reportID, Module: "bom",
 	})
 
 	if rep.UnitStats == nil {

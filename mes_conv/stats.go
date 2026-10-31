@@ -6,7 +6,7 @@ package main
 // 「最近转换」列表能回答「上一次怎么样」，回答不了「这一阵子怎么样」：
 // 一共转了多少次、踩过多少问题、告警集中在哪天。面板要的数字在这里汇总。
 //
-// 数据源就是两本 history（物料 + 订单），不额外落盘任何东西。
+// 数据源就是三本 history（物料 + 订单 + BOM），不额外落盘任何东西。
 // ============================================================================
 
 import (
@@ -31,6 +31,7 @@ type statsResp struct {
 	WarnTotal  int           `json:"warn_total"`  // 告警总数
 	Materials  int           `json:"materials"`   // 物料档案次数
 	Orders     int           `json:"orders"`      // 订单工单次数
+	BOM        int           `json:"bom"`         // BOM 次数
 	ByDay      []statsDay    `json:"by_day"`
 	Recent     []HistoryItem `json:"recent"`
 }
@@ -43,7 +44,17 @@ func allHistory() []HistoryItem {
 			out = append(out, h...)
 		}
 	}
+	out = append(out, loadBomHistory()...)
 	return out
+}
+
+func latestHistory() (HistoryItem, bool) {
+	items := allHistory()
+	if len(items) == 0 {
+		return HistoryItem{}, false
+	}
+	sort.SliceStable(items, func(i, j int) bool { return items[i].Time > items[j].Time })
+	return items[0], true
 }
 
 func computeStats() statsResp {
@@ -61,9 +72,12 @@ func computeStats() statsResp {
 		} else {
 			s.WithIssues++
 		}
-		if it.Module == "orders" {
+		switch it.Module {
+		case "orders":
 			s.Orders++
-		} else {
+		case "bom":
+			s.BOM++
+		default:
 			s.Materials++
 		}
 		if len(it.Time) >= 10 {
@@ -115,6 +129,7 @@ func handlerStats(w http.ResponseWriter, r *http.Request) {
 		"warn_total":  s.WarnTotal,
 		"materials":   s.Materials,
 		"orders":      s.Orders,
+		"bom":         s.BOM,
 		"by_day":      s.ByDay,
 		"recent":      s.Recent,
 	})

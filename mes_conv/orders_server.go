@@ -270,29 +270,11 @@ func handlerOrdersConvert(w http.ResponseWriter, r *http.Request) {
 func ordersHistoryPath() string { return filepath.Join(exeDir(), "out", "orders_history.json") }
 
 func appendOrdersHistory(it HistoryItem) {
-	histMu.Lock()
-	defer histMu.Unlock()
-	var old []HistoryItem
-	if b, err := os.ReadFile(ordersHistoryPath()); err == nil {
-		_ = json.Unmarshal(b, &old)
-	}
-	h := append([]HistoryItem{it}, old...)
-	if len(h) > 50 {
-		h = h[:50]
-	}
-	b, err := json.MarshalIndent(h, "", "  ")
-	if err != nil {
-		return
-	}
-	_ = os.MkdirAll(filepath.Dir(ordersHistoryPath()), 0755)
-	_ = os.WriteFile(ordersHistoryPath(), b, 0644)
+	_ = appendHistoryFile(ordersHistoryPath(), it)
 }
 
 func handlerOrdersHistory(w http.ResponseWriter, r *http.Request) {
-	var h []HistoryItem
-	if b, err := os.ReadFile(ordersHistoryPath()); err == nil {
-		_ = json.Unmarshal(b, &h)
-	}
+	h := loadHistoryFile(ordersHistoryPath())
 	if h == nil {
 		h = []HistoryItem{}
 	}

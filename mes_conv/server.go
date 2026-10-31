@@ -1292,7 +1292,7 @@ type HistoryItem struct {
 	Issues   int    `json:"issues"`
 	Warnings int    `json:"warnings"`
 	Report   string `json:"report"` // 报告文件名（null/空表示那次没留下报告），用于事后查看问题明细
-	Module   string `json:"module"` // 空/materials = 物料档案，orders = 订单工单
+	Module   string `json:"module"` // 空/materials = 物料档案，orders = 订单工单，bom = BOM
 }
 
 // noBrowser 由 -nobrowser 设置：启动时不自动打开浏览器（开机自启 / 托盘常驻场景）
@@ -1302,8 +1302,8 @@ var histMu sync.Mutex
 
 func historyPath() string { return filepath.Join(exeDir(), "out", "history.json") }
 
-func loadHistory() []HistoryItem {
-	b, err := os.ReadFile(historyPath())
+func loadHistoryFile(path string) []HistoryItem {
+	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil
 	}
@@ -1314,19 +1314,24 @@ func loadHistory() []HistoryItem {
 	return h
 }
 
-func appendHistory(it HistoryItem) {
+func appendHistoryFile(path string, it HistoryItem) error {
 	histMu.Lock()
 	defer histMu.Unlock()
-	h := append([]HistoryItem{it}, loadHistory()...)
+	h := append([]HistoryItem{it}, loadHistoryFile(path)...)
 	if len(h) > 50 {
 		h = h[:50]
 	}
 	b, err := json.MarshalIndent(h, "", "  ")
 	if err != nil {
-		return
+		return err
 	}
-	_ = os.MkdirAll(filepath.Dir(historyPath()), 0755)
-	_ = os.WriteFile(historyPath(), b, 0644)
+	return writeConfigFile(path, b)
+}
+
+func loadHistory() []HistoryItem { return loadHistoryFile(historyPath()) }
+
+func appendHistory(it HistoryItem) {
+	_ = appendHistoryFile(historyPath(), it)
 }
 
 func handlerHistory(w http.ResponseWriter, r *http.Request) {
@@ -1618,6 +1623,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("/api/orders/convert", singleConversion(handlerOrdersConvert))
 	mux.HandleFunc("/api/orders/history", handlerOrdersHistory)
 	mux.HandleFunc("/api/bom/convert", singleConversion(handlerBomConvert))
+	mux.HandleFunc("/api/bom/history", handlerBomHistory)
 	mux.HandleFunc("/api/bom/config", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			handlerBomSaveConfig(w, r)

@@ -2,14 +2,15 @@
 
 鼎新 ERP 导出文件 → MES 导入表的本地转换工具。单个 exe，双击即用，离线运行，数据不上传。
 
-工具里有两个**互相独立**的模块，打开程序先选模块：
+工具里有三个**互相独立**的模块，打开程序先选模块：
 
 | 模块 | 输入 | 输出 |
 |---|---|---|
 | **物料档案** | 鼎新物料档（INVMB，MB001 ~ MB254） | MES「物料档案导入模板」单表 |
 | **订单 / 工单** | 鼎新订单档 + 製令（工单）档 | MES「销售订单主表 / 销售订单明细 / 工单」三张表 |
+| **BOM / 用料表** | 鼎新 BOM 抓取文件 | MES「BOM主表 / BOM明细」两张表 |
 
-两个模块共用同一套外壳：系统托盘、转换进度、日志、预检报告、四语界面（简中 / 繁中 / 越南语 / 英文）。
+三个模块共用同一套外壳：系统托盘、转换进度、日志、预检报告、四语界面（简中 / 繁中 / 越南语 / 英文）。
 
 ---
 
@@ -29,13 +30,13 @@ mes_conv/                         Go 源码（工具本体）
   autostart_windows.go / autostart_other.go   开机自启（纯 syscall 写 HKCU\...\Run）
   diag.go                         一键排障包（zip：日志 + 配置 + 环境，口令脱敏）
   update.go                       检查更新（GitHub releases/latest，失败退回 tags）
-  stats.go                        转换历史统计（按天聚合，跨两个模块）
+  stats.go                        转换历史统计（按天聚合，跨三个模块）
   orders.go                       订单/工单引擎（核心）
   orders_flow.go                  订单/工单转换流程
   orders_config.go                订单模块配置结构 + 内置默认配置
   orders_server.go                订单模块 HTTP 接口
   orders_i18n.go                  订单模块四语文案
-  i18n_common.go                  两个模块共用的四语文案（汇总/模板/系统）
+  i18n_common.go                  三个模块共用的四语文案（汇总/模板/系统）
   webui/                          界面（index.html / style.css / i18n.js / app.js，
                                    用 //go:embed webui/* 内嵌进 exe，同目录放文件可覆盖）
   assets.go                       内嵌资源读取与「磁盘优先、内嵌兜底」组装

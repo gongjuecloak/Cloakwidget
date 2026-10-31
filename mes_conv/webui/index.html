@@ -305,7 +305,7 @@
 
   <!-- ===== 模块三：BOM / 用料表 ===== -->
   <div id="viewBom" class="view" style="display:none">
-    <div class="steps">
+    <div class="steps bom-steps">
       <div class="card upload-card" id="bomSrcCard" data-upload-card="bomSrcFile">
         <div class="step-no">1</div>
         <h2><span id="bom_step_source">BOM 抓取文件</span><span class="field-badge required" id="bomSrcRequired">必填</span></h2>
@@ -365,6 +365,20 @@
       </div>
     </section>
 
+    <section id="bomHistSection" class="history">
+      <div class="section-title">
+        <h3 id="bomHistoryTitle">最近转换</h3>
+        <button id="bomRefreshHistBtn" class="ghost">刷新</button>
+      </div>
+      <table><thead><tr>
+        <th id="bomHistTime" style="width:170px">时间</th>
+        <th id="bomHistFile">文件</th>
+        <th id="bomHistRows" style="width:80px">行数</th>
+        <th id="bomHistStatus" style="width:110px">预检</th>
+        <th style="width:100px"></th>
+      </tr></thead><tbody id="bomHistBody"></tbody></table>
+    </section>
+
     <section id="bomDiagSection" class="check-section">
       <div class="section-title">
         <h3 id="bom_diag_title">诊断与单位核对</h3>
@@ -398,7 +412,7 @@
   <div id="viewConfig" class="view" style="display:none">
     <div id="cfgFailBanner" class="banner err" role="alert"></div>
     <div class="cfg-head">
-      <h2 id="cfg_title">配置中心</h2>
+      <div class="cfg-title-line"><h2 id="cfg_title">配置中心</h2><span id="cfgDirtyBadge" class="dirty-badge" role="status" aria-live="polite" hidden>有未保存的修改</span></div>
       <p id="cfg_desc">各模块的字段映射与规则都在这里维护。选文件、转换这些日常操作在各自的模块页面完成，这里只改配置。</p>
     </div>
     <div class="cfg-tabs" role="tablist" aria-label="配置模块">

@@ -19,7 +19,7 @@ import (
 type ConvertReport struct {
 	ID         string         `json:"id"`       // 报告文件名（不含目录），如 MES物料档案_20261007_112514.json
 	Time       string         `json:"time"`     // 转换时间
-	Module     string         `json:"module"`   // 所属模块：空/materials = 物料档案，orders = 订单工单
+	Module     string         `json:"module"`   // 所属模块：空/materials = 物料档案，orders = 订单工单，bom = BOM
 	Source     string         `json:"source"`   // 源文件名
 	Template   string         `json:"template"` // 模板文件名
 	Output     string         `json:"output"`   // 输出文件名
@@ -100,4 +100,62 @@ func loadReport(id string) (*ConvertReport, error) {
 		return nil, err
 	}
 	return &r, nil
+}
+
+// historyFromReports 让新增的模块能从既有报告恢复历史，不因旧版本漏写 history 而丢记录。
+func historyFromReports(dir, module string) []HistoryItem {
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	items := make([]HistoryItem, 0, len(ents))
+	for _, e := range ents {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		var r ConvertReport
+		if json.Unmarshal(b, &r) != nil || r.Module != module {
+			continue
+		}
+		report := r.ID
+		if report == "" {
+			report = e.Name()
+		}
+		items = append(items, HistoryItem{
+			Time: r.Time, File: r.Output, Rows: r.Rows, Source: r.Source, Template: r.Template,
+			Issues: r.IssueTotal, Warnings: len(r.Warnings), Report: report, Module: r.Module,
+		})
+	}
+	sort.SliceStable(items, func(i, j int) bool { return items[i].Time > items[j].Time })
+	if len(items) > 50 {
+		items = items[:50]
+	}
+	return items
+}
+
+func mergeHistories(groups ...[]HistoryItem) []HistoryItem {
+	seen := map[string]bool{}
+	var out []HistoryItem
+	for _, group := range groups {
+		for _, it := range group {
+			key := it.Report
+			if key == "" {
+				key = it.Module + "\x00" + it.Time + "\x00" + it.File
+			}
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, it)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Time > out[j].Time })
+	if len(out) > 50 {
+		out = out[:50]
+	}
+	return out
 }

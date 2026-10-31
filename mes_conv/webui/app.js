@@ -282,6 +282,7 @@ async function doConvert(){
       lastResult={data:data,lang:currentLang};   // 缓存结果，便于切换语言时重渲染
       renderChecks(data);
       loadHistory();
+      loadStats();
       doneText=fmt("prog_done",[data.rows||0]);
       rs.scrollIntoView({behavior:"smooth",block:"nearest"});
     } else {
@@ -339,7 +340,7 @@ function makeHistoryLoader(c){
           ? '<span style="color:#b45309">'+t(c.k.bad)+' ('+it.issues+')</span>'
           : '<span style="color:#059669">'+t(c.k.ok)+'</span>';
         // 「查看」按钮：把那次转换留下的问题明细重新摊开（服务重启过也照样能看）
-        const viewBtn = it.report
+        const viewBtn = c.view && it.report
           ? '<button class="ghost '+c.btnCls+'" data-report="'+esc(it.report)+'" style="padding:3px 9px;font-size:12px;margin-right:6px'+(bad?';color:#b45309':'')+'">'
             +esc(bad?t("hist_view_bad"):t("hist_view"))+'</button>'
           : '';
@@ -347,13 +348,15 @@ function makeHistoryLoader(c){
           '<td>'+viewBtn+
           '<a class="ghost" style="padding:3px 9px;font-size:12px" href="/download?file='+encodeURIComponent(it.file||"")+'">'+t(c.k.dl)+'</a></td></tr>';
       }).join("");
-      body.querySelectorAll("button."+c.btnCls).forEach(b=>{
-        b.addEventListener("click",()=>c.view(b.getAttribute("data-report")));
-      });
+      if(c.view){
+        body.querySelectorAll("button."+c.btnCls).forEach(b=>{
+          b.addEventListener("click",()=>c.view(b.getAttribute("data-report")));
+        });
+      }
       // 打开页面时，若最近一次转换就有问题，直接把它摊开
       // —— 否则用户重开服务后根本想不起来上次哪儿有问题
       const latest=items[0];
-      if(latest && latest.report && ((latest.issues||0)>0 || (latest.warnings||0)>0)){
+      if(c.view && latest && latest.report && ((latest.issues||0)>0 || (latest.warnings||0)>0)){
         c.view(latest.report,true);
       }
     }catch(e){}
@@ -783,7 +786,7 @@ function loadAdvFromCfg(){
   advCross = clone(cfg.cross_checks||[]);
   document.getElementById("outSheetInput").value = cfg.output_sheet || "物料档案";
   renderTable(); renderUnitMap(); renderDicts(); renderWl(); renderLen(); renderCross();
-  advLoaded=true; if(window.__dirty) window.__dirty.mat=false;
+  advLoaded=true; if(window.__dirty){ window.__dirty.mat=false; updateDirtyBadge(); }
 }
 function advMsg(msg,kind){ const el=document.getElementById("advMsg"); el.textContent=msg; el.className="adv-msg "+(kind||""); }
 function syncAdvToCfg(){
@@ -834,7 +837,7 @@ document.getElementById("saveConfigBtn").addEventListener("click",async()=>{
   try{
     const r=await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(cfg)});
     const d=await r.json();
-    if(d.ok){ advMsg(t("saved_ok"),"ok"); window.__dirty.mat=false; refreshBackups(); } else advMsg(t("saved_err")+JSON.stringify(d.error),"err");
+    if(d.ok){ advMsg(t("saved_ok"),"ok"); window.__dirty.mat=false; updateDirtyBadge(); refreshBackups(); } else advMsg(t("saved_err")+JSON.stringify(d.error),"err");
   }catch(err){ advMsg(err.message,"err"); }
 });
 
@@ -1131,6 +1134,7 @@ function showModule(name){
   }
   if(name==="bom"){
     if(!bomCfgLoaded) loadBomCfg();
+    loadBomHistory();
   }
   if(name==="home"){
     refreshRecent();
@@ -1141,7 +1145,7 @@ function showModule(name){
 }
 
 // ---- 首页「最近一次转换」卡片 ----
-// 物料与订单各自维护一份 history.json，这里合并后取最新的一条：
+// 三个模块各自维护 history，这里合并后取最新的一条：
 // 用户回到首页就能看到上次转了哪个文件、有没有问题，不用先点进模块翻历史。
 async function refreshRecent(){
   const card=document.getElementById("recentCard");
@@ -1154,9 +1158,11 @@ async function refreshRecent(){
       return it?Object.assign({mod:mod},it):null;
     }catch(e){ return null; }
   };
-  const [mat,ord]=await Promise.all([grab("/api/history","materials"),grab("/api/orders/history","orders")]);
+  const [mat,ord,bom]=await Promise.all([
+    grab("/api/history","materials"), grab("/api/orders/history","orders"), grab("/api/bom/history","bom")
+  ]);
   // time 是 "YYYY-MM-DD HH:mm:ss"，直接按字典序比就是时间序
-  const newest=[mat,ord].filter(Boolean).sort((a,b)=>String(b.time||"").localeCompare(String(a.time||"")))[0];
+  const newest=[mat,ord,bom].filter(Boolean).sort((a,b)=>String(b.time||"").localeCompare(String(a.time||"")))[0];
   const badge=document.getElementById("rcBadge");
   const title=document.getElementById("rcTitle");
   const meta=document.getElementById("rcMeta");
@@ -1178,14 +1184,14 @@ async function refreshRecent(){
     return;
   }
   if(btnStart) btnStart.style.display="none";
-  const isOrd=newest.mod==="orders";
-  badge.textContent=isOrd?"ORD":"MES";
+  const modLabel=newest.mod==="orders"?t("mod_ord_name"):(newest.mod==="bom"?t("mod_bom_name"):t("mod_mat_name"));
+  badge.textContent=newest.mod==="orders"?"ORD":(newest.mod==="bom"?"BOM":"MES");
   title.textContent=newest.file||"—";
   const n=(newest.issues||0)+(newest.warnings||0);
   const state=n>0
     ? '<span class="rc-state bad">'+esc(fmt("home_recent_bad",[n]))+'</span>'
     : '<span class="rc-state ok">'+esc(t("home_recent_ok"))+'</span>';
-  meta.innerHTML=esc(fmt("home_recent_meta",[isOrd?t("mod_ord_name"):t("mod_mat_name"),newest.rows||0,newest.time||""]))+' · '+state;
+  meta.innerHTML=esc(fmt("home_recent_meta",[modLabel,newest.rows||0,newest.time||""]))+' · '+state;
   btnGo.style.display="";
   btnOut.style.display="";
   btnGo.onclick=()=>showModule(newest.mod);
@@ -1284,7 +1290,7 @@ document.getElementById("cfgTabBom").addEventListener("click",()=>showCfgTab("bo
 const _cfgTabSysBtn=document.getElementById("cfgTabSys");
 if(_cfgTabSysBtn) _cfgTabSysBtn.addEventListener("click",()=>showCfgTab("sys"));
 document.getElementById("backHomeBtn").addEventListener("click",()=>{
-  if(currentModule==="config" && (window.__dirty.mat||window.__dirty.ord) && !confirm(t("cfg_leave_confirm"))) return;
+  if(currentModule==="config" && (window.__dirty.mat||window.__dirty.ord||window.__dirty.bom) && !confirm(t("cfg_leave_confirm"))) return;
   showModule("home");
 });
 refreshRecent();
@@ -1293,6 +1299,7 @@ refreshRecent();
 document.getElementById("langSel").addEventListener("change",()=>{
   if(ordCfgLoaded){ const bak=ordCfg; ordCfg=collectOrdCfg(); ordRenderCfg(); ordCfg=bak; }
   if(currentModule==="orders") loadOrdersHistory();
+  if(currentModule==="bom") loadBomHistory();
   if(bomLastResult && document.getElementById("bomResultSection").classList.contains("show")){
     renderBomStats(bomLastResult.data); renderBomDiag(bomLastResult.data);
   }
@@ -1366,6 +1373,7 @@ async function doOrdersConvert(){
       ordLastResult={data:data,lang:currentLang};
       ordRenderChecks(data);
       loadOrdersHistory();
+      loadStats();
       doneText=fmt("prog_done",[data.rows||0]);
       rs.scrollIntoView({behavior:"smooth",block:"nearest"});
     }else{
@@ -1402,6 +1410,10 @@ const bomSrcPicker = bindMultiFile("bomSrcFile","bomSrcName","bomSrcList","bomSr
 const bomTplPicker = bindMultiFile("bomTplFile","bomTplName","bomTplList","bomTplCard", null, null);
 const bomMapPicker = bindMultiFile("bomMapFile","bomMapName","bomMapList","bomMapCard", null, null);
 let bomLastResult=null;
+const loadBomHistory=makeHistoryLoader({
+  url:"/api/bom/history", body:"bomHistBody", sec:"bomHistSection", btnCls:"jsbomview", view:null,
+  hint:"bom_hist_empty_hint", k:{none:"hist_none", bad:"hist_bad", ok:"hist_ok", dl:"hist_dl"} });
+document.getElementById("bomRefreshHistBtn").addEventListener("click",loadBomHistory);
 
 function bomEsc(s){
   return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -1464,6 +1476,9 @@ async function doBomConvert(){
       document.getElementById("bomDownloadLink").href="/download?file="+encodeURIComponent(data.file);
       renderBomStats(data); renderBomDiag(data);
       bomLastResult={data:data,lang:currentLang};
+      loadBomHistory();
+      refreshRecent();
+      loadStats();
       doneText=fmt("prog_done",[data.rows||0]);
       rs.scrollIntoView({behavior:"smooth",block:"nearest"});
     }else{
@@ -1650,6 +1665,7 @@ function ordAdvMsg(text,ok){
 }
 document.getElementById("ordCfgReloadBtn").addEventListener("click",()=>{
   ordCfgLoaded=false; window.__dirty.ord=false;
+  updateDirtyBadge();
   loadOrdersCfg().then(()=>ordAdvMsg(t("loaded_ok"),true));
 });
 document.getElementById("ordCfgSaveBtn").addEventListener("click",async()=>{
@@ -1657,7 +1673,7 @@ document.getElementById("ordCfgSaveBtn").addEventListener("click",async()=>{
   try{
     const r=await fetch("/api/orders/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(c)});
     const d=await r.json();
-    if(d.ok){ ordCfg=c; window.__dirty.ord=false; ordAdvMsg(t("ord_cfg_saved"),true); }
+    if(d.ok){ ordCfg=c; window.__dirty.ord=false; updateDirtyBadge(); ordAdvMsg(t("ord_cfg_saved"),true); }
     else ordAdvMsg(t("ord_cfg_fail")+(d.error||""),false);
   }catch(e){ ordAdvMsg(t("ord_cfg_fail")+((e&&e.message)||""),false); }
 });
@@ -1790,6 +1806,7 @@ function bomAdvMsg(text,ok){
 }
 document.getElementById("bomCfgReloadBtn").addEventListener("click",()=>{
   bomCfgLoaded=false; window.__dirty.bom=false;
+  updateDirtyBadge();
   loadBomCfg().then(()=>bomAdvMsg(t("loaded_ok"),true));
 });
 document.getElementById("bomCfgSaveBtn").addEventListener("click",async()=>{
@@ -1797,7 +1814,7 @@ document.getElementById("bomCfgSaveBtn").addEventListener("click",async()=>{
   try{
     const r=await fetch("/api/bom/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(c)});
     const d=await r.json();
-    if(d.ok){ bomCfg=c; window.__dirty.bom=false; bomAdvMsg(t("bom_cfg_saved"),true); }
+    if(d.ok){ bomCfg=c; window.__dirty.bom=false; updateDirtyBadge(); bomAdvMsg(t("bom_cfg_saved"),true); }
     else bomAdvMsg(t("bom_cfg_fail")+(d.error||""),false);
   }catch(e){ bomAdvMsg(t("bom_cfg_fail")+((e&&e.message)||""),false); }
 });
@@ -1834,7 +1851,7 @@ const STR2 = {
     donut_rows:"共 %d 行", donut_none:"无问题",
     stats_title:"转换统计", stats_runs:"转换次数", stats_rows:"累计输出行数",
     stats_clean:"零问题次数", stats_with_issues:"有问题次数", stats_issues:"问题条数",
-    stats_warns:"告警条数", stats_mat:"物料档案", stats_ord:"订单 / 工单",
+    stats_warns:"告警条数", stats_mat:"物料档案", stats_ord:"订单 / 工单", stats_bom:"BOM / 用料表",
     stats_none:"还没有转换记录", stats_bars:"按天（最近 %d 天）",
     diff_title:"确认配置变更", diff_hint:"下面是这次保存会带来的改动，确认无误后再保存；取消则不会写入。",
     diff_none:"没有检测到改动", diff_ok:"确认保存", diff_cancel:"取消",
@@ -1899,7 +1916,7 @@ const STR2 = {
     donut_rows:"共 %d 列", donut_none:"無問題",
     stats_title:"轉換統計", stats_runs:"轉換次數", stats_rows:"累計輸出列數",
     stats_clean:"零問題次數", stats_with_issues:"有問題次數", stats_issues:"問題條數",
-    stats_warns:"告警條數", stats_mat:"物料檔案", stats_ord:"訂單 / 工單",
+    stats_warns:"告警條數", stats_mat:"物料檔案", stats_ord:"訂單 / 工單", stats_bom:"BOM / 用料表",
     stats_none:"還沒有轉換記錄", stats_bars:"按天（最近 %d 天）",
     diff_title:"確認設定變更", diff_hint:"下面是這次儲存會帶來的改動，確認無誤後再儲存；取消則不會寫入。",
     diff_none:"沒有偵測到改動", diff_ok:"確認儲存", diff_cancel:"取消",
@@ -1964,7 +1981,7 @@ const STR2 = {
     donut_rows:"Tổng %d dòng", donut_none:"Không có vấn đề",
     stats_title:"Thống kê chuyển đổi", stats_runs:"Số lần chuyển", stats_rows:"Tổng số dòng",
     stats_clean:"Lần sạch", stats_with_issues:"Lần có vấn đề", stats_issues:"Số vấn đề",
-    stats_warns:"Số cảnh báo", stats_mat:"Hồ sơ vật liệu", stats_ord:"Đơn hàng / Lệnh sản xuất",
+    stats_warns:"Số cảnh báo", stats_mat:"Hồ sơ vật liệu", stats_ord:"Đơn hàng / Lệnh sản xuất", stats_bom:"BOM / Định mức",
     stats_none:"Chưa có lần chuyển đổi nào", stats_bars:"Theo ngày (%d ngày gần nhất)",
     diff_title:"Xác nhận thay đổi cấu hình", diff_hint:"Đây là những thay đổi lần lưu này sẽ tạo ra. Hủy thì không ghi gì cả.",
     diff_none:"Không phát hiện thay đổi", diff_ok:"Lưu", diff_cancel:"Hủy",
@@ -2029,7 +2046,7 @@ const STR2 = {
     donut_rows:"%d rows in total", donut_none:"No issues",
     stats_title:"Conversion statistics", stats_runs:"Conversions", stats_rows:"Total rows",
     stats_clean:"Clean runs", stats_with_issues:"Runs with issues", stats_issues:"Issues",
-    stats_warns:"Warnings", stats_mat:"Materials", stats_ord:"Orders / work orders",
+    stats_warns:"Warnings", stats_mat:"Materials", stats_ord:"Orders / work orders", stats_bom:"BOM / materials",
     stats_none:"No conversions recorded yet", stats_bars:"By day (last %d days)",
     diff_title:"Confirm config changes", diff_hint:"These are the changes this save will make. Cancel writes nothing.",
     diff_none:"No changes detected", diff_ok:"Save", diff_cancel:"Cancel",
@@ -2561,6 +2578,7 @@ renderTable=function(){
       const [it]=advFields.splice(from,1);
       advFields.splice(to,0,it);
       window.__dirty.mat=true;
+      updateDirtyBadge();
       renderTable();
     }
     from=null;
@@ -2721,7 +2739,8 @@ async function loadStats(){
       + statCard(t("stats_issues"), d.issue_total)
       + statCard(t("stats_warns"), d.warn_total)
       + statCard(t("stats_mat"), d.materials)
-      + statCard(t("stats_ord"), d.orders);
+      + statCard(t("stats_ord"), d.orders)
+      + statCard(t("stats_bom"), d.bom);
     const by=d.by_day||[];
     const max=Math.max(1, ...by.map(x=>x.runs));
     bars.innerHTML = by.map(x=>'<div class="bar" style="height:'+Math.max(6,Math.round(x.runs/max*100))+'%" title="'+esc(x.day+" · "+x.runs+" · "+x.rows)+'"><span>'+x.runs+'</span></div>').join("");
@@ -2817,6 +2836,12 @@ async function maybeShowWelcome(){
 
 // ---- 配置保护 / 未保存提示 / 键盘与拖拽体验 ----
 window.__dirty={mat:false,ord:false,bom:false};
+function updateDirtyBadge(){
+  const el=document.getElementById("cfgDirtyBadge"); if(!el) return;
+  const dirty=window.__dirty && (window.__dirty.mat||window.__dirty.ord||window.__dirty.bom);
+  el.hidden=!dirty;
+  el.textContent=dirty?t("cfg_unsaved"):"";
+}
 function applyCfgGuard(){
   const f=!!window.__cfgFail, o=!!window.__ordFail, bm=!!window.__bomFail;
   ["saveConfigBtn","importConfigBtn","restoreBtn","profileSaveBtn","valuesImportBtn"].forEach(id=>{ const b=document.getElementById(id); if(b) b.disabled=f; });
@@ -2832,6 +2857,7 @@ function applyCfgGuard(){
     if(tg.closest("#cfgPaneMat")) window.__dirty.mat=true;
     else if(tg.closest("#cfgPaneOrd")) window.__dirty.ord=true;
     else if(tg.closest("#cfgPaneBom")) window.__dirty.bom=true;
+    updateDirtyBadge();
   };
   vc.addEventListener("input",mark); vc.addEventListener("change",mark);
   vc.addEventListener("click",e=>{ if(e.target.closest&&e.target.closest(".row-del,.mini-btn,#addFieldBtn")) mark(e); });

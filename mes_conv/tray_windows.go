@@ -252,11 +252,10 @@ func trayTexts(lang string) trayStrings {
 // 只放数字 + 量词，不塞路径 —— 菜单宽度有限，路径会把整行撑爆。
 func recentSummary(lang string) string {
 	T := trayTexts(lang)
-	h := loadHistory()
-	if len(h) == 0 {
+	it, ok := latestHistory()
+	if !ok {
 		return T.NoRecent
 	}
-	it := h[0]
 	when := it.Time
 	if len(when) >= 16 { // "2026-10-07 14:32:05" -> "10-07 14:32"
 		when = when[5:16]

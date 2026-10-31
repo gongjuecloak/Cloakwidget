@@ -161,7 +161,7 @@ func buildDiagBundle() (string, error) {
 	addZip(zw, "config/sys_settings.json", diagJSON(s))
 	// 4) 环境信息
 	addZip(zw, "env.txt", []byte(envReport()))
-	// 5) 最近转换历史（物料 + 订单各取最近 20 条）
+	// 5) 最近转换历史（物料 + 订单 + BOM）
 	hist := loadHistory()
 	if len(hist) > 20 {
 		hist = hist[:20]
@@ -169,6 +169,9 @@ func buildDiagBundle() (string, error) {
 	addZip(zw, "history/materials.json", diagJSON(hist))
 	if b := readOrEmpty(ordersHistoryPath()); len(b) > 0 {
 		addZip(zw, "history/orders_raw.json", b)
+	}
+	if b := readOrEmpty(bomHistoryPath()); len(b) > 0 {
+		addZip(zw, "history/bom_raw.json", b)
 	}
 
 	if err := zw.Close(); err != nil {
