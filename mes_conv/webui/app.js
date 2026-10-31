@@ -118,7 +118,13 @@ function fmtSec(ms){
 function makeProgress(ids,label){
   let timer=null, inflight=false;
   const el=k=>document.getElementById(ids[k]);
-  const show=(pct,txt)=>{ el("wrap").style.display="block"; el("bar").style.width=Math.max(0,Math.min(100,pct||0))+"%"; el("text").textContent=txt||""; };
+  const show=(pct,txt)=>{
+    const value=Math.max(0,Math.min(100,pct||0));
+    el("wrap").style.display="block";
+    el("bar").style.width=value+"%";
+    el("bar").setAttribute("aria-valuenow",String(Math.round(value)));
+    el("text").textContent=txt||"";
+  };
   const hide=()=>{ el("wrap").style.display="none"; };
   const poll=async()=>{           // 上一次请求没回来就不再发，避免请求堆积
     if(inflight) return; inflight=true;
@@ -316,6 +322,7 @@ function makeHistoryLoader(c){
       const sec=document.getElementById(c.sec);
       const items=(d.items||[]).slice(0,10);
       sec.classList.add("show");
+      sec.classList.toggle("empty",items.length===0);
       if(!items.length){
         // 空状态除了「没有记录」还得给出下一步：第一次用的人就停在这一屏。
         body.innerHTML='<tr><td colspan="5"><div class="hist-empty">'
@@ -890,11 +897,16 @@ let _modalFocus=null;
 function showModal(id){
   _modalFocus=document.activeElement;
   const m=document.getElementById(id); m.style.display="flex";
+  m.setAttribute("aria-hidden","false");
+  document.body.classList.add("modal-open");
   const f=m.querySelector("[data-autofocus]")||m.querySelector("button,a[href],input,select,textarea");
   if(f) setTimeout(()=>f.focus(),0);
 }
 function hideModal(id){
-  document.getElementById(id).style.display="none";
+  const m=document.getElementById(id);
+  m.style.display="none";
+  m.setAttribute("aria-hidden","true");
+  if(!_openModal()) document.body.classList.remove("modal-open");
   if(_modalFocus&&_modalFocus.focus){ try{ _modalFocus.focus(); }catch(e){} }
   _modalFocus=null;
 }
@@ -2761,13 +2773,13 @@ async function maybeShowWelcome(){
     if(!d.ok || !d.first_run) return;
   }catch(e){ return; }
   renderWcLangs();
-  m.style.display="flex";
+  showModal("welcomeModal");
 }
 
 (function(){
   const ok=document.getElementById("wcOk");
   if(ok) ok.addEventListener("click",async function(){
-    document.getElementById("welcomeModal").style.display="none";
+    hideModal("welcomeModal");
     try{ await fetch("/api/system/welcomed",{method:"POST"}); }catch(e){}
   });
 })();
@@ -2886,8 +2898,7 @@ document.querySelector(".cfg-tabs").addEventListener("keydown",e=>{
     const ns=(d.notes||"").trim();
     if(ns){ notes.textContent=ns.slice(0,2000); notes.style.display="block"; }
     else notes.style.display="none";
-    const m=document.getElementById("updateModal");
-    m.style.display="flex";
+    showModal("updateModal");
   }
   function appVersionStr(){
     const el=document.querySelector(".ver, #verTag");
@@ -2895,7 +2906,7 @@ document.querySelector(".cfg-tabs").addEventListener("keydown",e=>{
   }
   document.getElementById("updLater").addEventListener("click",()=>{
     try{ localStorage.setItem(LS_KEY, window.__latestVer||""); }catch(e){}
-    document.getElementById("updateModal").style.display="none";
+    hideModal("updateModal");
   });
   const nowBtn=document.getElementById("updNow");
   nowBtn.addEventListener("click",async()=>{
@@ -2906,7 +2917,7 @@ document.querySelector(".cfg-tabs").addEventListener("keydown",e=>{
       const d=await r.json();
       if(d.ok){
         nowBtn.textContent=t("upd_done");
-        setTimeout(()=>{ document.getElementById("updateModal").style.display="none"; },1500);
+        setTimeout(()=>hideModal("updateModal"),1500);
       }else{
         alert(t("upd_fail")+(d.error||d.message||""));
         nowBtn.disabled=false; nowBtn.textContent=old;

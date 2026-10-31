@@ -112,7 +112,7 @@
 
   <!-- ===== 模块一：物料档案 ===== -->
   <div id="viewMaterials" class="view" style="display:none">
-  <div class="steps">
+  <div class="steps materials-steps">
     <div class="card upload-card" id="srcCard" data-upload-card="srcFile">
       <div class="step-no">1</div>
       <h2><span id="step_source">第 1 步 · 选择源文件</span><span class="field-badge required" id="srcRequired">必填</span></h2>
@@ -123,8 +123,7 @@
       <div class="drop-hint" id="srcDropHint">也可以直接把文件拖到这里；可一次选多个，按列名合并成一份结果</div>
     </div>
     <!-- 模板已内置，这张卡不做成和「第 1 步」平级的必做项，默认只露一行，点开才出现上传区 -->
-    <div class="card upload-card tpl-card" id="tplCard" data-upload-card="tplFile">
-      <div class="step-no">2</div>
+    <div class="card upload-card tpl-card" id="tplCard">
       <h2><span id="step_template">输出模板</span><span class="field-badge optional" id="tplBadge">可选</span></h2>
       <p id="step_template_desc">留空使用程序内置的物料档案模板</p>
       <div class="tpl-cur" id="tplCur">当前：内置模板</div>
@@ -137,16 +136,16 @@
     </div>
   </div>
 
-  <div class="actions">
+  <div class="actions workflow-actions">
     <button id="startBtn" class="primary">开始转换</button>
     <button id="previewBtn" class="linkbtn">预览映射结果</button>
   </div>
 
-  <div id="progressWrap" style="display:none;margin:14px 0 0">
-    <div style="height:8px;background:#e5e7eb;border-radius:999px;overflow:hidden">
-      <div id="progressBar" style="height:100%;width:0;background:#2563eb;transition:width .2s ease"></div>
+  <div id="progressWrap" class="progress-wrap" aria-live="polite">
+    <div class="progress-track">
+      <div id="progressBar" class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-labelledby="progressText"></div>
     </div>
-    <div id="progressText" style="margin-top:6px;font-size:13px;color:#6b7280"></div>
+    <div id="progressText" class="progress-text"></div>
   </div>
 
   <div id="statusBanner" class="banner" role="status" aria-live="polite"></div>
@@ -238,11 +237,11 @@
       <button id="ordStartBtn" class="primary">开始转换</button>
     </div>
 
-    <div id="ordProgressWrap" style="display:none;margin:14px 0 0">
-      <div style="height:8px;background:#e5e7eb;border-radius:999px;overflow:hidden">
-        <div id="ordProgressBar" style="height:100%;width:0;background:#2563eb;transition:width .2s ease"></div>
+    <div id="ordProgressWrap" class="progress-wrap" aria-live="polite">
+      <div class="progress-track">
+        <div id="ordProgressBar" class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-labelledby="ordProgressText"></div>
       </div>
-      <div id="ordProgressText" style="margin-top:6px;font-size:13px;color:#6b7280"></div>
+      <div id="ordProgressText" class="progress-text"></div>
     </div>
 
     <div id="ordBanner" class="banner" role="status" aria-live="polite"></div>
@@ -346,11 +345,11 @@
       <button id="bomStartBtn" class="primary">开始转换</button>
     </div>
 
-    <div id="bomProgressWrap" style="display:none;margin:14px 0 0">
-      <div style="height:8px;background:#e5e7eb;border-radius:999px;overflow:hidden">
-        <div id="bomProgressBar" style="height:100%;width:0;background:#2563eb;transition:width .2s ease"></div>
+    <div id="bomProgressWrap" class="progress-wrap" aria-live="polite">
+      <div class="progress-track">
+        <div id="bomProgressBar" class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-labelledby="bomProgressText"></div>
       </div>
-      <div id="bomProgressText" style="margin-top:6px;font-size:13px;color:#6b7280"></div>
+      <div id="bomProgressText" class="progress-text"></div>
     </div>
 
     <div id="bomBanner" class="banner" role="status" aria-live="polite"></div>
@@ -418,7 +417,7 @@
       </div>
       <div class="adv-actions">
         <button id="loadConfigBtn" class="ghost">载入当前配置</button>
-        <button id="saveConfigBtn" class="ghost">保存配置</button>
+        <button id="saveConfigBtn" class="primary action-primary">保存配置</button>
         <button id="addFieldBtn" class="ghost">新增字段</button>
         <button id="exportConfigBtn" class="ghost">导出配置</button>
         <button id="importConfigBtn" class="ghost">导入配置</button>
@@ -504,7 +503,7 @@
 
       <div class="adv-actions">
         <button id="ordCfgReloadBtn" class="ghost">载入当前配置</button>
-        <button id="ordCfgSaveBtn" class="ghost">保存配置</button>
+        <button id="ordCfgSaveBtn" class="primary action-primary">保存配置</button>
       </div>
       <div id="ordAdvMsg" class="adv-msg"></div>
 
@@ -530,7 +529,7 @@
 
       <div class="adv-actions">
         <button id="bomCfgReloadBtn" class="ghost">载入当前配置</button>
-        <button id="bomCfgSaveBtn" class="ghost">保存配置</button>
+        <button id="bomCfgSaveBtn" class="primary action-primary">保存配置</button>
       </div>
       <div id="bomAdvMsg" class="adv-msg"></div>
 
@@ -620,9 +619,9 @@
   </div><!-- /viewConfig -->
 </main>
 
-<div id="helpModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:99;align-items:center;justify-content:center;padding:20px">
-  <div class="modal-panel" style="background:#fff;border-radius:12px;max-width:760px;width:100%;max-height:84vh;overflow:auto;padding:22px 26px;box-shadow:0 20px 60px rgba(0,0,0,.25)">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+<div id="helpModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="help_title" aria-hidden="true">
+  <div class="modal-panel modal-wide">
+    <div class="modal-head">
       <h3 id="help_title" style="margin:0">使用说明</h3>
       <button class="ghost" id="helpClose">关闭</button>
     </div>
@@ -630,9 +629,9 @@
   </div>
 </div>
 
-<div id="aboutModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:99;align-items:center;justify-content:center;padding:20px">
-  <div class="modal-panel" style="background:#fff;border-radius:12px;max-width:680px;width:100%;max-height:84vh;overflow:auto;padding:22px 26px;box-shadow:0 20px 60px rgba(0,0,0,.25)">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+<div id="aboutModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="about_title" aria-hidden="true">
+  <div class="modal-panel modal-medium">
+    <div class="modal-head">
       <h3 id="about_title" style="margin:0">关于本工具</h3>
       <button class="ghost" id="aboutClose">关闭</button>
     </div>
@@ -641,15 +640,15 @@
 </div>
 
 <!-- 配置变更确认（保存前 diff） -->
-<div id="diffModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:99;align-items:center;justify-content:center;padding:20px">
-  <div class="modal-panel" style="background:#fff;border-radius:12px;max-width:720px;width:100%;max-height:84vh;overflow:auto;padding:22px 26px;box-shadow:0 20px 60px rgba(0,0,0,.25)">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+<div id="diffModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="diffTitle" aria-describedby="diffHint" aria-hidden="true">
+  <div class="modal-panel modal-wide">
+    <div class="modal-head modal-head-tight">
       <h3 id="diffTitle" style="margin:0">确认配置变更</h3>
       <button class="ghost" id="diffClose">取消</button>
     </div>
     <p class="sys-card-p" id="diffHint">下面是这次保存会带来的改动，确认无误后再保存。</p>
     <div class="diff-list" id="diffBody"></div>
-    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px">
+    <div class="modal-actions">
       <button class="ghost" id="diffCancel">取消</button>
       <button class="primary" id="diffOk">确认保存</button>
     </div>
@@ -657,12 +656,12 @@
 </div>
 
 <!-- 发现新版本提示 -->
-<div id="updateModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:98;align-items:center;justify-content:center;padding:20px">
-  <div class="modal-panel" style="background:#fff;border-radius:12px;max-width:520px;width:100%;padding:22px 26px;box-shadow:0 20px 60px rgba(0,0,0,.25)">
+<div id="updateModal" class="modal-overlay modal-update" role="dialog" aria-modal="true" aria-labelledby="updTitle" aria-describedby="updText" aria-hidden="true">
+  <div class="modal-panel modal-compact">
     <h3 id="updTitle" style="margin:0 0 6px">发现新版本</h3>
     <p class="sys-card-p" id="updText">检测到新版本可用。</p>
     <div id="updNotes" style="max-height:200px;overflow:auto;white-space:pre-wrap;font-size:12.5px;color:#6b7280;background:#f9fafb;border-radius:8px;padding:10px 12px;margin:10px 0;display:none"></div>
-    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px">
+    <div class="modal-actions">
       <button class="ghost" id="updLater">稍后再说</button>
       <button class="primary" id="updNow">立即更新</button>
     </div>
@@ -670,9 +669,9 @@
 </div>
 
 <!-- 更新日志（关于页 / 升级后首次启动都会用到） -->
-<div id="clModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:99;align-items:center;justify-content:center;padding:20px">
-  <div class="modal-panel" style="background:#fff;border-radius:12px;max-width:620px;width:100%;max-height:84vh;display:flex;flex-direction:column;padding:22px 26px;box-shadow:0 20px 60px rgba(0,0,0,.25)">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+<div id="clModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="clTitle" aria-describedby="clSub" aria-hidden="true">
+  <div class="modal-panel modal-medium modal-flex">
+    <div class="modal-head modal-head-tight">
       <h3 id="clTitle" style="margin:0">更新日志</h3>
       <button class="ghost" id="clClose">关闭</button>
     </div>
@@ -682,20 +681,20 @@
 </div>
 
 <!-- 口令验证 -->
-<div id="authModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:100;align-items:center;justify-content:center;padding:20px">
-  <div class="modal-panel" style="background:#fff;border-radius:12px;max-width:430px;width:100%;padding:22px 26px;box-shadow:0 20px 60px rgba(0,0,0,.25)">
+<div id="authModal" class="modal-overlay modal-auth" role="dialog" aria-modal="true" aria-labelledby="authTitle" aria-describedby="authHint" aria-hidden="true">
+  <div class="modal-panel modal-narrow">
     <h3 id="authTitle" style="margin:0 0 6px">需要口令</h3>
     <p class="sys-card-p" id="authHint">本工具已开启口令保护，请先输入口令后再操作。</p>
     <input type="password" id="authPwd" autocomplete="current-password" style="width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:8px;font-size:14px">
     <div id="authMsg" class="adv-msg"></div>
-    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:12px">
+    <div class="modal-actions">
       <button class="primary" id="authOk">进入</button>
     </div>
   </div>
 </div>
 
-<div id="welcomeModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:110;align-items:center;justify-content:center;padding:20px">
-  <div class="modal-panel" style="background:#fff;border-radius:12px;max-width:540px;width:100%;padding:24px 28px;box-shadow:0 20px 60px rgba(0,0,0,.25)">
+<div id="welcomeModal" class="modal-overlay modal-welcome" role="dialog" aria-modal="true" aria-labelledby="wcTitle" aria-describedby="wcDesc" aria-hidden="true">
+  <div class="modal-panel modal-compact modal-roomy">
     <h3 id="wcTitle" style="margin:0 0 6px;font-size:17px"></h3>
     <p id="wcDesc" style="margin:0;color:var(--muted);font-size:13px;line-height:1.7"></p>
     <div id="wcLangLabel" style="margin:16px 0 8px;font-size:13px;font-weight:600"></div>
@@ -707,7 +706,7 @@
     </div>
     <div id="wcNote" class="wc-note"></div>
     <div id="wcMsg" class="adv-msg"></div>
-    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
+    <div class="modal-actions modal-actions-roomy">
       <button class="primary" id="wcOk"></button>
     </div>
   </div>

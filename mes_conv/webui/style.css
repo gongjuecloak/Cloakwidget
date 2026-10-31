@@ -273,6 +273,14 @@ input.tgt-bad{border-color:var(--err) !important;background:#fff3f2}
 /* ---- 2026 UI polish: clearer workflow, responsive layout, multilingual resilience ---- */
 button,select,input,textarea{font:inherit}
 button{max-width:100%}
+input[type=text],input[type=password],input[type=search],input[type=number],select,textarea{
+  min-height:38px;border:1px solid var(--line);border-radius:9px;background:#fff;color:var(--ink);
+  padding:7px 10px;transition:border-color .15s,box-shadow .15s}
+input[type=text]:focus,input[type=password]:focus,input[type=search]:focus,input[type=number]:focus,select:focus,textarea:focus{
+  border-color:#84adff;box-shadow:0 0 0 3px rgba(23,92,211,.1);outline:none}
+input:disabled,select:disabled,textarea:disabled{background:#f2f4f7;color:#98a2b3;cursor:not-allowed}
+.ghost{display:inline-flex;align-items:center;justify-content:center;min-height:38px}
+.adv-actions .action-primary{min-height:38px;padding:8px 16px;font-size:13px;box-shadow:none}
 .field-badge{display:inline-flex;align-items:center;margin-left:8px;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:650;vertical-align:2px;white-space:nowrap}
 .field-badge.required{background:#fff1f0;color:#b42318;border:1px solid #fecdca}
 .field-badge.optional{background:#f4f6f9;color:var(--muted);border:1px solid var(--line)}
@@ -300,6 +308,10 @@ body[data-view="config"] .adv-actions{position:sticky;top:80px;z-index:12;margin
 .tbl-tools input[type=search],.tbl-tools select,.adv-top input,td input,td select,td textarea,.dict-head input{min-height:36px}
 .banner.show{animation:section-in .18s ease-out}
 .banner.show:not(.ok):not(.err){background:#f8fafc;color:#475467;border:1px solid var(--line)}
+.progress-wrap{display:none;margin:14px 0 0}
+.progress-track{height:8px;background:#e5e7eb;border-radius:999px;overflow:hidden}
+.progress-bar{height:100%;width:0;background:linear-gradient(90deg,var(--primary),#2e90fa);transition:width .2s ease}
+.progress-text{margin-top:6px;font-size:13px;color:var(--muted)}
 .loading{display:flex;align-items:center;justify-content:center;min-height:90px;color:var(--muted);font-size:13px}
 .loading::before{content:"";width:16px;height:16px;margin-right:9px;border:2px solid #d0d5dd;border-top-color:var(--primary);border-radius:50%;animation:spin .7s linear infinite}
 footer{padding:24px 16px 30px}
@@ -510,6 +522,11 @@ footer{padding:24px 16px 30px}
 .hist-empty b{font-size:14px;font-weight:650;color:var(--ink)}
 .hist-empty span{max-width:420px}
 .hist-empty .linkbtn{font-size:12.5px}
+.history.empty{padding-bottom:14px}
+.history.empty table{margin:0}
+.history.empty thead{display:none}
+.history.empty td{border:0;padding:0}
+.history.empty .hist-empty{padding:14px 10px 6px}
 
 /* ---- 输出模板折叠条：从「第 2 步」降级成一行，别让新手以为还得自己准备模板 ---- */
 .tpl-card .tpl-body{margin-top:2px}
@@ -518,6 +535,39 @@ footer{padding:24px 16px 30px}
 .tpl-card.open .tpl-cur{display:none}
 .tpl-card .tpl-more{margin-top:auto;align-self:flex-start;font-size:13px;padding:10px 0 0}
 .tpl-card.open .tpl-more{margin-top:10px;padding-top:0}
+
+/* 物料转换主路径：源文件是唯一必做项；模板是紧凑的可选设置。 */
+.materials-steps{grid-template-columns:minmax(0,1fr)}
+.materials-steps .tpl-card{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:3px 20px;
+  min-height:0;padding:16px 20px;border-radius:14px;cursor:default;overflow:visible}
+.materials-steps .tpl-card::before{display:none}
+.materials-steps .tpl-card h2{grid-column:1;margin:0;font-size:14px}
+.materials-steps .tpl-card p{grid-column:1;margin:0;font-size:12.5px}
+.materials-steps .tpl-card .tpl-cur{grid-column:1;margin:4px 0 0}
+.materials-steps .tpl-card .tpl-more{grid-column:2;grid-row:1/span 3;align-self:center;margin:0;padding:7px 0;white-space:nowrap}
+.materials-steps .tpl-card .tpl-body{grid-column:1/-1;margin-top:8px;padding-top:12px;border-top:1px solid var(--line)}
+.materials-steps .tpl-card.open .tpl-more{grid-row:1;margin:0;padding:7px 0}
+.workflow-actions{margin-top:16px}
+
+/* 统一弹窗外观；具体内容仍由各自模块负责。 */
+body.modal-open{overflow:hidden}
+.modal-overlay{display:none;position:fixed;inset:0;z-index:99;align-items:center;justify-content:center;
+  padding:20px;background:rgba(15,23,42,.5);backdrop-filter:blur(2px)}
+.modal-update{z-index:98}.modal-auth{z-index:100}.modal-welcome{z-index:110}
+.modal-panel{width:100%;max-height:84vh;overflow:auto;padding:22px 26px;background:#fff;border:1px solid rgba(208,215,226,.9);
+  border-radius:16px;box-shadow:0 24px 72px rgba(15,23,42,.28)}
+.modal-wide{max-width:760px}.modal-medium{max-width:680px}.modal-compact{max-width:540px}.modal-narrow{max-width:430px}
+.modal-roomy{padding:24px 28px}.modal-flex{display:flex;flex-direction:column;overflow:hidden}
+.modal-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:12px}
+.modal-head-tight{margin-bottom:6px}
+.modal-actions{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;margin-top:14px}
+.modal-actions-roomy{margin-top:18px}
+@media(max-width:720px){
+  .modal-overlay{padding:12px;align-items:flex-end}
+  .modal-panel{max-height:92vh;padding:19px 18px;border-radius:16px 16px 10px 10px}
+  .modal-actions>*{flex:1 1 120px}
+  .materials-steps .tpl-card{grid-template-columns:minmax(0,1fr) auto;padding:15px 17px}
+}
 #tplBtnOpen{display:none}
 .tpl-card.open #tplBtnClosed{display:none}
 .tpl-card.open #tplBtnOpen{display:inline}
