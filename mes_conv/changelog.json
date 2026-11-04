@@ -2,6 +2,32 @@
   "note": "程序内置的更新日志。发版时在 versions 顶部加一条，并把 version 改成新版本号；notes 按语言分组，缺的语言回退到 zh。",
   "versions": [
     {
+      "version": "1.21.0",
+      "date": "2026-11-04",
+      "notes": {
+        "zh": [
+          "打标前缀改成「逐元素补全」：内置默认里有、你的 orders.json 里没有的前缀，升级后启动会自动补齐（以前只补本版本新增的那几个）。你自己加的前缀原样保留，已有顺序也不动，新增的追加在后面。",
+          "个别前缀暂时不想打标怎么办：在配置中心「订单 / 工单 → 打标判定」里把前缀删掉并保存，它会记进 orders.json 的 prefixes_off（本机停用），以后启动不会再补回来。",
+          "被停用的前缀不会「悄悄消失」：同一处会显示「本机停用：xxx」，点一下标签即恢复启用（它会重新回到前缀列表里）。手改配置文件也可以，把不要的前缀从 prefixes 挪到 prefixes_off 即可。"
+        ],
+        "zht": [
+          "打標前綴改成「逐元素補齊」：內建預設裡有、你的 orders.json 裡沒有的前綴，升級後啟動會自動補齊（以前只補本版本新增的那幾個）。你自己加的前綴原樣保留，已有順序也不動，新增的附加在後面。",
+          "個別前綴暫時不想打標怎麼辦：在設定中心「訂單 / 工單 → 打標判定」把前綴刪掉並儲存，它會記進 orders.json 的 prefixes_off（本機停用），以後啟動不會再補回來。",
+          "被停用的前綴不會「悄悄消失」：同一處會顯示「本機停用：xxx」，點一下標籤即恢復啟用（它會重新回到前綴清單裡）。手改設定檔也可以，把不要的前綴從 prefixes 移到 prefixes_off 即可。"
+        ],
+        "en": [
+          "Tagging prefixes are now filled element by element: any prefix that exists in the built-in defaults but not in your orders.json is added on launch (previously only the ones new in this release). Prefixes you added yourself are kept, existing order is preserved, and new ones are appended.",
+          "Do you want to skip a particular prefix for now? Delete it in Config → Order / Work order → Tagging rule and save. It is recorded in prefixes_off (disabled on this machine) and will not be added back on the next launch.",
+          "A disabled prefix never disappears silently: the same section shows \"Off on this machine: xxx\". Click the chip to re-enable it and it returns to the prefix list. Editing orders.json by hand works too — move the prefix from prefixes to prefixes_off."
+        ],
+        "vi": [
+          "Tiền tố đánh dấu nay được bổ sung theo từng phần tử: tiền tố có trong mặc định nhưng thiếu trong orders.json sẽ được thêm khi khởi động (trước đây chỉ thêm những tiền tố mới của bản này). Tiền tố bạn tự thêm được giữ nguyên, thứ tự cũ không đổi, mục mới thêm vào cuối.",
+          "Muốn tạm bỏ một tiền tố? Xoá nó trong Cấu hình → Đơn hàng / Lệnh SX → Quy tắc đánh dấu rồi lưu. Nó được ghi vào prefixes_off (tắt trên máy này) và sẽ không bị thêm lại ở lần khởi động sau.",
+          "Tiền tố bị tắt không biến mất âm thầm: cùng khu vực hiển thị \"Tắt trên máy này: xxx\", bấm vào để bật lại và nó quay về danh sách tiền tố. Sửa tay orders.json cũng được — chuyển tiền tố từ prefixes sang prefixes_off."
+        ]
+      }
+    },
+    {
       "version": "1.20.0",
       "date": "2026-11-04",
       "notes": {

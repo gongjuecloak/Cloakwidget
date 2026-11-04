@@ -111,6 +111,15 @@
   .pc-line{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;margin:2px 0}
   .pc-line label{font-size:13px;display:inline-flex;align-items:center;gap:4px}
   .pc-inline{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:13px}
+  /* 本机停用的内置打标前缀：一眼看出「哪条被关掉了、还能点回来」 */
+  .tag-off{width:100%;margin-top:2px;font-size:12.5px}
+  .tag-off:empty{display:none}
+  .tag-off-hint{font-size:12px;color:var(--muted)}
+  .tag-chip{border:1px dashed #c7d2e3;background:#f8fafc;color:var(--muted);border-radius:999px;
+    padding:2px 10px;font-size:12px;font-weight:600;font-family:inherit;cursor:pointer;line-height:1.7;transition:.15s}
+  .tag-chip:hover{border-color:#84adff;color:var(--primary-d);background:var(--primary-soft)}
+  .tag-chip::before{content:"○ ";opacity:.55}
+  .tag-chip:hover::before{content:"＋ "}
   .pc-inline input[type=text]{width:90px}
   .nest{background:#f8fafc;border:1px dashed var(--line);border-radius:10px;padding:10px;margin-top:6px}
   .nest-title{font-size:12px;color:var(--muted);margin-bottom:6px}

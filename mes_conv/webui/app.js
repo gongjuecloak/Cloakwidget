@@ -1371,6 +1371,9 @@ document.getElementById("langSel").addEventListener("change",()=>{
 
 // ==================== 订单 / 工单模块 ====================
 let ordCfg=null, ordCfgLoaded=false, ordLastResult=null;
+// 本机停用的内置打标前缀（tag_materials.prefixes_off）：删掉的前缀记在这里，
+// 下次启动的「逐元素补全」才会跳过它。点标签即恢复启用。
+let ordTagOff=[];
 
 function ordVal(id){ const e=document.getElementById(id); return e?(e.value||"").trim():""; }
 function ordRenderStats(data){
@@ -1632,13 +1635,16 @@ function ordRenderCfg(){
   }).join("");
   // 打标判定
   const tg=ordCfg.tag_materials||{};
+  ordTagOff=(tg.prefixes_off||[]).slice();
   document.getElementById("ordTagWrap").innerHTML =
     '<label><input type="checkbox" id="ordTagEnabled" '+(tg.enabled?"checked":"")+'> '+t("ord_block_tag")+'</label>'
     +'<span class="pc-inline">'+t("ord_tag_column")+' <input type="text" id="ordTagColumn" value="'+esc(tg.column||"")+'" style="width:130px"></span>'
     +'<span class="pc-inline">'+t("ord_tag_source")+' <input type="text" id="ordTagSource" value="'+esc(tg.source_field||"")+'" style="width:130px"></span>'
     +'<span class="pc-inline">'+t("ord_tag_prefixes")+' <input type="text" id="ordTagPrefixes" value="'+esc((tg.prefixes||[]).join(","))+'" style="width:280px"></span>'
     +'<span class="pc-inline">'+t("ord_tag_yes")+' <input type="text" id="ordTagYes" value="'+esc(tg.yes||"")+'" style="width:60px"></span>'
-    +'<span class="pc-inline">'+t("ord_tag_no")+' <input type="text" id="ordTagNo" value="'+esc(tg.no||"")+'" style="width:60px"></span>';
+    +'<span class="pc-inline">'+t("ord_tag_no")+' <input type="text" id="ordTagNo" value="'+esc(tg.no||"")+'" style="width:60px"></span>'
+    +'<span class="pc-line tag-off" id="ordTagOffWrap"></span>';
+  renderTagOff();
   // 运行开关
   const st=ordCfg.settings||{};
   document.getElementById("ordSwitches").innerHTML =
@@ -1656,6 +1662,38 @@ function ordRenderCfg(){
     +'</tbody></table><button class="mini-btn oa-add">'+t("ord_add_row")+'</button>';
   bindOrdCfgEvents();
   updateConfigSections();
+}
+// 渲染「本机停用」的内置前缀。删掉的前缀不会自动补回，但必须让人看得见、能一键恢复，
+// 否则过两个月没人记得为什么少了一个前缀。
+function renderTagOff(){
+  const box=document.getElementById("ordTagOffWrap");
+  if(!box) return;
+  if(!ordTagOff.length){ box.innerHTML=""; return; }
+  box.innerHTML='<span class="muted">'+t("ord_tag_off")+'</span>'
+    +ordTagOff.map(p=>'<button type="button" class="tag-chip" data-p="'+esc(p)+'">'+esc(p)+'</button>').join("")
+    +'<span class="muted tag-off-hint">'+t("ord_tag_off_hint")+'</span>';
+  box.querySelectorAll("button.tag-chip").forEach(b=>{
+    b.addEventListener("click",()=>{
+      const p=b.getAttribute("data-p");
+      const inp=document.getElementById("ordTagPrefixes");
+      const cur=(inp.value||"").split(/[,，\s]+/).filter(Boolean);
+      if(!cur.some(x=>x.toUpperCase()===p.toUpperCase())) cur.push(p);
+      inp.value=cur.join(",");
+      ordTagOff=ordTagOff.filter(x=>x.toUpperCase()!==p.toUpperCase());
+      renderTagOff();
+    });
+  });
+}
+// 保存后把「本机停用」表同步成磁盘上的实际值：服务端会把本次删掉的内置前缀记进去，
+// 不刷新的话界面上看不到「哪个前缀被停用了」，用户下次还会以为是被程序吃掉的。
+async function syncTagOff(){
+  try{
+    const r=await fetch("/api/orders/config"); const j=await r.json();
+    if(j&&j.ok&&j.config){
+      ordTagOff=((j.config.tag_materials||{}).prefixes_off||[]).slice();
+      renderTagOff();
+    }
+  }catch(e){}
 }
 function bindOrdCfgEvents(){
   document.querySelectorAll("#ordMapWrap button.om-del").forEach(b=>{
@@ -1708,11 +1746,14 @@ function collectOrdCfg(){
     c.column_order[cat]=order;
   });
   const tagEl=document.getElementById("ordTagEnabled");
+  const prefList=ordVal("ordTagPrefixes").split(/[,，\s]+/).filter(Boolean);
   c.tag_materials={
     enabled: !!(tagEl && tagEl.checked),
     column: ordVal("ordTagColumn"),
     source_field: ordVal("ordTagSource"),
-    prefixes: ordVal("ordTagPrefixes").split(/[,，\s]+/).filter(Boolean),
+    prefixes: prefList,
+    // 仍处于停用、且没有填回前缀框的项才写回停用表（填回去就等于恢复启用）
+    prefixes_off: ordTagOff.filter(p=>!prefList.some(x=>x.toUpperCase()===p.toUpperCase())),
     yes: ordVal("ordTagYes"),
     no: ordVal("ordTagNo")
   };
@@ -1747,7 +1788,7 @@ document.getElementById("ordCfgSaveBtn").addEventListener("click",async()=>{
   try{
     const r=await fetch("/api/orders/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(c)});
     const d=await r.json();
-    if(d.ok){ ordCfg=c; window.__ordCfgSnap=clone(c); window.__dirty.ord=false; updateDirtyBadge(); ordAdvMsg(t("ord_cfg_saved"),true); refreshModuleBackups("ord"); showSavedMeta("ord",d.backup); }
+    if(d.ok){ ordCfg=c; window.__ordCfgSnap=clone(c); window.__dirty.ord=false; updateDirtyBadge(); ordAdvMsg(t("ord_cfg_saved"),true); refreshModuleBackups("ord"); showSavedMeta("ord",d.backup); syncTagOff(); }
     else ordAdvMsg(t("ord_cfg_fail")+(d.error||""),false);
   }catch(e){ ordAdvMsg(t("ord_cfg_fail")+((e&&e.message)||""),false); }
 });

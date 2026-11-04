@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -164,33 +165,36 @@ func TestMaterialUnmappedColumns(t *testing.T) {
 	}
 }
 
-// TestOrdersReconcileAddsNewTagPrefixes 验证「随版本新增的打标前缀」能补进存量配置：
-// 用户自己加的前缀保留、没被默认灌成全量、且第二次 reconcile 不再产生改动（迁移收敛）。
-func TestOrdersReconcileAddsNewTagPrefixes(t *testing.T) {
+// TestOrdersReconcileFillsTagPrefixesElementWise 验证打标前缀按「元素」补齐：
+// 内置默认里有、盘上缺的都补上，用户自己加的前缀与已有顺序不动，且迁移收敛。
+func TestOrdersReconcileFillsTagPrefixesElementWise(t *testing.T) {
 	resetConfigNotes()
 	raw := []byte(`{
 		"schema": 1,
 		"field_mapping": {"work_order": {"製令編號": "工单号"}},
 		"tag_materials": {"enabled": true, "column": "是否需要打标",
 		                  "source_field": "产品编码",
-		                  "prefixes": ["61CS", "6CR", "ZZ01"], "yes": "是", "no": "否"}
+		                  "prefixes": ["ZZ01", "61CS"], "yes": "是", "no": "否"}
 	}`)
 	var c OrdersConfig
 	if err := json.Unmarshal(raw, &c); err != nil {
 		t.Fatal(err)
 	}
 	if !reconcileConfig(&c, raw) {
-		t.Fatal("存量配置缺新前缀，应发生补齐")
+		t.Fatal("存量配置缺默认前缀，应发生补齐")
 	}
-	for _, p := range []string{"61CS", "6CR", "ZZ01", "6CCR"} {
+	defs := defaultOrdersConfig().TagMaterials.Prefixes
+	for _, p := range defs {
 		if !hasTagPrefix(c.TagMaterials.Prefixes, p) {
-			t.Fatalf("前缀 %s 应在配置里，实际：%v", p, c.TagMaterials.Prefixes)
+			t.Fatalf("默认前缀 %s 应被补齐，实际：%v", p, c.TagMaterials.Prefixes)
 		}
 	}
-	for _, p := range []string{"61FK", "61SS"} {
-		if hasTagPrefix(c.TagMaterials.Prefixes, p) {
-			t.Fatalf("不应把默认列表里的旧前缀 %s 灌进用户配置：%v", p, c.TagMaterials.Prefixes)
-		}
+	if len(c.TagMaterials.Prefixes) != len(defs)+1 {
+		t.Fatalf("应补齐 %d 条默认前缀并保留 1 条自定义，实际：%v", len(defs), c.TagMaterials.Prefixes)
+	}
+	// 用户原有的条目与顺序保持在前，新增的追加在后面
+	if c.TagMaterials.Prefixes[0] != "ZZ01" || c.TagMaterials.Prefixes[1] != "61CS" {
+		t.Fatalf("不应打乱用户已有的前缀顺序：%v", c.TagMaterials.Prefixes)
 	}
 
 	// 收敛：写回后再读一遍不能再有改动，否则每次启动都会备份 + 重写一遍配置
@@ -204,5 +208,139 @@ func TestOrdersReconcileAddsNewTagPrefixes(t *testing.T) {
 	}
 	if reconcileConfig(&c2, b) {
 		t.Fatal("第二次 reconcile 不应再产生改动（迁移必须收敛）")
+	}
+}
+
+// TestOrdersReconcileRespectsPrefixesOff 验证「本机停用」的前缀不会被逐元素补全加回来，
+// 以及填回 prefixes 之后停用记录会自动清掉。
+func TestOrdersReconcileRespectsPrefixesOff(t *testing.T) {
+	resetConfigNotes()
+	defs := defaultOrdersConfig().TagMaterials.Prefixes
+	allBut := func(skip string) string {
+		out := make([]string, 0, len(defs))
+		for _, p := range defs {
+			if !strings.EqualFold(p, skip) {
+				out = append(out, `"`+p+`"`)
+			}
+		}
+		return strings.Join(out, ",")
+	}
+
+	// 已经齐全、只差一条主动停用的：不该补回，也不该产生任何其它改动
+	raw := []byte(`{
+		"schema": 1,
+		"field_mapping": {"work_order": {"製令編號": "工单号"}},
+		"tag_materials": {"enabled": true, "column": "是否需要打标",
+		                  "source_field": "产品编码",
+		                  "prefixes": [` + allBut("6CR") + `],
+		                  "prefixes_off": ["6cr"], "yes": "是", "no": "否"}
+	}`)
+	var c OrdersConfig
+	if err := json.Unmarshal(raw, &c); err != nil {
+		t.Fatal(err)
+	}
+	before := append([]string(nil), c.TagMaterials.Prefixes...)
+	reconcileConfig(&c, raw) // 其余小节（列顺序等）也会被补齐，这里只看前缀
+	if !sameStringSlice(before, c.TagMaterials.Prefixes) {
+		t.Fatalf("停用的前缀不该被补回：before=%v after=%v", before, c.TagMaterials.Prefixes)
+	}
+	if hasTagPrefix(c.TagMaterials.Prefixes, "6CR") {
+		t.Fatal("prefixes_off 里的前缀被补回来了")
+	}
+
+	// 缺多条时：除了停用的，其余都补；停用的仍然缺席
+	raw2 := []byte(`{
+		"schema": 1,
+		"field_mapping": {"work_order": {"製令編號": "工单号"}},
+		"tag_materials": {"enabled": true, "column": "是否需要打标",
+		                  "source_field": "产品编码",
+		                  "prefixes": ["61CS"], "prefixes_off": ["6CR"], "yes": "是", "no": "否"}
+	}`)
+	var c2 OrdersConfig
+	if err := json.Unmarshal(raw2, &c2); err != nil {
+		t.Fatal(err)
+	}
+	if !reconcileConfig(&c2, raw2) {
+		t.Fatal("缺默认前缀应补齐")
+	}
+	if hasTagPrefix(c2.TagMaterials.Prefixes, "6CR") {
+		t.Fatalf("停用的 6CR 不该被补回：%v", c2.TagMaterials.Prefixes)
+	}
+	for _, p := range defs {
+		if strings.EqualFold(p, "6CR") {
+			continue
+		}
+		if !hasTagPrefix(c2.TagMaterials.Prefixes, p) {
+			t.Fatalf("默认前缀 %s 应被补齐：%v", p, c2.TagMaterials.Prefixes)
+		}
+	}
+
+	// 填回 prefixes = 恢复启用：停用记录被清掉，配置文件只改这一处
+	var c3 OrdersConfig
+	if err := json.Unmarshal(raw2, &c3); err != nil {
+		t.Fatal(err)
+	}
+	c3.TagMaterials.Prefixes = append(c3.TagMaterials.Prefixes, "6CR")
+	if !reconcileConfig(&c3, raw2) {
+		t.Fatal("恢复启用后应清掉停用记录")
+	}
+	if len(c3.TagMaterials.PrefixesOff) != 0 {
+		t.Fatalf("已启用的前缀不该留在停用表：%v", c3.TagMaterials.PrefixesOff)
+	}
+	n := 0
+	for _, p := range c3.TagMaterials.Prefixes {
+		if strings.EqualFold(p, "6CR") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("恢复启用后 6CR 应正好出现一次，实际 %d 次：%v", n, c3.TagMaterials.Prefixes)
+	}
+}
+
+// TestMergePrefixesOff 验证保存配置时「删掉哪个内置前缀就记哪个」：
+// 这是「暂时不用」的唯一入口 —— 不做记录的话，逐元素补全会在下次启动时加回来。
+func TestMergePrefixesOff(t *testing.T) {
+	old := exeDirOverride
+	exeDirOverride = t.TempDir()
+	t.Cleanup(func() { exeDirOverride = old })
+
+	disk := defaultOrdersConfig()
+	disk.TagMaterials.Enabled = true
+	if err := saveOrdersConfig(disk); err != nil {
+		t.Fatal(err)
+	}
+
+	// 删掉 6CR 后保存 → 记进停用表
+	sub := defaultOrdersConfig()
+	sub.TagMaterials.Enabled = true
+	kept := make([]string, 0, len(sub.TagMaterials.Prefixes))
+	for _, p := range sub.TagMaterials.Prefixes {
+		if !strings.EqualFold(p, "6CR") {
+			kept = append(kept, p)
+		}
+	}
+	sub.TagMaterials.Prefixes = kept
+	mergePrefixesOff(sub)
+	if len(sub.TagMaterials.PrefixesOff) != 1 || !hasTagPrefix(sub.TagMaterials.PrefixesOff, "6CR") {
+		t.Fatalf("删掉的内置前缀应记入停用表，实际：%v", sub.TagMaterials.PrefixesOff)
+	}
+
+	// 把 6CR 填回来再保存 → 停用记录清掉
+	back := defaultOrdersConfig()
+	back.TagMaterials.Enabled = true
+	back.TagMaterials.PrefixesOff = []string{"6CR"}
+	mergePrefixesOff(back)
+	if len(back.TagMaterials.PrefixesOff) != 0 {
+		t.Fatalf("恢复启用后停用表应为空，实际：%v", back.TagMaterials.PrefixesOff)
+	}
+
+	// 打标整组关掉 → 停用表没有意义，清空
+	off := defaultOrdersConfig()
+	off.TagMaterials.Enabled = false
+	off.TagMaterials.PrefixesOff = []string{"6CR"}
+	mergePrefixesOff(off)
+	if off.TagMaterials.PrefixesOff != nil {
+		t.Fatalf("关掉打标后停用表应清空，实际：%v", off.TagMaterials.PrefixesOff)
 	}
 }

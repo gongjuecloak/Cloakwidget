@@ -36,6 +36,9 @@ func handlerOrdersSaveConfig(w http.ResponseWriter, r *http.Request) {
 	// 界面上保存的配置就是「当前代」的配置，标上 schema 免得下次启动再迁一遍
 	c.Schema = schemaOrders
 	c.fillDefaults()
+	// 打标前缀是逐元素自动补全的：把「这次删掉的内置前缀」记进停用表，
+	// 否则下次启动又会补回来（用户视角：删了没用）。
+	mergePrefixesOff(&c)
 	backupName := ""
 	if fileExists(ordersConfigPath()) {
 		var err error

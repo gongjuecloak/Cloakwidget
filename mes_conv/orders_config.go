@@ -21,17 +21,15 @@ type TagMaterials struct {
 	Column      string   `json:"column"`       // 目标列名，如「是否需要打标」
 	SourceField string   `json:"source_field"` // 取哪个字段判断，如「产品编码」
 	Prefixes    []string `json:"prefixes"`     // 命中前缀
+	// PrefixesOff 本机「暂时不用」的内置前缀：补默认值时跳过，不会被自动加回去。
+	//
+	// 默认前缀按「逐元素」补进存量配置，所以单纯从 Prefixes 里删掉是记不住的 ——
+	// 下次启动又会被补回来。删掉时把该前缀记到这里就等于「本机停用」；
+	// 想恢复就把它填回 Prefixes（保存或启动时会自动从本表移除）。
+	PrefixesOff []string `json:"prefixes_off,omitempty"`
 	Yes         string   `json:"yes"`
 	No          string   `json:"no"`
 }
-
-// addedTagPrefixes 「随版本新增」的打标前缀，升级后补进存量 orders.json。
-//
-// 磁盘配置优先，而 reconcileConfig 只补缺键、不覆盖已有值，所以光改内置默认
-// 对已经生成过 orders.json 的机器不生效。这里列出的是「本版本新加的前缀」，
-// reconcile 只补配置里没有的项：用户自己加的前缀保留，他手动删掉的旧前缀不会被恢复。
-// 每次发版加了新前缀就往这里追加，不用管历史项（已经补过就不会再动）。
-var addedTagPrefixes = []string{"6CCR"}
 
 // hasTagPrefix 前缀列表里是否已有该项（忽略大小写与首尾空白，与 hasPrefix 口径一致）
 func hasTagPrefix(list []string, p string) bool {
@@ -41,6 +39,57 @@ func hasTagPrefix(list []string, p string) bool {
 		}
 	}
 	return false
+}
+
+// effectiveTagPrefixes 「本机应当生效」的内置前缀 = 内置默认 − 停用表。
+// 用于配置一致性比对：停用的那些是有意去掉的，不该被算成差异。
+func effectiveTagPrefixes(cur, def TagMaterials) []string {
+	out := make([]string, 0, len(def.Prefixes))
+	for _, p := range def.Prefixes {
+		if hasTagPrefix(cur.PrefixesOff, p) {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+// mergePrefixesOff 在保存配置时维护「本机停用」表。
+//
+// 前缀是逐元素自动补全的，所以界面上删掉一个内置前缀必须留个记号，否则下次启动
+// 又会被补回来。规则：
+//   - 原有前缀里有、本次提交里没有的内置前缀 → 记进停用表；
+//   - 已经出现在提交的前缀里的项 → 从停用表移除（= 恢复启用）；
+//   - 非内置前缀不进停用表（它们本来就不会被自动补）；
+//   - 打标整组关掉时清空停用表（关了就无所谓停用哪几条）。
+func mergePrefixesOff(c *OrdersConfig) {
+	if !c.TagMaterials.Enabled {
+		c.TagMaterials.PrefixesOff = nil
+		return
+	}
+	defs := defaultOrdersConfig().TagMaterials.Prefixes
+	var old OrdersConfig
+	if b, err := os.ReadFile(ordersConfigPath()); err == nil {
+		_ = json.Unmarshal(b, &old)
+	}
+	cand := append([]string(nil), old.TagMaterials.PrefixesOff...)
+	cand = append(cand, c.TagMaterials.PrefixesOff...)
+	for _, p := range old.TagMaterials.Prefixes {
+		if !hasTagPrefix(c.TagMaterials.Prefixes, p) {
+			cand = append(cand, p)
+		}
+	}
+	off := make([]string, 0, len(cand))
+	for _, p := range cand {
+		if !hasTagPrefix(defs, p) || hasTagPrefix(c.TagMaterials.Prefixes, p) || hasTagPrefix(off, p) {
+			continue
+		}
+		off = append(off, p)
+	}
+	if len(off) == 0 {
+		off = nil
+	}
+	c.TagMaterials.PrefixesOff = off
 }
 
 // OrdersSettings 订单模块的运行参数
@@ -386,23 +435,35 @@ func reconcileConfig(c *OrdersConfig, raw []byte) bool {
 			added++
 			add("tag_materials")
 		}
-	} else if c.TagMaterials.Enabled && len(c.TagMaterials.Prefixes) == 0 {
-		// 开了打标却没有任何前缀 = 永远判「否」，按默认前缀补齐
-		c.TagMaterials.Prefixes = d.TagMaterials.Prefixes
-		added++
-		add("tag_materials.prefixes")
 	}
 
-	// 随版本新增的打标前缀：只补「清单里写了、配置里没有」的。
-	// 用户自己在配置页加的前缀保持原样，他手动删掉的旧前缀也不会被恢复 ——
-	// 所以这里只能放「本版本新加」的项，不能拿全量默认列表来对齐。
-	// 只处理打了标的配置：整组关掉的规则不去动它。
+	// 打标前缀：按「元素」补齐内置默认 —— 默认里有、配置里没有、且没被本机停用的就补。
+	// 逐元素（而不是整组灌默认）才不会覆盖用户自己维护的列表；prefixes_off 则是
+	// 「我记得这条，但本机暂时不用」的白名单，补的时候跳过，避免删了又被加回来。
 	if c.TagMaterials.Enabled {
-		for _, p := range addedTagPrefixes {
-			if !hasTagPrefix(c.TagMaterials.Prefixes, p) {
-				c.TagMaterials.Prefixes = append(c.TagMaterials.Prefixes, p)
-				added++
-				add("tag_materials.prefixes." + p)
+		for _, p := range d.TagMaterials.Prefixes {
+			if hasTagPrefix(c.TagMaterials.Prefixes, p) || hasTagPrefix(c.TagMaterials.PrefixesOff, p) {
+				continue
+			}
+			c.TagMaterials.Prefixes = append(c.TagMaterials.Prefixes, p)
+			added++
+			add("tag_materials.prefixes." + p)
+		}
+		// 停用表清理：已经填回 Prefixes 的、或已经不再是内置默认的项都删掉，
+		// 免得住表越积越长、也保证迁移收敛（第二次启动不再改动）。
+		if len(c.TagMaterials.PrefixesOff) > 0 {
+			off := make([]string, 0, len(c.TagMaterials.PrefixesOff))
+			for _, p := range c.TagMaterials.PrefixesOff {
+				if hasTagPrefix(c.TagMaterials.Prefixes, p) || !hasTagPrefix(d.TagMaterials.Prefixes, p) {
+					added++
+					add("tag_materials.prefixes_off." + p)
+					continue
+				}
+				off = append(off, p)
+			}
+			c.TagMaterials.PrefixesOff = off
+			if len(off) == 0 {
+				c.TagMaterials.PrefixesOff = nil
 			}
 		}
 	}
@@ -553,7 +614,9 @@ func ordersConfigDiff(c *OrdersConfig, filled []string) *configDiff {
 	if c.TagMaterials.No != d.TagMaterials.No {
 		out.Custom = append(out.Custom, "tag_materials.no")
 	}
-	if !sameStringSet(c.TagMaterials.Prefixes, d.TagMaterials.Prefixes) {
+	// 打标前缀：与「默认 − 本机停用」比。停用的那些是用户有意去掉的，
+	// 既不算补齐也不算自定义，否则这条提示会永远挂在那里。
+	if !sameStringSet(c.TagMaterials.Prefixes, effectiveTagPrefixes(c.TagMaterials, d.TagMaterials)) {
 		out.Custom = append(out.Custom, "tag_materials.prefixes")
 	}
 
