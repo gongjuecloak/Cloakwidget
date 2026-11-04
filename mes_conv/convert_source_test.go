@@ -8,7 +8,7 @@ func TestSourceHit(t *testing.T) {
 		{Target: "物料编码", Source: "MB001"},
 		{Target: "物料名称", Source: "MB002"},
 		{Target: "物料规格", Source: "MB001"}, // 重复引用只算一次
-		{Target: "显示顺序", Op: "rownum"},   // 不依赖源列
+		{Target: "显示顺序", Op: "rownum"},    // 不依赖源列
 	}}
 
 	want, hit := sourceHit(cfg, map[string]int{"MB001": 0, "MB002": 1, "MB003": 2})

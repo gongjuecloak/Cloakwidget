@@ -163,3 +163,46 @@ func TestMaterialUnmappedColumns(t *testing.T) {
 		t.Fatalf("非必填未覆盖列应单独归类，实际：%v", opt)
 	}
 }
+
+// TestOrdersReconcileAddsNewTagPrefixes 验证「随版本新增的打标前缀」能补进存量配置：
+// 用户自己加的前缀保留、没被默认灌成全量、且第二次 reconcile 不再产生改动（迁移收敛）。
+func TestOrdersReconcileAddsNewTagPrefixes(t *testing.T) {
+	resetConfigNotes()
+	raw := []byte(`{
+		"schema": 1,
+		"field_mapping": {"work_order": {"製令編號": "工单号"}},
+		"tag_materials": {"enabled": true, "column": "是否需要打标",
+		                  "source_field": "产品编码",
+		                  "prefixes": ["61CS", "6CR", "ZZ01"], "yes": "是", "no": "否"}
+	}`)
+	var c OrdersConfig
+	if err := json.Unmarshal(raw, &c); err != nil {
+		t.Fatal(err)
+	}
+	if !reconcileConfig(&c, raw) {
+		t.Fatal("存量配置缺新前缀，应发生补齐")
+	}
+	for _, p := range []string{"61CS", "6CR", "ZZ01", "6CCR"} {
+		if !hasTagPrefix(c.TagMaterials.Prefixes, p) {
+			t.Fatalf("前缀 %s 应在配置里，实际：%v", p, c.TagMaterials.Prefixes)
+		}
+	}
+	for _, p := range []string{"61FK", "61SS"} {
+		if hasTagPrefix(c.TagMaterials.Prefixes, p) {
+			t.Fatalf("不应把默认列表里的旧前缀 %s 灌进用户配置：%v", p, c.TagMaterials.Prefixes)
+		}
+	}
+
+	// 收敛：写回后再读一遍不能再有改动，否则每次启动都会备份 + 重写一遍配置
+	b, err := json.Marshal(&c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c2 OrdersConfig
+	if err := json.Unmarshal(b, &c2); err != nil {
+		t.Fatal(err)
+	}
+	if reconcileConfig(&c2, b) {
+		t.Fatal("第二次 reconcile 不应再产生改动（迁移必须收敛）")
+	}
+}

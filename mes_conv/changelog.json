@@ -2,6 +2,28 @@
   "note": "程序内置的更新日志。发版时在 versions 顶部加一条，并把 version 改成新版本号；notes 按语言分组，缺的语言回退到 zh。",
   "versions": [
     {
+      "version": "1.19.1",
+      "date": "2026-11-04",
+      "notes": {
+        "zh": [
+          "打标前缀新增 6CCR：产品编码以 6CCR 开头时，「是否需要打标」列填「是」。",
+          "存量配置也能拿到新前缀：已经生成过 orders.json 的机器，升级后首次启动会把缺少的新前缀补进配置（补之前照常备份到 backup/）。你自己在配置页加的前缀保持原样，手动删掉的旧前缀不会被恢复；补过一次后不会再重复改动。"
+        ],
+        "zht": [
+          "打標前綴新增 6CCR：產品編碼以 6CCR 開頭時，「是否需要打標」欄填「是」。",
+          "既有設定也能拿到新前綴：已產生過 orders.json 的機器，升級後首次啟動會把缺少的新前綴補進設定（補之前照常備份到 backup/）。你自己在設定頁加的前綴保持原樣，手動刪掉的舊前綴不會被還原；補過一次後不會再重複改動。"
+        ],
+        "en": [
+          "New marking prefix 6CCR: product codes starting with 6CCR are now marked \"yes\" in the mark column.",
+          "Existing configs get it too: machines that already have an orders.json pick up the missing prefix on the first launch after upgrading (backed up to backup/ beforehand). Prefixes you added yourself are left untouched, prefixes you deleted are not restored, and the fill only happens once."
+        ],
+        "vi": [
+          "Thêm tiền tố đánh dấu 6CCR: mã sản phẩm bắt đầu bằng 6CCR sẽ được đánh \"Có\" ở cột đánh dấu.",
+          "Cấu hình đã có cũng nhận được tiền tố mới: máy đã tạo orders.json sẽ được bổ sung tiền tố còn thiếu ngay lần khởi động đầu tiên sau khi nâng cấp (sao lưu vào backup/ trước khi sửa). Tiền tố bạn tự thêm được giữ nguyên, tiền tố bạn đã xóa không bị khôi phục, và chỉ bổ sung một lần."
+        ]
+      }
+    },
+    {
       "version": "1.19.0",
       "date": "2026-10-31",
       "notes": {

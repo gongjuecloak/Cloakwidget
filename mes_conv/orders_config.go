@@ -24,6 +24,24 @@ type TagMaterials struct {
 	No          string   `json:"no"`
 }
 
+// addedTagPrefixes 「随版本新增」的打标前缀，升级后补进存量 orders.json。
+//
+// 磁盘配置优先，而 reconcileConfig 只补缺键、不覆盖已有值，所以光改内置默认
+// 对已经生成过 orders.json 的机器不生效。这里列出的是「本版本新加的前缀」，
+// reconcile 只补配置里没有的项：用户自己加的前缀保留，他手动删掉的旧前缀不会被恢复。
+// 每次发版加了新前缀就往这里追加，不用管历史项（已经补过就不会再动）。
+var addedTagPrefixes = []string{"6CCR"}
+
+// hasTagPrefix 前缀列表里是否已有该项（忽略大小写与首尾空白，与 hasPrefix 口径一致）
+func hasTagPrefix(list []string, p string) bool {
+	for _, v := range list {
+		if strings.EqualFold(strings.TrimSpace(v), strings.TrimSpace(p)) {
+			return true
+		}
+	}
+	return false
+}
+
 // OrdersSettings 订单模块的运行参数
 type OrdersSettings struct {
 	UseTemplateHeader  bool `json:"use_template_header"`  // 输出表头带 "* " 必填前缀
@@ -342,6 +360,19 @@ func reconcileConfig(c *OrdersConfig, raw []byte) bool {
 		added++
 	}
 
+	// 随版本新增的打标前缀：只补「清单里写了、配置里没有」的。
+	// 用户自己在配置页加的前缀保持原样，他手动删掉的旧前缀也不会被恢复 ——
+	// 所以这里只能放「本版本新加」的项，不能拿全量默认列表来对齐。
+	// 只处理打了标的配置：整组关掉的规则不去动它。
+	if c.TagMaterials.Enabled {
+		for _, p := range addedTagPrefixes {
+			if !hasTagPrefix(c.TagMaterials.Prefixes, p) {
+				c.TagMaterials.Prefixes = append(c.TagMaterials.Prefixes, p)
+				added++
+			}
+		}
+	}
+
 	if added > 0 {
 		addConfigNote("orders.json 已按 schema v%d 补齐 %d 项（列顺序 / 映射 / 默认值 / 开关）", schemaOrders, added)
 		return true
@@ -492,7 +523,7 @@ func defaultOrdersConfig() *OrdersConfig {
 			Column:      "是否需要打标",
 			SourceField: "产品编码",
 			Prefixes: []string{
-				"61CS", "61CR", "61FC", "6CR", "61FK",
+				"61CS", "61CR", "61FC", "6CR", "6CCR", "61FK",
 				"61FS", "61HB", "61SP", "61SS",
 			},
 			Yes: "是",
