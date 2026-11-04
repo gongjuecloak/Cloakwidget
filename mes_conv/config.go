@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 )
 
 // FieldRule 描述一个目标列的取值规则
@@ -128,10 +129,12 @@ func migrateMaterialConfig(c *Config, raw []byte) (changed bool) {
 	if c.Schema > schemaMaterials {
 		addConfigNote("mapping.json 由更高版本的程序写入（schema %d > %d）：本版本只读不写，请升级程序",
 			c.Schema, schemaMaterials)
+		recordConfigDiff(materialConfigDiff(c, nil))
 		return false
 	}
 
-	addedFields, addedKeys := fillMaterialDefaults(c, raw)
+	var filled []string
+	addedFields, addedKeys := fillMaterialDefaults(c, raw, &filled)
 	if addedFields > 0 || addedKeys > 0 {
 		changed = true
 		addConfigNote("mapping.json 已按 schema v%d 补齐：新增 %d 条字段规则、%d 项字典/清单",
@@ -141,6 +144,7 @@ func migrateMaterialConfig(c *Config, raw []byte) (changed bool) {
 		c.Schema = schemaMaterials
 		changed = true
 	}
+	recordConfigDiff(materialConfigDiff(c, filled))
 	return changed
 }
 
@@ -152,13 +156,19 @@ func migrateMaterialConfig(c *Config, raw []byte) (changed bool) {
 //
 // raw 用来分辨「键没写」和「键写了零值」：像 duplicate_keys 这种，
 // 空数组是用户「有意关掉检查」的表达，不能被默认值悄悄打开。
-func fillMaterialDefaults(c *Config, raw []byte) (addedFields, addedKeys int) {
+func fillMaterialDefaults(c *Config, raw []byte, filled *[]string) (addedFields, addedKeys int) {
 	def := defaultConfig()
 	top := rawTopKeys(raw)
+	add := func(path string) {
+		if filled != nil {
+			*filled = append(*filled, path)
+		}
+	}
 
 	if c.OutputSheet == "" {
 		c.OutputSheet = def.OutputSheet
 		addedKeys++
+		add("output_sheet")
 	}
 
 	// Fields：按 Target 补缺，追加在末尾（输出列顺序由模板表头决定，不受 Fields 顺序影响）
@@ -173,6 +183,7 @@ func fillMaterialDefaults(c *Config, raw []byte) (addedFields, addedKeys int) {
 		c.Fields = append(c.Fields, f)
 		seen[f.Target] = true
 		addedFields++
+		add("fields." + f.Target)
 	}
 
 	// Dicts：按「字典名」整组补缺。已存在的字典不合并键 —— 字典内容属于业务口径，
@@ -184,23 +195,41 @@ func fillMaterialDefaults(c *Config, raw []byte) (addedFields, addedKeys int) {
 		if _, ok := c.Dicts[name]; !ok {
 			c.Dicts[name] = d
 			addedKeys++
+			add("dicts." + name)
 		}
 	}
 
-	// UnitMap：整表缺才补
-	if len(c.UnitMap) == 0 {
-		c.UnitMap = def.UnitMap
-		addedKeys++
+	// UnitMap：按「源单位符号」逐键补缺。
+	// 以前是「整表为空才补」—— 用户只要动过一个单位映射，新版本新增的映射就再也进不来。
+	if c.UnitMap == nil {
+		c.UnitMap = map[string]string{}
+	}
+	for k, v := range def.UnitMap {
+		if _, ok := c.UnitMap[k]; !ok {
+			c.UnitMap[k] = v
+			addedKeys++
+			add("unit_map." + k)
+		}
 	}
 
 	// ValueWhitelist / ColumnMaxLen：按目标列补缺（只影响「告警」，不改变输出）
 	if c.ValueWhitelist == nil {
 		c.ValueWhitelist = map[string][]string{}
 	}
-	for k, v := range def.ValueWhitelist {
-		if _, ok := c.ValueWhitelist[k]; !ok {
-			c.ValueWhitelist[k] = v
+	for k, vals := range def.ValueWhitelist {
+		cur, ok := c.ValueWhitelist[k]
+		if !ok {
+			c.ValueWhitelist[k] = append([]string(nil), vals...)
 			addedKeys++
+			add("value_whitelist." + k)
+			continue
+		}
+		// 列已存在：只补缺的值。白名单只放宽判定，不会把原本该告警的值变成不告警。
+		merged, n := mergeMissingStrings(cur, vals)
+		if n > 0 {
+			c.ValueWhitelist[k] = merged
+			addedKeys += n
+			add("value_whitelist." + k)
 		}
 	}
 	if c.ColumnMaxLen == nil {
@@ -210,6 +239,7 @@ func fillMaterialDefaults(c *Config, raw []byte) (addedFields, addedKeys int) {
 		if _, ok := c.ColumnMaxLen[k]; !ok {
 			c.ColumnMaxLen[k] = v
 			addedKeys++
+			add("column_max_len." + k)
 		}
 	}
 
@@ -219,9 +249,91 @@ func fillMaterialDefaults(c *Config, raw []byte) (addedFields, addedKeys int) {
 	if !rawHas(top, "duplicate_keys") && len(c.DuplicateKeys) == 0 && len(def.DuplicateKeys) > 0 {
 		c.DuplicateKeys = def.DuplicateKeys
 		addedKeys++
+		add("duplicate_keys")
+	}
+
+	// CrossChecks：跨字段联动校验最容易「新版本加了、旧配置里没有」—— 这一项以前完全没补，
+	// 默认那条「序列管理=是 时必须填序列号规则编码」到不了老机器。同样按「键根本没写」判断：
+	// 写成 [] 是用户把规则全关掉，不能被悄悄打开。
+	if !rawHas(top, "cross_checks") && len(c.CrossChecks) == 0 && len(def.CrossChecks) > 0 {
+		c.CrossChecks = def.CrossChecks
+		addedKeys++
+		add("cross_checks")
 	}
 
 	return addedFields, addedKeys
+}
+
+// materialConfigDiff 计算 mapping.json 与内置默认的差异，供界面「配置一致性」显示。
+// filled 是本次加载自动补的项；Custom / OnlyLocal 由这里逐项比对得出。
+func materialConfigDiff(c *Config, filled []string) *configDiff {
+	d := defaultConfig()
+	out := &configDiff{File: "mapping.json", Schema: c.Schema, SchemaNow: schemaMaterials, Filled: filled}
+
+	if c.OutputSheet != "" && c.OutputSheet != d.OutputSheet {
+		out.Custom = append(out.Custom, "output_sheet")
+	}
+
+	defFields := make(map[string]FieldRule, len(d.Fields))
+	for _, f := range d.Fields {
+		defFields[f.Target] = f
+	}
+	for _, f := range c.Fields {
+		if f.Target == "" {
+			continue
+		}
+		df, ok := defFields[f.Target]
+		if !ok {
+			out.OnlyLocal = append(out.OnlyLocal, "fields."+f.Target)
+			continue
+		}
+		if !reflect.DeepEqual(f, df) {
+			out.Custom = append(out.Custom, "fields."+f.Target)
+		}
+	}
+
+	for name, m := range c.Dicts {
+		dm, ok := d.Dicts[name]
+		if !ok {
+			out.OnlyLocal = append(out.OnlyLocal, "dicts."+name)
+			continue
+		}
+		if !reflect.DeepEqual(m, dm) {
+			out.Custom = append(out.Custom, "dicts."+name)
+		}
+	}
+
+	diffMapString("unit_map", c.UnitMap, d.UnitMap, out)
+
+	for k, vals := range c.ValueWhitelist {
+		dv, ok := d.ValueWhitelist[k]
+		if !ok {
+			out.OnlyLocal = append(out.OnlyLocal, "value_whitelist."+k)
+			continue
+		}
+		if !sameStringSet(vals, dv) {
+			out.Custom = append(out.Custom, "value_whitelist."+k)
+		}
+	}
+
+	for k, v := range c.ColumnMaxLen {
+		dv, ok := d.ColumnMaxLen[k]
+		if !ok {
+			out.OnlyLocal = append(out.OnlyLocal, "column_max_len."+k)
+			continue
+		}
+		if dv != v {
+			out.Custom = append(out.Custom, "column_max_len."+k)
+		}
+	}
+
+	diffStringSet("duplicate_keys", c.DuplicateKeys, d.DuplicateKeys, out)
+
+	if len(c.CrossChecks) > 0 && !reflect.DeepEqual(c.CrossChecks, d.CrossChecks) {
+		out.Custom = append(out.Custom, "cross_checks")
+	}
+
+	return out
 }
 
 // defaultConfig 内置默认映射，首次运行且 mapping.json 不存在时写出

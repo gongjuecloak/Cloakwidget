@@ -149,9 +149,11 @@ func main() {
 	// 先退回一个确定能用的版本，别把配置和程序一起卡死。
 	prepareUpdateBoot()
 
-	// 首次运行确保配置文件存在（两个模块各一份）
+	// 首次运行确保配置文件存在（三个模块各一份）
 	ensureConfig()
 	ensureOrdersConfig()
+	ensureBomConfig()
+	logConfigAudit()
 
 	// 记录本次运行的版本，并把「上一个版本」记下来：版本变了就在界面上主动
 	// 弹一次「这个版本改了什么」（更新日志编译在 exe 里，内网机器也看得到）。

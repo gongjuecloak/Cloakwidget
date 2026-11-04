@@ -1714,6 +1714,31 @@ func handlerPing(w http.ResponseWriter, r *http.Request) {
 }
 
 // handlerAbout 返回运行环境信息，供界面「关于」弹窗展示（出问题时方便定位）。
+// handlerConfigAudit GET /api/config/audit
+// 三份配置与「本版本内置默认」的差异：哪些缺项已被自动补齐、哪些是本地自定义（未覆盖）、
+// 哪些是本地独有。界面上用来回答「新版本加的东西到我机器上了吗」。
+func handlerConfigAudit(w http.ResponseWriter, r *http.Request) {
+	// 先确保三份配置都加载过（没加载过就没有审计结果）
+	ensureConfig()
+	ensureOrdersConfig()
+	ensureBomConfig()
+
+	diffs := configDiffSnapshot()
+	consistent := true
+	for _, d := range diffs {
+		if !d.consistent() {
+			consistent = false
+			break
+		}
+	}
+	writeJSON(w, map[string]interface{}{
+		"ok":         true,
+		"version":    appVersion,
+		"consistent": consistent,
+		"diffs":      diffs,
+	})
+}
+
 func handlerAbout(w http.ResponseWriter, r *http.Request) {
 	exe, _ := os.Executable()
 	writeJSON(w, map[string]interface{}{
@@ -1750,6 +1775,7 @@ func buildMux() *http.ServeMux {
 			handlerGetConfig(w, r)
 		}
 	})
+	mux.HandleFunc("/api/config/audit", handlerConfigAudit)
 	mux.HandleFunc("/api/config-backups", handlerConfigBackups)
 	mux.HandleFunc("/api/config-backup", handlerConfigBackupGet)
 	mux.HandleFunc("/api/config-restore", handlerConfigRestore)

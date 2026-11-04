@@ -2,6 +2,32 @@
   "note": "程序内置的更新日志。发版时在 versions 顶部加一条，并把 version 改成新版本号；notes 按语言分组，缺的语言回退到 zh。",
   "versions": [
     {
+      "version": "1.20.0",
+      "date": "2026-11-04",
+      "notes": {
+        "zh": [
+          "配置改了没，现在看得见：每次启动都会把三份配置（物料 / 订单工单 / BOM）跟本版本内置默认逐项比对，缺的自动补上并写回磁盘（补前照常备份到 backup/），你改过的值原样保留。",
+          "配置中心顶部新增一致性条：完全一致时是一行灰字；有差异时显示「已补齐 N 项 / 本地自定义 M 项 / 本地独有 K 项」，点「查看明细」能逐条看到是哪个文件的哪一项。",
+          "顺手补上四个以前补不到的缺口：物料的跨字段校验规则、单位映射改成逐键补齐、单位白名单列内增值、订单表头同义词组内补齐 —— 这些以前新版本加了也到不了老配置。只补缺失的键，不覆盖你填的值。"
+        ],
+        "zht": [
+          "設定改了沒，現在看得見：每次啟動都會把三份設定（物料 / 訂單工單 / BOM）跟本版本內建預設逐項比對，缺的自動補上並寫回磁碟（補前照常備份到 backup/），你改過的值原樣保留。",
+          "設定中心頂端新增一致性條：完全一致時是一行灰字；有差異時顯示「已補齊 N 項 / 本地自訂 M 項 / 本地獨有 K 項」，點「查看明細」能逐條看到是哪個檔案的哪一項。",
+          "順手補上四個以前補不到的缺口：物料的跨欄位驗證規則、單位對應改成逐鍵補齊、單位白名單欄內增值、訂單表頭同義詞組內補齊 —— 這些以前新版本加了也到不了舊設定。只補缺少的鍵，不覆蓋你填的值。"
+        ],
+        "en": [
+          "You can now see whether your config is up to date: on every launch the three config files (materials / orders & work orders / BOM) are compared item by item with this version's built-in defaults. Missing items are filled in and written back (backed up to backup/ first); values you changed are left exactly as they are.",
+          "The config center header shows a consistency bar: a single grey line when everything matches, otherwise \"Filled N / local customizations M / local-only K\". Click Show details to list each item per file.",
+          "Four gaps that used to be impossible to fill are closed: material cross-field checks, per-key unit mapping, extra whitelist values per column, and same-synonym groups for order headers. Only missing keys are filled — your values are never overwritten."
+        ],
+        "vi": [
+          "Giờ đã thấy được cấu hình có khớp bản mới hay không: mỗi lần khởi động, ba tệp cấu hình (vật tư / đơn hàng & lệnh SX / BOM) được so từng mục với mặc định của bản này. Mục thiếu được bổ sung và ghi lại (sao lưu vào backup/ trước), giá trị bạn đã sửa được giữ nguyên.",
+          "Đầu trang cấu hình có thêm thanh nhất quán: khớp hoàn toàn thì một dòng xám; có khác biệt thì hiển thị \"Đã bổ sung N / tùy chỉnh cục bộ M / chỉ có cục bộ K\", bấm Xem chi tiết để xem từng mục theo tệp.",
+          "Bổ sung bốn chỗ trước đây không thể lấp: quy tắc kiểm tra chéo của vật tư, ánh xạ đơn vị theo từng khóa, giá trị whitelist bổ sung trong cột, và nhóm từ đồng nghĩa tiêu đề đơn hàng. Chỉ bổ sung khóa còn thiếu, không ghi đè giá trị bạn đã đặt."
+        ]
+      }
+    },
+    {
       "version": "1.19.1",
       "date": "2026-11-04",
       "notes": {

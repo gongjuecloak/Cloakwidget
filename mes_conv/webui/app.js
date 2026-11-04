@@ -1146,7 +1146,58 @@ function showModule(name){
   }
   if(name==="config"){
     showCfgTab(cfgTab,true);
+    refreshConfigAudit();
   }
+}
+
+// ---- 配置一致性：本版本内置默认 vs 磁盘配置 ----
+// 后端加载配置时就已经把「盘上缺、本版本默认有」的项补齐并写回磁盘了，这里只负责把结果摊开：
+//   + 已补齐     盘上缺、默认有 → 已写回配置
+//   ~ 本地自定义  两边都有但值不同 → 保留本地，不覆盖
+//   · 本地独有    只有盘上有 → 保留
+// 目的是让人一眼确认「新版本加的东西到没到我这台机器」「我改过的有没有被抹掉」。
+let cfgAuditOpen=false;
+async function refreshConfigAudit(){
+  const bar=document.getElementById("cfgAuditBar");
+  if(!bar) return;
+  let d=null;
+  try{ const r=await fetch("/api/config/audit"); d=await r.json(); }catch(e){ bar.hidden=true; return; }
+  if(!d || !d.ok || !Array.isArray(d.diffs) || !d.diffs.length){ bar.hidden=true; return; }
+  const sum=k=>d.diffs.reduce((n,x)=>n+((x[k]||[]).length),0);
+  const filled=sum("filled"), custom=sum("custom"), only=sum("only_local");
+  bar.hidden=false;
+  const parts=[];
+  if(filled) parts.push('<span class="au-item fill">'+esc(fmt("cfg_audit_filled",[filled]))+'</span>');
+  if(custom) parts.push('<span class="au-item cust">'+esc(fmt("cfg_audit_custom",[custom]))+'</span>');
+  if(only) parts.push('<span class="au-item only">'+esc(fmt("cfg_audit_only",[only]))+'</span>');
+  const head = parts.length
+    ? parts.join('<span class="au-sep"></span>')
+    : '<span class="au-item ok">'+esc(fmt("cfg_audit_ok",[d.version||""]))+'</span>';
+  bar.className="cfg-audit"+(!parts.length?" is-ok":"")+(filled?" has-filled":"");
+  bar.innerHTML='<div class="au-row">'+head+
+    (parts.length?'<button type="button" id="cfgAuditToggle" class="linkbtn" aria-expanded="'+(cfgAuditOpen?"true":"false")+'">'+
+      esc(t(cfgAuditOpen?"cfg_audit_hide":"cfg_audit_show"))+'</button>':'')+'</div>'+
+    (parts.length&&cfgAuditOpen?'<div class="au-detail">'+renderAuditDetail(d.diffs)+'</div>':'');
+  const btn=document.getElementById("cfgAuditToggle");
+  if(btn) btn.onclick=()=>{ cfgAuditOpen=!cfgAuditOpen; refreshConfigAudit(); };
+}
+
+function renderAuditDetail(diffs){
+  const group=(arr,cls,sign)=>{
+    if(!arr||!arr.length) return "";
+    return arr.map(x=>'<li class="'+cls+'"><span class="au-sign">'+sign+'</span>'+esc(x)+'</li>').join("");
+  };
+  const legend='<div class="au-legend">'+
+    '<span class="au-lg"><b class="au-i-fill">+</b>'+esc(t("cfg_audit_legend_fill"))+'</span>'+
+    '<span class="au-lg"><b class="au-i-cust">~</b>'+esc(t("cfg_audit_legend_cust"))+'</span>'+
+    '<span class="au-lg"><b class="au-i-only">·</b>'+esc(t("cfg_audit_legend_only"))+'</span>'+
+    '</div>';
+  return legend+diffs.map(x=>{
+    const items=group(x.filled,"au-i-fill","+")+group(x.custom,"au-i-cust","~")+group(x.only_local,"au-i-only","·");
+    if(!items) return "";
+    return '<div class="au-file"><div class="au-file-head"><code>'+esc(x.file)+'</code>'+
+      '<span class="muted">schema '+esc(x.schema)+' / '+esc(x.schema_now)+'</span></div><ul>'+items+'</ul></div>';
+  }).join("");
 }
 
 // ---- 首页「最近一次转换」卡片 ----

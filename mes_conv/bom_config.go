@@ -147,21 +147,52 @@ func ensureBomConfig() *BomConfig {
 func reconcileBomConfig(c *BomConfig) bool {
 	d := defaultBomConfig()
 	added := 0
+	var filled []string
 
-	cols, n := mergeMissingMap(c.Columns, d.Columns)
-	c.Columns, added = cols, added+n
-	mf, n := mergeMissingMap(c.MasterFixed, d.MasterFixed)
-	c.MasterFixed, added = mf, added+n
-	df, n := mergeMissingMap(c.DetailFixed, d.DetailFixed)
-	c.DetailFixed, added = df, added+n
-	ua, n := mergeMissingMap(c.UnitAliases, d.UnitAliases)
-	c.UnitAliases, added = ua, added+n
+	merge := func(path string, cur, def map[string]string) map[string]string {
+		out, n := mergeMissingMap(cur, def)
+		if n > 0 {
+			added += n
+			filled = append(filled, path)
+		}
+		return out
+	}
+	c.Columns = merge("columns", c.Columns, d.Columns)
+	c.MasterFixed = merge("master_fixed", c.MasterFixed, d.MasterFixed)
+	c.DetailFixed = merge("detail_fixed", c.DetailFixed, d.DetailFixed)
+	c.UnitAliases = merge("unit_aliases", c.UnitAliases, d.UnitAliases)
 
 	if added > 0 {
 		addConfigNote("bom_mapping.json 已按 schema v%d 补齐 %d 项（列映射 / 固定值 / 单位别名）", schemaBom, added)
-		return true
 	}
-	return false
+	recordConfigDiff(bomConfigDiff(c, filled))
+	return added > 0
+}
+
+// bomConfigDiff 计算 bom_mapping.json 与内置默认的差异（供界面「配置一致性」显示）。
+func bomConfigDiff(c *BomConfig, filled []string) *configDiff {
+	d := defaultBomConfig()
+	out := &configDiff{File: "bom_mapping.json", Schema: c.Schema, SchemaNow: schemaBom, Filled: filled}
+
+	diffMapString("columns", c.Columns, d.Columns, out)
+	diffMapString("master_fixed", c.MasterFixed, d.MasterFixed, out)
+	diffMapString("detail_fixed", c.DetailFixed, d.DetailFixed, out)
+	diffMapString("unit_aliases", c.UnitAliases, d.UnitAliases, out)
+
+	if c.SrcSheet != "" && c.SrcSheet != d.SrcSheet {
+		out.Custom = append(out.Custom, "src_sheet")
+	}
+	if c.MasterSheet != "" && c.MasterSheet != d.MasterSheet {
+		out.Custom = append(out.Custom, "master_sheet")
+	}
+	if c.DetailSheet != "" && c.DetailSheet != d.DetailSheet {
+		out.Custom = append(out.Custom, "detail_sheet")
+	}
+	if c.Basediv != d.Basediv {
+		out.Custom = append(out.Custom, "basediv")
+	}
+
+	return out
 }
 
 // fillDefaults 补齐缺失分支，避免配置里没写的键到处判空

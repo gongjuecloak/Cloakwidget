@@ -603,3 +603,32 @@ body.modal-open{overflow:hidden}
 #tplBtnOpen{display:none}
 .tpl-card.open #tplBtnClosed{display:none}
 .tpl-card.open #tplBtnOpen{display:inline}
+
+  /* ---- 配置一致性条（配置页顶部）：本版本内置默认 vs 磁盘配置 ---- */
+  .cfg-audit{margin:0 0 14px;border:1px solid var(--line);border-radius:12px;background:var(--card);padding:10px 14px;font-size:13px;color:var(--ink)}
+  .cfg-audit.is-ok{background:transparent;border-color:transparent;padding:0 2px 10px;color:var(--muted);font-size:12.5px}
+  .cfg-audit.has-filled{background:var(--primary-soft);border-color:#b2ccff}
+  .au-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .au-item{display:inline-flex;align-items:center;gap:6px}
+  .au-item.fill{color:var(--primary-d);font-weight:600}
+  .au-item.cust{color:var(--warn)}
+  .au-item.only{color:var(--muted)}
+  .au-item.ok{color:var(--ok)}
+  .au-item.fill::before,.au-item.cust::before,.au-item.only::before,.au-item.ok::before{
+    content:"";width:6px;height:6px;border-radius:50%;background:currentColor;flex:none}
+  .au-sep{width:1px;height:12px;background:var(--line);display:inline-block}
+  .au-row .linkbtn{margin-left:auto}
+  .au-detail{margin-top:10px;border-top:1px dashed var(--line);padding-top:10px;display:grid;gap:10px}
+  .au-legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11.5px;color:var(--muted)}
+  .au-legend b{font-weight:700;margin-right:3px}
+  .au-legend b.au-i-fill{color:var(--primary)}
+  .au-legend b.au-i-cust{color:var(--warn)}
+  .au-legend b.au-i-only{color:var(--muted)}
+  .au-file-head{display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:4px}
+  .au-file-head code{font-size:12px;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:1px 6px}
+  .au-detail ul{margin:0;padding:0;list-style:none;display:grid;gap:2px;max-height:340px;overflow:auto}
+  .au-detail li{font-size:12px;color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;display:flex;gap:6px}
+  .au-sign{width:10px;flex:none;text-align:center;font-weight:700}
+  .au-i-fill .au-sign{color:var(--primary)}
+  .au-i-cust .au-sign{color:var(--warn)}
+  .au-i-only .au-sign{color:var(--muted)}

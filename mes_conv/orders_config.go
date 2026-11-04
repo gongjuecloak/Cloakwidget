@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 )
 
@@ -204,6 +205,8 @@ func (c *OrdersConfig) fillDefaults() {
 func reconcileConfig(c *OrdersConfig, raw []byte) bool {
 	d := defaultOrdersConfig()
 	added := 0
+	var filled []string
+	add := func(path string) { filled = append(filled, path) }
 
 	// 防御：盘上配置若没写这些分支，先初始化再补，避免对 nil map 赋值 panic
 	if c.ColumnOrder == nil {
@@ -232,7 +235,10 @@ func reconcileConfig(c *OrdersConfig, raw []byte) bool {
 	for cat, defCols := range d.ColumnOrder {
 		cur, n := mergeMissingStrings(c.ColumnOrder[cat], defCols)
 		c.ColumnOrder[cat] = cur
-		added += n
+		if n > 0 {
+			added += n
+			add("column_order." + cat)
+		}
 	}
 
 	// TemplateHeaders：补齐缺失的表头前缀映射
@@ -240,6 +246,7 @@ func reconcileConfig(c *OrdersConfig, raw []byte) bool {
 		if _, ok := c.TemplateHeaders[k]; !ok {
 			c.TemplateHeaders[k] = v
 			added++
+			add("template_headers." + k)
 		}
 	}
 
@@ -247,14 +254,20 @@ func reconcileConfig(c *OrdersConfig, raw []byte) bool {
 	for cat, req := range d.RequiredColumns {
 		cur, n := mergeMissingStrings(c.RequiredColumns[cat], req)
 		c.RequiredColumns[cat] = cur
-		added += n
+		if n > 0 {
+			added += n
+			add("required_columns." + cat)
+		}
 	}
 
 	// DateColumns：补齐默认日期列
 	for cat, dc := range d.DateColumns {
 		cur, n := mergeMissingStrings(c.DateColumns[cat], dc)
 		c.DateColumns[cat] = cur
-		added += n
+		if n > 0 {
+			added += n
+			add("date_columns." + cat)
+		}
 	}
 
 	// FieldMapping：补齐缺失的「源字段 → 目标列」
@@ -267,6 +280,7 @@ func reconcileConfig(c *OrdersConfig, raw []byte) bool {
 			if _, ok := cur[src]; !ok {
 				cur[src] = tgt
 				added++
+				add("field_mapping." + cat + "." + src)
 			}
 		}
 		c.FieldMapping[cat] = cur
@@ -284,6 +298,7 @@ func reconcileConfig(c *OrdersConfig, raw []byte) bool {
 			if _, ok := cur[k]; !ok {
 				cur[k] = v
 				added++
+				add("default_values." + cat + "." + k)
 			}
 		}
 		c.DefaultValues[cat] = cur
@@ -299,19 +314,31 @@ func reconcileConfig(c *OrdersConfig, raw []byte) bool {
 			if _, ok := cur[k]; !ok {
 				cur[k] = v
 				added++
+				add("derived_columns." + cat + "." + k)
 			}
 		}
 		c.DerivedColumns[cat] = cur
 	}
 
-	// ColumnAliases：补齐缺失的源表头同义词组（缺了会直接认不出源档表头）
+	// ColumnAliases：补齐缺失的源表头同义词组（缺了会直接认不出源档表头）。
+	// 已存在的组只补缺失的同义词 —— 新版本给某列加了一种表头写法时，
+	// 整组跳过的话那条永远进不来，源档照样认不出。
 	if c.ColumnAliases == nil {
 		c.ColumnAliases = map[string][]string{}
 	}
 	for k, v := range d.ColumnAliases {
-		if _, ok := c.ColumnAliases[k]; !ok {
-			c.ColumnAliases[k] = v
+		cur, ok := c.ColumnAliases[k]
+		if !ok {
+			c.ColumnAliases[k] = append([]string(nil), v...)
 			added++
+			add("column_aliases." + k)
+			continue
+		}
+		merged, n := mergeMissingStrings(cur, v)
+		if n > 0 {
+			c.ColumnAliases[k] = merged
+			added += n
+			add("column_aliases." + k)
 		}
 	}
 
@@ -331,18 +358,22 @@ func reconcileConfig(c *OrdersConfig, raw []byte) bool {
 			if probe.Settings.UseTemplateHeader == nil {
 				c.Settings.UseTemplateHeader = d.Settings.UseTemplateHeader
 				added++
+				add("settings.use_template_header")
 			}
 			if probe.Settings.AutoFillOrderLine == nil {
 				c.Settings.AutoFillOrderLine = d.Settings.AutoFillOrderLine
 				added++
+				add("settings.auto_fill_order_line")
 			}
 			if probe.Settings.FilterSummaryRows == nil {
 				c.Settings.FilterSummaryRows = d.Settings.FilterSummaryRows
 				added++
+				add("settings.filter_summary_rows")
 			}
 			if probe.Settings.EnableValidation == nil {
 				c.Settings.EnableValidation = d.Settings.EnableValidation
 				added++
+				add("settings.enable_validation")
 			}
 		}
 	}
@@ -353,11 +384,13 @@ func reconcileConfig(c *OrdersConfig, raw []byte) bool {
 		if c.TagMaterials.Column == "" || len(c.TagMaterials.Prefixes) == 0 {
 			c.TagMaterials = d.TagMaterials
 			added++
+			add("tag_materials")
 		}
 	} else if c.TagMaterials.Enabled && len(c.TagMaterials.Prefixes) == 0 {
 		// 开了打标却没有任何前缀 = 永远判「否」，按默认前缀补齐
 		c.TagMaterials.Prefixes = d.TagMaterials.Prefixes
 		added++
+		add("tag_materials.prefixes")
 	}
 
 	// 随版本新增的打标前缀：只补「清单里写了、配置里没有」的。
@@ -369,15 +402,162 @@ func reconcileConfig(c *OrdersConfig, raw []byte) bool {
 			if !hasTagPrefix(c.TagMaterials.Prefixes, p) {
 				c.TagMaterials.Prefixes = append(c.TagMaterials.Prefixes, p)
 				added++
+				add("tag_materials.prefixes." + p)
+			}
+		}
+	}
+
+	// DuplicateKeys：按 category 补缺组合键。默认配置里没有显式查重键（留空 = 转换时
+	// 用代码内置默认），所以这里只在「本版本确实给了默认值」时才动，避免往用户配置里
+	// 写一个空对象。写成 [] 表示该表不查重，不动。
+	if len(d.DuplicateKeys) > 0 {
+		if c.DuplicateKeys == nil {
+			c.DuplicateKeys = map[string][]string{}
+		}
+		for cat, keys := range d.DuplicateKeys {
+			cur := c.DuplicateKeys[cat]
+			if cur == nil {
+				cur = []string{}
+			}
+			merged, n := mergeMissingStrings(cur, keys)
+			if n > 0 {
+				c.DuplicateKeys[cat] = merged
+				added += n
+				add("duplicate_keys." + cat)
 			}
 		}
 	}
 
 	if added > 0 {
-		addConfigNote("orders.json 已按 schema v%d 补齐 %d 项（列顺序 / 映射 / 默认值 / 开关）", schemaOrders, added)
-		return true
+		addConfigNote("orders.json 已按 schema v%d 补齐 %d 项（列顺序 / 映射 / 默认值 / 开关 / 别名）",
+			schemaOrders, added)
 	}
-	return false
+	recordConfigDiff(ordersConfigDiff(c, filled))
+	return added > 0
+}
+
+// ordersConfigDiff 计算 orders.json 与内置默认的差异（供界面「配置一致性」显示）。
+// 粒度到「哪一节的哪一类」（column_order.order_detail / field_mapping.work_order），
+// 够定位，又不至于把上百条字段映射逐条铺出来。
+func ordersConfigDiff(c *OrdersConfig, filled []string) *configDiff {
+	d := defaultOrdersConfig()
+	out := &configDiff{File: "orders.json", Schema: c.Schema, SchemaNow: schemaOrders, Filled: filled}
+
+	diffMapList("column_order", c.ColumnOrder, d.ColumnOrder, out)
+	diffMapString("template_headers", c.TemplateHeaders, d.TemplateHeaders, out)
+
+	for cat, cur := range c.RequiredColumns {
+		def, ok := d.RequiredColumns[cat]
+		if !ok {
+			out.OnlyLocal = append(out.OnlyLocal, "required_columns."+cat)
+			continue
+		}
+		if !sameStringSet(cur, def) {
+			out.Custom = append(out.Custom, "required_columns."+cat)
+		}
+	}
+	for cat, cur := range c.DateColumns {
+		def, ok := d.DateColumns[cat]
+		if !ok {
+			out.OnlyLocal = append(out.OnlyLocal, "date_columns."+cat)
+			continue
+		}
+		if !sameStringSet(cur, def) {
+			out.Custom = append(out.Custom, "date_columns."+cat)
+		}
+	}
+
+	// 嵌套 map（category -> 键 -> 值）：整节比较
+	for cat, cur := range c.FieldMapping {
+		def, ok := d.FieldMapping[cat]
+		if !ok {
+			out.OnlyLocal = append(out.OnlyLocal, "field_mapping."+cat)
+			continue
+		}
+		if !reflect.DeepEqual(cur, def) {
+			out.Custom = append(out.Custom, "field_mapping."+cat)
+		}
+	}
+	for cat, cur := range c.DefaultValues {
+		def, ok := d.DefaultValues[cat]
+		if !ok {
+			out.OnlyLocal = append(out.OnlyLocal, "default_values."+cat)
+			continue
+		}
+		if !reflect.DeepEqual(cur, def) {
+			out.Custom = append(out.Custom, "default_values."+cat)
+		}
+	}
+	for cat, cur := range c.DerivedColumns {
+		def, ok := d.DerivedColumns[cat]
+		if !ok {
+			out.OnlyLocal = append(out.OnlyLocal, "derived_columns."+cat)
+			continue
+		}
+		if !reflect.DeepEqual(cur, def) {
+			out.Custom = append(out.Custom, "derived_columns."+cat)
+		}
+	}
+
+	// ColumnAliases：同义词组顺序无意义，按集合比
+	for k, cur := range c.ColumnAliases {
+		def, ok := d.ColumnAliases[k]
+		if !ok {
+			out.OnlyLocal = append(out.OnlyLocal, "column_aliases."+k)
+			continue
+		}
+		if !sameStringSet(cur, def) {
+			out.Custom = append(out.Custom, "column_aliases."+k)
+		}
+	}
+
+	for cat, cur := range c.DuplicateKeys {
+		def, ok := d.DuplicateKeys[cat]
+		if !ok {
+			out.OnlyLocal = append(out.OnlyLocal, "duplicate_keys."+cat)
+			continue
+		}
+		if !sameStringSet(cur, def) {
+			out.Custom = append(out.Custom, "duplicate_keys."+cat)
+		}
+	}
+
+	if c.Settings.UseTemplateHeader != d.Settings.UseTemplateHeader {
+		out.Custom = append(out.Custom, "settings.use_template_header")
+	}
+	if c.Settings.AutoFillOrderLine != d.Settings.AutoFillOrderLine {
+		out.Custom = append(out.Custom, "settings.auto_fill_order_line")
+	}
+	if c.Settings.FilterSummaryRows != d.Settings.FilterSummaryRows {
+		out.Custom = append(out.Custom, "settings.filter_summary_rows")
+	}
+	if c.Settings.EnableValidation != d.Settings.EnableValidation {
+		out.Custom = append(out.Custom, "settings.enable_validation")
+	}
+	if c.Settings.TemplateSheetIndex != d.Settings.TemplateSheetIndex {
+		out.Custom = append(out.Custom, "settings.source_sheet")
+	}
+
+	if c.TagMaterials.Enabled != d.TagMaterials.Enabled {
+		out.Custom = append(out.Custom, "tag_materials.enabled")
+	}
+	if c.TagMaterials.Column != d.TagMaterials.Column {
+		out.Custom = append(out.Custom, "tag_materials.column")
+	}
+	if c.TagMaterials.SourceField != d.TagMaterials.SourceField {
+		out.Custom = append(out.Custom, "tag_materials.source_field")
+	}
+	if c.TagMaterials.Yes != d.TagMaterials.Yes {
+		out.Custom = append(out.Custom, "tag_materials.yes")
+	}
+	if c.TagMaterials.No != d.TagMaterials.No {
+		out.Custom = append(out.Custom, "tag_materials.no")
+	}
+	if !sameStringSet(c.TagMaterials.Prefixes, d.TagMaterials.Prefixes) {
+		out.Custom = append(out.Custom, "tag_materials.prefixes")
+	}
+
+	return out
 }
 
 // orderConfigCoverage 检查某张表「模板里有、但没有任何数据来源」的输出列。

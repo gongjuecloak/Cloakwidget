@@ -429,6 +429,8 @@
   <!-- ===== 配置中心：所有配置集中在这里，操作页面不维护配置 ===== -->
   <div id="viewConfig" class="view" style="display:none">
     <div id="cfgFailBanner" class="banner err" role="alert"></div>
+    <!-- 配置一致性：本版本内置默认 vs 磁盘配置（补齐 / 本地自定义 / 本地独有） -->
+    <div id="cfgAuditBar" class="cfg-audit" role="status" aria-live="polite" hidden></div>
     <div class="cfg-head">
       <div class="cfg-title-line"><h2 id="cfg_title">配置中心</h2><span id="cfgDirtyBadge" class="dirty-badge" role="status" aria-live="polite" hidden>有未保存的修改</span></div>
       <p id="cfg_desc">各模块的字段映射与规则都在这里维护。选文件、转换这些日常操作在各自的模块页面完成，这里只改配置。</p>
