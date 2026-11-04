@@ -429,11 +429,21 @@
   <!-- ===== 配置中心：所有配置集中在这里，操作页面不维护配置 ===== -->
   <div id="viewConfig" class="view" style="display:none">
     <div id="cfgFailBanner" class="banner err" role="alert"></div>
-    <!-- 配置一致性：本版本内置默认 vs 磁盘配置（补齐 / 本地自定义 / 本地独有） -->
-    <div id="cfgAuditBar" class="cfg-audit" role="status" aria-live="polite" hidden></div>
     <div class="cfg-head">
-      <div class="cfg-title-line"><h2 id="cfg_title">配置中心</h2><span id="cfgDirtyBadge" class="dirty-badge" role="status" aria-live="polite" hidden>有未保存的修改</span></div>
-      <p id="cfg_desc">各模块的字段映射与规则都在这里维护。选文件、转换这些日常操作在各自的模块页面完成，这里只改配置。</p>
+      <div class="cfg-head-main">
+        <div class="cfg-title-line"><h2 id="cfg_title">配置中心</h2><span id="cfgDirtyBadge" class="dirty-badge" role="status" aria-live="polite" hidden>有未保存的修改</span></div>
+        <p id="cfg_desc">各模块的字段映射与规则都在这里维护。选文件、转换这些日常操作在各自的模块页面完成，这里只改配置。</p>
+      </div>
+      <div class="cfg-head-tools">
+        <label class="cfg-adv-sw" for="cfgAdvChk">
+          <input type="checkbox" id="cfgAdvChk">
+          <span id="cfg_adv_sw">显示高级设置</span>
+        </label>
+        <div class="cfg-search">
+          <input type="search" id="cfgGlobalSearch" placeholder="搜索当前配置页">
+          <span id="cfgSearchCount" class="muted" aria-live="polite"></span>
+        </div>
+      </div>
     </div>
     <div class="cfg-tabs" role="tablist" aria-label="配置模块">
       <button type="button" class="cfg-tab active" role="tab" id="cfgTabMat" data-tab="mat" aria-controls="cfgPaneMat" aria-selected="true">物料档案</button>
@@ -441,32 +451,30 @@
       <button type="button" class="cfg-tab" role="tab" id="cfgTabBom" data-tab="bom" aria-controls="cfgPaneBom" aria-selected="false">BOM / 用料表</button>
       <button type="button" class="cfg-tab" role="tab" id="cfgTabSys" data-tab="sys" aria-controls="cfgPaneSys" aria-selected="false">系统</button>
     </div>
-    <div class="cfg-workbar">
-      <div class="cfg-modes" role="group" aria-label="配置显示模式">
-        <button type="button" id="cfgSimpleBtn" class="ghost active">简单模式</button>
-        <button type="button" id="cfgExpertBtn" class="ghost">专家模式</button>
-      </div>
-      <input type="search" id="cfgGlobalSearch" placeholder="搜索当前配置页">
-      <span id="cfgSearchCount" class="muted" aria-live="polite"></span>
-    </div>
-    <nav id="cfgSectionNav" class="cfg-section-nav" aria-label="当前配置页目录"></nav>
+    <!-- 配置一致性：本版本内置默认 vs 磁盘配置（补齐 / 本地自定义 / 本地独有） -->
+    <div id="cfgAuditBar" class="cfg-audit" role="status" aria-live="polite" hidden></div>
+
+    <div class="cfg-body" id="cfgBody">
+      <nav id="cfgSectionNav" class="cfg-section-nav" aria-label="当前配置页目录"></nav>
+      <div class="cfg-panes">
 
     <!-- ---------- 面板一：物料档案配置 ---------- -->
     <section class="advanced" id="cfgPaneMat" role="tabpanel" aria-labelledby="cfgTabMat">
-      <p class="muted" id="advanced_desc">以下为字段映射配置，仅管理员维护。普通用户无需修改。所有设置都以表单填写，无需写代码。</p>
-      <div class="adv-top">
-        <label id="lbl_outsheet" for="outSheetInput">输出工作表名称</label>
-        <input id="outSheetInput" type="text" value="物料档案">
-      </div>
       <div class="adv-actions">
-        <button id="loadConfigBtn" class="ghost">载入当前配置</button>
         <button id="saveConfigBtn" class="primary action-primary">保存配置</button>
         <button id="addFieldBtn" class="ghost">新增字段</button>
-        <button id="exportConfigBtn" class="ghost">导出配置</button>
-        <button id="importConfigBtn" class="ghost">导入配置</button>
-        <input type="file" id="importCfgFile" accept=".json" style="display:none">
-        <button id="matCfgTestBtn" class="ghost">测试配置</button>
-        <input type="file" id="matCfgTestFile" accept=".xlsx,.xls,.csv" style="display:none">
+        <div class="adv-sheet">
+          <label id="lbl_outsheet" for="outSheetInput">输出工作表名称</label>
+          <input id="outSheetInput" type="text" value="物料档案">
+        </div>
+        <div class="adv-links">
+          <button id="loadConfigBtn" class="linkbtn">载入当前配置</button>
+          <button id="exportConfigBtn" class="linkbtn">导出配置</button>
+          <button id="importConfigBtn" class="linkbtn">导入配置</button>
+          <button id="matCfgTestBtn" class="linkbtn">测试配置</button>
+          <input type="file" id="importCfgFile" accept=".json" style="display:none">
+          <input type="file" id="matCfgTestFile" accept=".xlsx,.xls,.csv" style="display:none">
+        </div>
       </div>
       <div id="advMsg" class="adv-msg"></div>
       <div id="matSaveMeta" class="cfg-save-meta"></div>
@@ -503,20 +511,23 @@
       <table id="fieldTable">
         <colgroup>
           <col class="fc-drag"><col class="fc-target"><col class="fc-source"><col class="fc-op">
-          <col class="fc-param"><col class="fc-desc"><col class="fc-act">
+          <col class="fc-param"><col class="fc-act">
         </colgroup>
         <thead><tr>
           <th id="th_target">目标列</th><th id="th_source">源列(MBxxx)</th>
           <th id="th_op">填充方式</th><th id="th_param">参数设置</th>
-          <th id="th_desc">说明</th><th></th>
+          <th></th>
         </tr></thead>
         <tbody></tbody>
       </table>
-      <div class="help" id="adv_help"></div>
+      <details class="cfg-help" id="advHelpFold">
+        <summary id="adv_help_sum">各种填充方式是什么意思</summary>
+        <div class="help" id="adv_help"></div>
+      </details>
 
       <div class="block-title"><span id="block_unit">单位翻译表</span>
         <small id="block_unit_hint">左边填原符号，右边填中文单位名，例如 kg → 千克</small></div>
-      <table>
+      <table class="unit-table">
         <thead><tr><th id="unit_from" style="width:45%">原符号 / 原单位</th><th id="unit_to" style="width:45%">翻译为</th><th></th></tr></thead>
         <tbody id="unitBody"></tbody>
       </table>
@@ -545,16 +556,16 @@
 
     <!-- ---------- 面板二：订单 / 工单配置 ---------- -->
     <section class="advanced" id="cfgPaneOrd" style="display:none" role="tabpanel" aria-labelledby="cfgTabOrd">
-      <p class="muted" id="ord_advanced_desc">订单模块的字段映射与判定规则。所有设置都以表单填写，无需写代码。</p>
-
       <div class="adv-actions">
-        <button id="ordCfgReloadBtn" class="ghost">载入当前配置</button>
         <button id="ordCfgSaveBtn" class="primary action-primary">保存配置</button>
-        <button id="ordCfgExportBtn" class="ghost">导出配置</button>
-        <button id="ordCfgImportBtn" class="ghost">导入配置</button>
-        <button id="ordCfgTestBtn" class="ghost">测试配置</button>
-        <input type="file" id="ordCfgImportFile" accept=".json" style="display:none">
-        <input type="file" id="ordCfgTestFile" accept=".xlsx,.xls,.csv" style="display:none">
+        <div class="adv-links">
+          <button id="ordCfgReloadBtn" class="linkbtn">载入当前配置</button>
+          <button id="ordCfgExportBtn" class="linkbtn">导出配置</button>
+          <button id="ordCfgImportBtn" class="linkbtn">导入配置</button>
+          <button id="ordCfgTestBtn" class="linkbtn">测试配置</button>
+          <input type="file" id="ordCfgImportFile" accept=".json" style="display:none">
+          <input type="file" id="ordCfgTestFile" accept=".xlsx,.xls,.csv" style="display:none">
+        </div>
       </div>
       <div id="ordAdvMsg" class="adv-msg"></div>
       <div id="ordSaveMeta" class="cfg-save-meta"></div>
@@ -586,16 +597,16 @@
 
     <!-- ---------- 面板三：BOM / 用料表配置 ---------- -->
     <section class="advanced" id="cfgPaneBom" style="display:none" role="tabpanel" aria-labelledby="cfgTabBom">
-      <p class="muted" id="bom_cfg_desc">BOM 模块的源列映射、固定值与单位别名。源列可填源表表头名（优先匹配，不依赖列序）或列号（如 A / J），留空用内置列位。</p>
-
       <div class="adv-actions">
-        <button id="bomCfgReloadBtn" class="ghost">载入当前配置</button>
         <button id="bomCfgSaveBtn" class="primary action-primary">保存配置</button>
-        <button id="bomCfgExportBtn" class="ghost">导出配置</button>
-        <button id="bomCfgImportBtn" class="ghost">导入配置</button>
-        <button id="bomCfgTestBtn" class="ghost">测试配置</button>
-        <input type="file" id="bomCfgImportFile" accept=".json" style="display:none">
-        <input type="file" id="bomCfgTestFile" accept=".xlsx,.xls,.csv" style="display:none">
+        <div class="adv-links">
+          <button id="bomCfgReloadBtn" class="linkbtn">载入当前配置</button>
+          <button id="bomCfgExportBtn" class="linkbtn">导出配置</button>
+          <button id="bomCfgImportBtn" class="linkbtn">导入配置</button>
+          <button id="bomCfgTestBtn" class="linkbtn">测试配置</button>
+          <input type="file" id="bomCfgImportFile" accept=".json" style="display:none">
+          <input type="file" id="bomCfgTestFile" accept=".xlsx,.xls,.csv" style="display:none">
+        </div>
       </div>
       <div id="bomAdvMsg" class="adv-msg"></div>
       <div id="bomSaveMeta" class="cfg-save-meta"></div>
@@ -640,8 +651,6 @@
 
     <!-- ---------- 面板四：系统 ---------- -->
     <section class="advanced" id="cfgPaneSys" style="display:none" role="tabpanel" aria-labelledby="cfgTabSys">
-      <p class="muted" id="sys_desc">程序自身的运行方式：谁能访问、开机是否自动启动、MES 模板有没有变、出问题怎么取证。与字段映射无关；涉及监听的改动需要重启程序。</p>
-
       <div class="block-title"><span id="sys_block_access">访问与安全</span>
         <small id="sys_block_access_hint">默认只监听本机 127.0.0.1，同事访问不到。开启局域网后建议同时设一个口令。</small></div>
       <div class="sys-grid">
@@ -693,6 +702,8 @@
       </div>
       <div id="sysMsg" class="adv-msg"></div>
     </section>
+      </div><!-- /cfg-panes -->
+    </div><!-- /cfg-body -->
   </div><!-- /viewConfig -->
 </main>
 

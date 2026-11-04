@@ -2,6 +2,40 @@
   "note": "程序内置的更新日志。发版时在 versions 顶部加一条，并把 version 改成新版本号；notes 按语言分组，缺的语言回退到 zh。",
   "versions": [
     {
+      "version": "1.22.0",
+      "date": "2026-11-04",
+      "notes": {
+        "zh": [
+          "配置中心重排：右上角「显示高级设置」改成一个开关（原来是并排两个按钮，和页签长得一样），页签改成下划线样式；顶部的模式切换行、目录胶囊行都并掉了，进来直接是第一个配置区。",
+          "每个配置区变成一张独立卡片：标题一行、说明一行，右侧「重置 / 收起」平时淡出、鼠标移上去才显眼。区块多于两个时左侧出现目录，滚动时自动高亮当前所在的区块。",
+          "顶部动作条只留「保存配置」一个主按钮，载入 / 导出 / 导入 / 测试改为文字链，输出工作表名并入同一条；动作条滚动时贴在页头下方，39 行的表改完随时能保存。",
+          "字段映射表去掉单独的「说明」列（说明改为参数下方的小字），右边不再有空列；表头在滚动时吸顶，滚到表格中间也知道每列是什么；「各种填充方式是什么意思」默认收起。",
+          "系统页也是同样的区块卡片，页头那一行重复的说明去掉了；窄屏下宽表格在卡片内横向滚动，不再把整页撑宽。"
+        ],
+        "zht": [
+          "設定中心重排：右上角「顯示進階設定」改成一個開關（原本是並排兩個按鈕，和頁籤長得一樣），頁籤改成底線樣式；頂端的模式切換列、目錄標籤列都合併掉了，進來直接是第一個設定區。",
+          "每個設定區變成一張獨立卡片：標題一行、說明一行，右側「重設 / 收合」平時淡出、滑鼠移上去才明顯。區塊多於兩個時左側出現目錄，捲動時自動標示目前所在的區塊。",
+          "頂端動作列只留「儲存設定」一個主按鈕，載入 / 匯出 / 匯入 / 測試改為文字連結，輸出的工作表名稱併進同一列；動作列捲動時貼在頁首下方，39 列的表改完隨時能儲存。",
+          "欄位對應表移除獨立的「說明」欄（說明改為參數下方的小字），右邊不再有空欄；表頭在捲動時固定，捲到表格中間也知道每欄是什麼；「各種填寫方式是什麼意思」預設收合。",
+          "系統頁也是同樣的區塊卡片，頁首那一列重複的說明移除了；窄螢幕下寬表格在卡片內橫向捲動，不再把整頁撐寬。"
+        ],
+        "vi": [
+          "Bố cục lại Trung tâm cấu hình: góc phải trên «Hiện cài đặt nâng cao» đổi thành một công tắc (trước là hai nút cạnh nhau, trông giống tab), tab đổi sang kiểu gạch chân; bỏ hàng chuyển chế độ và hàng mục lục phía trên, vào là thấy ngay phần cấu hình đầu tiên.",
+          "Mỗi phần cấu hình thành một thẻ riêng: tiêu đề một dòng, mô tả một dòng, nút «Đặt lại / Thu gọn» mờ đi, chỉ rõ khi rê chuột. Khi có nhiều hơn hai phần, mục lục hiện bên trái và tự làm nổi phần đang xem khi cuộn.",
+          "Thanh thao tác phía trên chỉ còn một nút chính «Lưu cấu hình», các mục tải / xuất / nhập / kiểm tra chuyển thành liên kết chữ, tên sheet đầu ra gộp cùng hàng; thanh này dính dưới thanh tiêu đề khi cuộn nên sửa xong bảng 39 dòng vẫn lưu được ngay.",
+          "Bảng ánh xạ trường bỏ cột «Mô tả» riêng (mô tả thành dòng chữ nhỏ dưới phần tham số), không còn cột trống bên phải; tiêu đề bảng dính khi cuộn; mục «Các cách điền nghĩa là gì» mặc định thu gọn.",
+          "Trang Hệ thống cũng dùng thẻ phần giống vậy, bỏ dòng mô tả trùng lặp ở đầu trang; trên màn hình hẹp, bảng rộng cuộn ngang trong thẻ thay vì làm rộng cả trang."
+        ],
+        "en": [
+          "Config centre re-laid out: the top-right “Show advanced settings” is now a single switch (it used to be two buttons that looked like tabs), and the tabs use an underline style. The mode row and the section-chip row are gone, so you land straight on the first section.",
+          "Each section is now its own card: one line of title, one line of description, and the “Reset / Collapse” actions fade in only on hover. With more than two sections a rail appears on the left and highlights the section you are currently in while scrolling.",
+          "The action bar keeps a single primary “Save configuration” button; load / export / import / test become text links, and the output sheet name joins the same row. The bar sticks under the header, so a 39-row table can be saved without scrolling back up.",
+          "The field mapping table drops the separate “Notes” column (notes now sit as small text under the parameters) and no longer shows an empty column on the right. The table header sticks while scrolling, and “What do the fill modes mean?” is collapsed by default.",
+          "The System tab uses the same section cards and the duplicated intro line is gone; on narrow screens wide tables scroll inside their card instead of widening the whole page."
+        ]
+      }
+    },
+    {
       "version": "1.21.0",
       "date": "2026-11-04",
       "notes": {

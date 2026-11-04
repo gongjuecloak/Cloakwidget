@@ -501,12 +501,11 @@ function addFieldRow(f,idx){
     <td><input data-k="source" list="srcCols" value="${esc(f.source||'')}" placeholder="MBxxx"></td>
     <td><select data-k="op">${ops}</select></td>
     <td class="param-cell"></td>
-    <td class="desc-cell">${esc(TARGET_DESC[f.target]||"")}</td>
     <td><button class="row-del" title="${t('del_row')}">✕</button></td>`;
   const tgt=tr.querySelector('[data-k="target"]');
   tgt.addEventListener('input',e=>{
     f.target=e.target.value;
-    tr.querySelector('.desc-cell').textContent=TARGET_DESC[f.target]||"";
+    const note=tr.querySelector('.pc-note'); if(note) note.textContent=TARGET_DESC[f.target]||"";
     validateTargetInput(e.target);
   });
   tr.querySelector('[data-k="source"]').addEventListener('input',e=>f.source=e.target.value);
@@ -516,7 +515,15 @@ function addFieldRow(f,idx){
   validateTargetInput(tgt);
   document.querySelector("#fieldTable tbody").appendChild(tr);
 }
-function renderParamCell(td,f){ td.innerHTML=paramControlsHTML(f); bindParam(td,f); }
+function renderParamCell(td,f){
+  td.innerHTML=paramControlsHTML(f);
+  // 说明不再单独占一列：作为参数下方的灰色小字，省一列宽度、少一条竖线
+  const note=document.createElement("div");
+  note.className="pc-note";
+  note.textContent=TARGET_DESC[f.target]||"";
+  td.appendChild(note);
+  bindParam(td,f);
+}
 
 // P1：目标列若不在已加载模板表头内，红框警示（避免拼错列名导致静默不命中）
 function validateTargetInput(input){
@@ -3039,9 +3046,10 @@ function setupConfigSections(){
       while(node && !(node.nodeType===1 && node.classList.contains("block-title"))){ const next=node.nextSibling; body.appendChild(node); node=next; }
       title.parentNode.insertBefore(body,node);
       const actions=document.createElement("span"); actions.className="cfg-section-actions";
-      actions.innerHTML='<span class="cfg-section-count">0</span><button type="button" class="ghost cfg-reset">重置</button><button type="button" class="ghost cfg-collapse">收起</button>';
+      actions.innerHTML='<button type="button" class="cfg-sec-btn cfg-reset">'+esc(t("cfg_sec_reset"))+'</button>'
+        +'<button type="button" class="cfg-sec-btn cfg-collapse">'+esc(t("cfg_sec_fold"))+'</button>';
       title.appendChild(actions);
-      actions.querySelector(".cfg-collapse").onclick=()=>{ body.classList.toggle("collapsed"); actions.querySelector(".cfg-collapse").textContent=body.classList.contains("collapsed")?"展开":"收起"; };
+      actions.querySelector(".cfg-collapse").onclick=()=>{ body.classList.toggle("collapsed"); actions.querySelector(".cfg-collapse").textContent=body.classList.contains("collapsed")?t("cfg_sec_unfold"):t("cfg_sec_fold"); };
       const id=span&&span.id||"";
       actions.querySelector(".cfg-reset").onclick=()=>resetConfigSection(pane.id,id);
       if(pane.id==="cfgPaneSys" || !resetKeys(id)) actions.querySelector(".cfg-reset").remove();
@@ -3064,20 +3072,59 @@ async function resetConfigSection(pane,id){
 function applyCfgMode(){
   const expert=cfgMode==="expert";
   document.querySelectorAll("#viewConfig [data-expert='1']").forEach(x=>x.classList.toggle("cfg-expert-hidden",!expert));
-  document.getElementById("cfgSimpleBtn").classList.toggle("active",!expert); document.getElementById("cfgExpertBtn").classList.toggle("active",expert);
+  const chk=document.getElementById("cfgAdvChk"); if(chk) chk.checked=expert;
   localStorage.setItem("cfgMode",cfgMode); refreshConfigCenter();
 }
-document.getElementById("cfgSimpleBtn").onclick=()=>{cfgMode="simple";applyCfgMode();};
-document.getElementById("cfgExpertBtn").onclick=()=>{cfgMode="expert";applyCfgMode();};
+document.getElementById("cfgAdvChk").addEventListener("change",e=>{ cfgMode=e.target.checked?"expert":"simple"; applyCfgMode(); });
+// 目录（左栏）：区块少于一屏能看完时不出目录，省掉一行/一列的导航
 function refreshConfigCenter(){
   setupConfigSections();
   const pane=document.getElementById("cfgPane"+(cfgTab==="mat"?"Mat":cfgTab==="ord"?"Ord":cfgTab==="bom"?"Bom":"Sys")); if(!pane) return;
-  const nav=document.getElementById("cfgSectionNav"); nav.innerHTML="";
-  [...pane.querySelectorAll(":scope > .block-title")].filter(x=>!x.classList.contains("cfg-expert-hidden")).forEach(title=>{
-    const label=title.querySelector(":scope > span"); const count=title.querySelector(".cfg-section-count"); const body=title.nextElementSibling;
-    if(count&&body) count.textContent=body.querySelectorAll("tbody tr,.pc-line,.dict-box").length||body.querySelectorAll("input,select").length;
-    const b=document.createElement("button"); b.type="button"; b.textContent=label?label.textContent:"配置"; b.onclick=()=>title.scrollIntoView({behavior:"smooth",block:"start"}); nav.appendChild(b);
+  const nav=document.getElementById("cfgSectionNav"), body=document.getElementById("cfgBody");
+  const titles=[...pane.querySelectorAll(":scope > .block-title")].filter(x=>!x.classList.contains("cfg-expert-hidden") && x.style.display!=="none");
+  nav.innerHTML="";
+  titles.forEach((title,i)=>{
+    const label=title.querySelector(":scope > span");
+    title.dataset.sec=i;
+    const b=document.createElement("button"); b.type="button"; b.dataset.sec=i;
+    b.textContent=label?label.textContent:"配置";
+    b.onclick=()=>title.scrollIntoView({behavior:"smooth",block:"start"});
+    nav.appendChild(b);
   });
+  const noRail=titles.length<3;
+  body.classList.toggle("no-rail",noRail);
+  nav.hidden=noRail;
+  cfgSpySections(titles);
+}
+// 顶栏是 sticky 的，配置页里的吸附元素必须贴着它的实际高度，否则中间会漏出一条缝，
+// 滚动时下面的内容从缝里透上来。顶栏换行时高度会变，所以量出来写进 CSS 变量。
+function cfgSyncSticky(){
+  const h=document.querySelector("header");
+  const hh=h?Math.round(h.getBoundingClientRect().height):60;
+  document.documentElement.style.setProperty("--cfg-sticky",hh+"px");
+}
+window.addEventListener("resize",()=>{cfgSyncSticky();});
+cfgSyncSticky();
+let cfgSpyTitles=[],cfgSpyTick=null;
+function cfgSpySections(titles){
+  cfgSpyTitles=titles;
+  if(!cfgSpySections._bound){
+    cfgSpySections._bound=1;
+    window.addEventListener("scroll",()=>{ if(cfgSpyTick) return; cfgSpyTick=requestAnimationFrame(()=>{cfgSpyTick=null;cfgSpyPaint();}); },{passive:true});
+  }
+  cfgSpyPaint();
+}
+function cfgSpyPaint(){
+  const nav=document.getElementById("cfgSectionNav");
+  if(!nav||nav.hidden) return;
+  let act=-1, first=-1;
+  cfgSpyTitles.forEach((t,i)=>{
+    if(!t.getBoundingClientRect().height) return;             // 被搜索过滤掉的区块不参与
+    if(first<0) first=i;
+    if(t.getBoundingClientRect().top<170) act=i;
+  });
+  if(act<0) act=first;                                        // 还没滚到任何区块时高亮第一项
+  [...nav.children].forEach((b,i)=>b.classList.toggle("active",i===act));
 }
 function updateConfigSections(){ setTimeout(refreshConfigCenter,0); }
 document.getElementById("cfgGlobalSearch").addEventListener("input",e=>{
@@ -3085,6 +3132,7 @@ document.getElementById("cfgGlobalSearch").addEventListener("input",e=>{
   const pane=document.getElementById("cfgPane"+(cfgTab==="mat"?"Mat":cfgTab==="ord"?"Ord":cfgTab==="bom"?"Bom":"Sys")); let hits=0;
   if(pane) [...pane.querySelectorAll(":scope > .block-title")].forEach(title=>{ const body=title.nextElementSibling; const ok=!q||(title.textContent+" "+body.textContent).toLowerCase().includes(q); title.style.display=ok?"":"none"; body.style.display=ok?"":"none"; if(q&&ok){body.classList.remove("collapsed");hits++;} });
   document.getElementById("cfgSearchCount").textContent=q?("匹配 "+hits+" 个配置区"):"";
+  refreshConfigCenter();   // 目录只列命中的区块，免得点了跳到被过滤掉的地方
 });
 
 function downloadConfig(which){ const c=cfgCurrent(which),a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([JSON.stringify(c,null,2)],{type:"application/json"})); a.download=(which==="ord"?"orders":which==="bom"?"bom_mapping":"mapping")+"_"+new Date().toISOString().slice(0,10)+".json"; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1000); }

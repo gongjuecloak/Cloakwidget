@@ -54,6 +54,7 @@ _dom.html
 _check.js
 _shot_*.js
 _shot_*.png
+_cfg_*.png
 _probe_*.js
 _wjs_check.js
 _extract_js.js
