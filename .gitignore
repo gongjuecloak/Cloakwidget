@@ -19,6 +19,8 @@ mes_conv/previous/
 mes_conv/last_version.txt
 # 配置原子写入的临时文件（os.CreateTemp 生成的隐藏唯一名）
 mes_conv/*.json.tmp
+# 旧镜像仓库的访问令牌（1.19.0 移除 mirror 后代码已不引用，残留文件不能进公开仓库）
+mes_conv/mes_mirror_token
 mes_conv/.*.json.*.tmp
 # 就地更新时的临时文件
 *.new
