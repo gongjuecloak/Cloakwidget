@@ -39,7 +39,18 @@ func TestConvertBOMWritesCodeNameAndRowIssues(t *testing.T) {
 	if err != nil || len(rows) < 2 || len(rows[1]) < 2 {
 		t.Fatalf("read BOM master: rows=%#v err=%v", rows, err)
 	}
-	if rows[1][0] != "BOM-P001" || rows[1][1] != "测试主件" {
-		t.Fatalf("BOM code/name = %q/%q", rows[1][0], rows[1][1])
+	if rows[1][0] != "P001" || rows[1][1] != "BOM-P001" {
+		t.Fatalf("BOM code/name = %q/%q，应为 品号 / BOM-品号", rows[1][0], rows[1][1])
+	}
+	if len(rows[1]) < 6 || rows[1][4] != "P001" || rows[1][5] != "测试主件" {
+		t.Fatalf("物料编码/名称 = %v，应为 品号 / 主件品名", rows[1][4:6])
+	}
+	// 明细表 A 列必须与主表 A 列一致，否则 MES 导入时主明细对不上
+	dRows, err := out.GetRows("BOM明细")
+	if err != nil || len(dRows) < 2 || len(dRows[1]) < 1 {
+		t.Fatalf("read BOM detail: rows=%#v err=%v", dRows, err)
+	}
+	if dRows[1][0] != rows[1][0] {
+		t.Fatalf("明细 BOM编码 %q ≠ 主表 %q", dRows[1][0], rows[1][0])
 	}
 }

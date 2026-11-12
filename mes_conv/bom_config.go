@@ -29,7 +29,7 @@ type BomConfig struct {
 	MasterSheet string            `json:"master_sheet"` // 输出主表名，空用内置默认
 	DetailSheet string            `json:"detail_sheet"` // 输出明细表名，空用内置默认
 	Columns     map[string]string `json:"columns"`      // 角色 -> 源表头名或列号（A/J/10）
-	// MasterFixed 主表固定值：name_prefix（BOM 编码前缀）、bom_type、kind、unit
+	// MasterFixed 主表固定值：name_prefix（BOM 名称前缀，编码本身是主件品号不带前缀）、bom_type、kind、unit
 	MasterFixed map[string]string `json:"master_fixed"`
 	// DetailFixed 明细固定值：layer（层级）、issue_type（发料方式）、allow_sub（允许替代）、main_flag（主体）
 	DetailFixed map[string]string `json:"detail_fixed"`

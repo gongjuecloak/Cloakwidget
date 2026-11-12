@@ -2,6 +2,32 @@
   "note": "程序内置的更新日志。发版时在 versions 顶部加一条，并把 version 改成新版本号；notes 按语言分组，缺的语言回退到 zh。",
   "versions": [
     {
+      "version": "1.22.1",
+      "date": "2026-11-12",
+      "notes": {
+        "zh": [
+          "修 BOM 输出：「BOM编码」列改回主件品号本身（不再加 BOM- 前缀），与「BOM明细」的 BOM 编码一致——之前两者对不上，导入 MES 会找不到主表。",
+          "「BOM名称」改为 BOM- + 主件品号（原来写的是主件品名）；主件品名移到主表的「物料名称」列，不再丢。",
+          "配置中心 BOM 页签里「BOM 编码前缀」改名为「BOM 名称前缀」，作用位置随之一致；已经填过的值不用改。"
+        ],
+        "zht": [
+          "修 BOM 輸出：「BOM編碼」欄改回主件品號本身（不再加 BOM- 前綴），與「BOM明細」的 BOM 編碼一致——之前兩者對不上，匯入 MES 會找不到主表。",
+          "「BOM名稱」改為 BOM- + 主件品號（原本寫的是主件品名）；主件品名移到主表的「物料名稱」欄，不再遺失。",
+          "設定中心 BOM 頁籤裡「BOM 編碼前綴」改名為「BOM 名稱前綴」，作用位置隨之一致；已填過的值不用改。"
+        ],
+        "vi": [
+          "Sửa kết quả BOM: cột「Mã BOM」trở lại đúng mã vật tư chính (không thêm tiền tố BOM-), khớp với mã BOM ở sheet chi tiết — trước đây hai bảng lệch nhau nên nhập MES không tìm thấy bảng chính.",
+          "「Tên BOM」đổi thành BOM- + mã vật tư chính (trước đây ghi tên vật tư chính); tên vật tư chính chuyển sang cột「Tên vật tư」của bảng chính, không bị mất.",
+          "Trong tab BOM của trung tâm cấu hình,「Tiền tố mã BOM」đổi tên thành「Tiền tố tên BOM」cho đúng vị trí áp dụng; giá trị đã điền không cần sửa."
+        ],
+        "en": [
+          "Fixed BOM output: the \"BOM code\" column is the parent item code again (no BOM- prefix), matching the BOM code in the detail sheet — they disagreed before, so MES could not link the master row on import.",
+          "\"BOM name\" is now BOM- + parent item code (it used to hold the parent item name); the item name moved to the master sheet's \"Item name\" column instead of being dropped.",
+          "In the config center's BOM tab, \"BOM code prefix\" is renamed to \"BOM name prefix\" to match where it applies; existing values need no change."
+        ]
+      }
+    },
+    {
       "version": "1.22.0",
       "date": "2026-11-04",
       "notes": {

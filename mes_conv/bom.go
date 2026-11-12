@@ -481,7 +481,7 @@ func ConvertBOM(srcPath, tplPath, mapPath, outPath string, opt BomOptions, L map
 	sourceRow := 0
 	headerSkipped := false
 
-	// 固定值：配置可覆盖内置默认
+	// 固定值：配置可覆盖内置默认。mfPrefix 是 **BOM 名称**的前缀（编码取原始品号，不带前缀）
 	mfPrefix := bomFixedVal(cfg.MasterFixed, "name_prefix", "BOM-")
 	mfType := bomFixedVal(cfg.MasterFixed, "bom_type", "量产BOM")
 	mfKind := bomFixedVal(cfg.MasterFixed, "kind", "production")
@@ -571,8 +571,10 @@ func ConvertBOM(srcPath, tplPath, mapPath, outPath string, opt BomOptions, L map
 	}
 	masterRow := 2
 	for _, parent := range masterOrder {
+		// A BOM编码 = 主件品号（必须与明细表 A 列一致，否则 MES 导入时主明细对不上）
+		// B BOM名称 = 名称前缀 + 主件品号（默认 BOM-）；E 物料编码 = 主件品号；F 物料名称 = 主件品名
 		mRow := []interface{}{
-			mfPrefix + parent, masterName[parent], nil, nil, parent, nil,
+			parent, mfPrefix + parent, nil, nil, parent, masterName[parent],
 			mfType, mfKind, nil, mfUnit, nil, nil, nil, nil,
 		}
 		cell, _ := excelize.CoordinatesToCellName(1, masterRow)
