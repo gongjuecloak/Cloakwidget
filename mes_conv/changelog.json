@@ -2,6 +2,36 @@
   "note": "程序内置的更新日志。发版时在 versions 顶部加一条，并把 version 改成新版本号；notes 按语言分组，缺的语言回退到 zh。",
   "versions": [
     {
+      "version": "1.23.0",
+      "date": "2026-11-17",
+      "notes": {
+        "zh": [
+          "BOM 明细新增「主体件」自动判定：主件品名含「膠合」、且该 BOM 下有子件品名含「前三角」时，那一行的「是否主体」自动写「是」，其余行仍是「否」。",
+          "关键词不用改代码：配置中心 BOM 页签新增「主体判定」一块，可改命中值、主件关键词、子件关键词；任一项清空即关闭该判定。",
+          "为此新增「子件品名」源列映射（默认 F 列 / 元件品名），源列映射表里可以直接改。",
+          "转换日志会写「主体判定：N 个主件…」「主体标记：N 行」，结果页也多了「主体件」统计，跑完就能对上数。"
+        ],
+        "zht": [
+          "BOM 明細新增「主體件」自動判定：主件品名含「膠合」、且該 BOM 下有子件品名含「前三角」時，該列的「是否主體」自動寫「是」，其餘列仍為「否」。",
+          "關鍵詞不必改程式：設定中心 BOM 頁籤新增「主體判定」一塊，可改命中值、主件關鍵詞、子件關鍵詞；任一項清空即關閉此判定。",
+          "為此新增「子件品名」來源欄對應（預設 F 欄 / 元件品名），來源欄對應表可直接改。",
+          "轉換紀錄會寫「主體判定：N 個主件…」「主體標記：N 列」，結果頁也多了「主體件」統計，跑完就能核對。"
+        ],
+        "vi": [
+          "Bảng chi tiết BOM có thêm tự động xác định「chi tiết chính」: khi tên phẩm cha chứa「膠合」và BOM đó có linh kiện mà tên chứa「前三角」, cột「Thành phần chính」của dòng đó tự ghi「是」, các dòng khác vẫn「否」.",
+          "Không cần sửa mã khi đổi từ khóa: tab BOM trong trung tâm cấu hình có thêm mục「Xác định chi tiết chính」, sửa được giá trị khi khớp, từ khóa phẩm cha, từ khóa linh kiện; để trống một ô là tắt quy tắc này.",
+          "Vì vậy có thêm ánh xạ cột「Tên phẩm con」(mặc định cột F / Tên linh kiện), sửa trực tiếp trong bảng ánh xạ cột nguồn.",
+          "Nhật ký chuyển đổi ghi「Xác định chi tiết chính: N phẩm cha…」「Đánh dấu chi tiết chính: N dòng」, trang kết quả có thêm thống kê「Chi tiết chính」."
+        ],
+        "en": [
+          "BOM detail now flags the main part automatically: when the parent item name contains \"膠合\" and that BOM has a component whose name contains \"前三角\", that row's \"main flag\" becomes \"是\"; all other rows stay \"否\".",
+          "No code change needed to tune it: a new \"Main part rule\" block in the config center's BOM tab lets you edit the hit value and both keywords; clearing either keyword disables the rule.",
+          "This adds a \"child part name\" source-column mapping (default column F / component name), editable in the column mapping table.",
+          "The conversion log reports how many parents matched and how many rows were flagged, and the result page gained a \"main parts\" counter."
+        ]
+      }
+    },
+    {
       "version": "1.22.1",
       "date": "2026-11-12",
       "notes": {

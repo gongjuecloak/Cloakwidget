@@ -31,7 +31,8 @@ type BomConfig struct {
 	Columns     map[string]string `json:"columns"`      // 角色 -> 源表头名或列号（A/J/10）
 	// MasterFixed 主表固定值：name_prefix（BOM 名称前缀，编码本身是主件品号不带前缀）、bom_type、kind、unit
 	MasterFixed map[string]string `json:"master_fixed"`
-	// DetailFixed 明细固定值：layer（层级）、issue_type（发料方式）、allow_sub（允许替代）、main_flag（主体）
+	// DetailFixed 明细固定值：layer（层级）、issue_type（发料方式）、allow_sub（允许替代）、main_flag（主体默认值）
+	// 以及主体判定规则 main_flag_yes（命中时写的值）、main_trigger（主件品名关键词）、main_part（子件品名关键词）
 	DetailFixed map[string]string `json:"detail_fixed"`
 	// UnitAliases 源单位别名（匹配时忽略大小写）-> 归一后的单位名，如 PCSQ -> PCS。
 	// 优先级高于单位映射表。
@@ -49,9 +50,9 @@ func bomConfigPath() string {
 }
 
 // bomColumnDefaults 各角色的内置列位（0 基，对应 ERP「BOM 抓取 V1.1」导出格式）：
-// A 主件品号 / B 主件品名 / D 项次 / E 子件品号 / H 源單位 / J 組成用量 / K 底數 / L 損耗率
+// A 主件品号 / B 主件品名 / D 项次 / E 子件品号 / F 子件品名 / H 源單位 / J 組成用量 / K 底數 / L 損耗率
 var bomColumnDefaults = map[string]int{
-	"parent": 0, "parent_name": 1, "seq": 3, "child": 4,
+	"parent": 0, "parent_name": 1, "seq": 3, "child": 4, "child_name": 5,
 	"unit": 7, "base": 9, "base_div": 10, "loss": 11,
 }
 
@@ -61,7 +62,7 @@ func defaultBomConfig() *BomConfig {
 		MasterSheet: bomMasterSheetDefault,
 		DetailSheet: bomDetailSheetDefault,
 		Columns: map[string]string{
-			"parent": "A", "parent_name": "B", "seq": "D", "child": "E",
+			"parent": "A", "parent_name": "B", "seq": "D", "child": "E", "child_name": "F",
 			"unit": "H", "base": "J", "base_div": "K", "loss": "L",
 		},
 		MasterFixed: map[string]string{
@@ -69,6 +70,9 @@ func defaultBomConfig() *BomConfig {
 		},
 		DetailFixed: map[string]string{
 			"layer": "1", "issue_type": "定额发料", "allow_sub": "是", "main_flag": "否",
+			// 主体判定：主件品名含 main_trigger（如「膠合」）且该 BOM 有子件品名含
+			// main_part（如「前三角」）时，那一行的「是否主体」写 main_flag_yes。
+			"main_flag_yes": "是", "main_trigger": "膠合", "main_part": "前三角",
 		},
 		UnitAliases: map[string]string{
 			"PCSQ": "PCS",

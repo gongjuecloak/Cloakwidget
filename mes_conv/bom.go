@@ -51,6 +51,7 @@ type BomReport struct {
 	NonNumSeq  int           `json:"non_numeric_seq"`
 	EmptyChild int           `json:"empty_child"`
 	DivApplied int           `json:"div_applied"`
+	MainFlagged int          `json:"main_flagged"`
 	BaseRule   string        `json:"base_rule"`
 	UnitStats  []BomUnitStat `json:"unit_stats"`
 	DimFixes   []string      `json:"dim_fixes"`
@@ -68,6 +69,45 @@ func bomGet(cols []string, i int) string {
 		return bomClean(cols[i])
 	}
 	return ""
+}
+
+// bomFindMainParents 第一遍扫描：找出「主件品名含 trigger 且子件品名含 part」的主件。
+// 只用来给明细「是否主体」打标，返回 主件品号 -> true。
+// 子件行在源表里的先后顺序不可预期，所以不能边写边判——必须整 BOM 看过一遍。
+func bomFindMainParents(src *excelize.File, sheet string, colsIdx map[string]int, trigger, part string) map[string]bool {
+	out := map[string]bool{}
+	iter, err := src.Rows(sheet)
+	if err != nil {
+		return out
+	}
+	defer iter.Close()
+	first := true
+	scanned := 0
+	for iter.Next() {
+		if first { // 跳过表头
+			first = false
+			continue
+		}
+		cols, err := iter.Columns()
+		if err != nil {
+			break
+		}
+		scanned++
+		if scanned%20000 == 0 {
+			progressSet(scanned, 0) // 第一遍也要有动静，否则前几万行会像卡住
+		}
+		parent := bomGet(cols, colsIdx["parent"])
+		if parent == "" {
+			continue
+		}
+		if !strings.Contains(bomGet(cols, colsIdx["parent_name"]), trigger) {
+			continue
+		}
+		if strings.Contains(bomGet(cols, colsIdx["child_name"]), part) {
+			out[parent] = true
+		}
+	}
+	return out
 }
 
 func bomToNum(s string) interface{} {
@@ -469,6 +509,7 @@ func ConvertBOM(srcPath, tplPath, mapPath, outPath string, opt BomOptions, L map
 	masterOrder := []string{}
 	unitRawStats := map[string]int{}
 	emptySeq, emptyChild, nonNumSeq := 0, 0, 0
+	mainFlagged := 0
 	issues := []Issue{}
 	addIssue := func(row int, col, msg string) {
 		if len(issues) < maxIssues {
@@ -490,6 +531,20 @@ func ConvertBOM(srcPath, tplPath, mapPath, outPath string, opt BomOptions, L map
 	dfIssue := bomFixedVal(cfg.DetailFixed, "issue_type", "定额发料")
 	dfAllowSub := bomFixedVal(cfg.DetailFixed, "allow_sub", "是")
 	dfMain := bomFixedVal(cfg.DetailFixed, "main_flag", "否")
+	dfMainYes := bomFixedVal(cfg.DetailFixed, "main_flag_yes", "是")
+	// 主体判定关键词：主件品名含 trigger（默认「膠合」）+ 该 BOM 有子件品名含 part（默认「前三角」）
+	mainTrigger := bomFixedVal(cfg.DetailFixed, "main_trigger", "膠合")
+	mainPart := bomFixedVal(cfg.DetailFixed, "main_part", "前三角")
+
+	// 子件顺序不可预知（同一主件的行可能主体件在后），所以先单独扫一遍标出命中的主件，
+	// 再进下面的流式写明细循环。这一遍只读 3 列，内存只存主件品号。
+	var mainParents map[string]bool
+	if mainTrigger != "" && mainPart != "" {
+		mainParents = bomFindMainParents(src, opt.SrcSheet, colsIdx, mainTrigger, mainPart)
+		if len(mainParents) > 0 {
+			logf(fmt.Sprintf(L["b_main_rule"], len(mainParents), mainTrigger, mainPart))
+		}
+	}
 
 	for iter.Next() {
 		sourceRow++
@@ -519,6 +574,7 @@ func ConvertBOM(srcPath, tplPath, mapPath, outPath string, opt BomOptions, L map
 		}
 		loss := bomGet(cols, colsIdx["loss"])
 		unitRaw := bomGet(cols, colsIdx["unit"])
+		childName := bomGet(cols, colsIdx["child_name"])
 
 		if child == "" {
 			emptyChild++
@@ -538,9 +594,16 @@ func ConvertBOM(srcPath, tplPath, mapPath, outPath string, opt BomOptions, L map
 			masterOrder = append(masterOrder, parent)
 		}
 
+		// 是否主体：默认「否」；命中主体判定（膠合 BOM 里的前三角）时写「是」
+		mainFlag := dfMain
+		if mainParents[parent] && strings.Contains(childName, mainPart) {
+			mainFlag = dfMainYes
+			mainFlagged++
+		}
+
 		dRow := []interface{}{
 			parent, bomToInt(seqRaw), bomToInt(dfLayer), nil, child, bomToNum(base), bomToNum(loss),
-			nil, dfIssue, dfAllowSub, dfMain, nil, nil, nil,
+			nil, dfIssue, dfAllowSub, mainFlag, nil, nil, nil,
 		}
 		cell, _ := excelize.CoordinatesToCellName(1, detailRow)
 		if err := dSw.SetRow(cell, dRow); err != nil {
@@ -554,6 +617,9 @@ func ConvertBOM(srcPath, tplPath, mapPath, outPath string, opt BomOptions, L map
 		}
 	}
 	iter.Close()
+	if mainFlagged > 0 {
+		logf(fmt.Sprintf(L["b_main_done"], mainFlagged, dfMainYes))
+	}
 	if err := iter.Error(); err != nil {
 		return nil, fmt.Errorf("%s: %w", L["b_err_iter"], err)
 	}
@@ -603,6 +669,7 @@ func ConvertBOM(srcPath, tplPath, mapPath, outPath string, opt BomOptions, L map
 		NonNumSeq:  nonNumSeq,
 		EmptyChild: emptyChild,
 		DivApplied: divApplied,
+		MainFlagged: mainFlagged,
 		DimFixes:   reps,
 		Issues:     issues,
 	}

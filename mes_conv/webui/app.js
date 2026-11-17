@@ -1507,7 +1507,8 @@ function renderBomStats(data){
     statCard(t("rows_label"),data.rows)
     + statCard(t("elapsed_label"),(data.elapsed||0)+" ms")
     + statCard(t("bom_stat_master"),data.master||0)
-    + statCard(t("bom_stat_detail"),data.detail||0);
+    + statCard(t("bom_stat_detail"),data.detail||0)
+    + (data.main_flagged?statCard(t("bom_stat_main"),data.main_flagged):"");
 }
 
 function renderBomDiag(data){
@@ -1806,6 +1807,7 @@ const BOM_COL_ROLES=[
   {k:"parent_name", labelKey:"bom_col_parent_name"},
   {k:"seq",         labelKey:"bom_col_seq"},
   {k:"child",       labelKey:"bom_col_child"},
+  {k:"child_name",  labelKey:"bom_col_child_name"},
   {k:"unit",        labelKey:"bom_col_unit"},
   {k:"base",        labelKey:"bom_col_base"},
   {k:"base_div",    labelKey:"bom_col_base_div"},
@@ -1822,6 +1824,12 @@ const BOM_DETAIL_KEYS=[
   {k:"issue_type",labelKey:"bom_df_issue_type"},
   {k:"allow_sub", labelKey:"bom_df_allow_sub"},
   {k:"main_flag", labelKey:"bom_df_main_flag"}
+];
+// 主体判定：主件品名含 trigger 且该 BOM 有 part 子件时，那一行的「是否主体」写 yes
+const BOM_MAIN_KEYS=[
+  {k:"main_flag_yes", labelKey:"bom_mr_yes"},
+  {k:"main_trigger",  labelKey:"bom_mr_trigger"},
+  {k:"main_part",     labelKey:"bom_mr_part"}
 ];
 let bomCfg=null, bomCfgLoaded=false;
 function bomEnsureCfg(c){
@@ -1868,6 +1876,8 @@ function bomRenderCfg(){
     '<table><tbody>'+bomFixedRows(BOM_MASTER_KEYS,bomCfg.master_fixed,"bc-mf")+'</tbody></table>';
   document.getElementById("bomDetailWrap").innerHTML =
     '<table><tbody>'+bomFixedRows(BOM_DETAIL_KEYS,bomCfg.detail_fixed,"bc-df")+'</tbody></table>';
+  document.getElementById("bomMainRuleWrap").innerHTML =
+    '<table><tbody>'+bomFixedRows(BOM_MAIN_KEYS,bomCfg.detail_fixed,"bc-mr")+'</tbody></table>';
   // 单位别名
   const al=bomCfg.unit_aliases||{};
   document.getElementById("bomAliasWrap").innerHTML =
@@ -1905,9 +1915,10 @@ function collectBomCfg(){
   document.querySelectorAll("#bomColTable .bc-col").forEach(inp=>{
     c.columns[inp.getAttribute("data-k")]=(inp.value||"").trim();
   });
-  ["bc-mf","bc-df"].forEach(cls=>{
+  // bc-mf 写主表固定值；bc-df / bc-mr 都写明细固定值（bc-mr 是主体判定规则，同一份 detail_fixed）
+  ["bc-mf","bc-df","bc-mr"].forEach(cls=>{
     const tgt=cls==="bc-mf"?c.master_fixed:c.detail_fixed;
-    document.querySelectorAll("#bomMasterWrap ."+cls+", #bomDetailWrap ."+cls).forEach(inp=>{
+    document.querySelectorAll("#bomMasterWrap ."+cls+", #bomDetailWrap ."+cls+", #bomMainRuleWrap ."+cls).forEach(inp=>{
       tgt[inp.getAttribute("data-k")]=(inp.value||"").trim();
     });
   });
